@@ -1,0 +1,37 @@
+# Fast local gates. The full set runs in CI; these are the ones worth catching
+# before a commit exists, especially gitleaks: cassettes are recorded network
+# traffic, so a leaked credential must never reach the history in the first place.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff-format
+      - id: ruff-check
+        args: [--fix]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: determinism
+        name: ledger core determinism gate
+        entry: python scripts/check_determinism.py
+        language: system
+        pass_filenames: false
+        files: ^src/ledgergate/ledger/

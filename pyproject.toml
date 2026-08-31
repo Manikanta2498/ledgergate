@@ -1,0 +1,181 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ledgergate"
+version = "0.1.0.dev0"
+description = "Financial correctness and release-control runtime for autonomous money-moving agents"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Venkata Sai Manikanta Yatam" }]
+keywords = ["ledger", "double-entry", "llm", "agents", "eval", "fintech", "conformance"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business :: Financial :: Accounting",
+  "Typing :: Typed",
+]
+dependencies = [
+  "pydantic>=2.13",
+  "pyyaml>=6.0",
+  "jsonschema>=4.25",
+]
+
+[project.urls]
+Homepage = "https://github.com/Manikanta2498/ledgergate"
+Source = "https://github.com/Manikanta2498/ledgergate"
+
+[project.scripts]
+ledgergate = "ledgergate.cli.__main__:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1",
+  "pytest-cov>=7.0",
+  "pytest-socket>=0.8.1",
+  "hypothesis>=6.167",
+  "syrupy>=6.0",
+  "mypy>=2.3",
+  "ruff>=0.16",
+  "import-linter>=2.3",
+  "types-PyYAML>=6.0",
+  "pip-audit>=2.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ledgergate"]
+
+# ---------------------------------------------------------------- ruff
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",      # pycodestyle
+  "F",           # pyflakes
+  "I",           # isort
+  "N",           # pep8-naming
+  "UP",          # pyupgrade
+  "B",           # bugbear
+  "A",           # builtins shadowing
+  "C4",          # comprehensions
+  "DTZ",         # flake8-datetimez: naive datetime is a determinism bug here
+  "T20",         # no print in library code
+  "SIM",         # simplify
+  "TID",         # tidy-imports (banned-api below)
+  "PTH",         # pathlib
+  "RUF",
+  "S",           # flake8-bandit
+]
+ignore = [
+  "S101",        # assert is fine; pytest and internal invariant checks rely on it
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "T20"]
+"scripts/**" = ["T20"]
+"src/ledgergate/cli/**" = ["T20"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"random".msg = "Non-deterministic. Inject a seeded source instead; the ledger must be reproducible."
+
+[tool.ruff.lint.isort]
+known-first-party = ["ledgergate"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------- mypy
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+disallow_any_explicit = false
+files = ["src", "tests", "scripts"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = true
+
+# ---------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "--disable-socket",
+  "-ra",
+]
+markers = [
+  "live: performs real network calls to a model provider. Opt-in, nightly only, never on fork PRs.",
+  "slow: long-running property or mutation runs.",
+]
+filterwarnings = ["error"]
+
+# ---------------------------------------------------------------- coverage
+
+[tool.coverage.run]
+branch = true
+source = ["src/ledgergate"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@overload",
+  'if __name__ == "__main__":',
+]
+
+# ---------------------------------------------------------------- import-linter
+
+[tool.importlinter]
+root_package = "ledgergate"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture: cli -> runner -> {invariants, report} -> ledger -> schema"
+type = "layers"
+layers = [
+  "ledgergate.cli",
+  "ledgergate.runner",
+  "ledgergate.invariants | ledgergate.report",
+  "ledgergate.ledger",
+]
+
+[[tool.importlinter.contracts]]
+name = "Ledger core is pure: no I/O, no network, no framework"
+type = "forbidden"
+source_modules = ["ledgergate.ledger"]
+forbidden_modules = [
+  "ledgergate.runner",
+  "ledgergate.adapters",
+  "ledgergate.report",
+  "ledgergate.cli",
+  "json",
+  "pathlib",
+  "sqlite3",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters never leak into invariants"
+type = "forbidden"
+source_modules = ["ledgergate.invariants"]
+forbidden_modules = ["ledgergate.adapters", "ledgergate.runner"]

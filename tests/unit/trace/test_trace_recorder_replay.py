@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from ledgergate.ledger import (
     ConflictingCurrencyError,
     Currency,
     EntryDraft,
+    FixedClock,
     IllegalTransitionError,
     InvalidAmountError,
     Money,
@@ -39,6 +41,7 @@ from ledgergate.trace import (
     ToolResultEvent,
     TraceError,
     dump_trace,
+    load_trace,
     parse_trace,
     replay_trace,
 )
@@ -183,6 +186,20 @@ class TestRecorder:
         assert isinstance(res, ToolResultEvent) and res.error is not None
         assert res.error.type == "TimeoutError"
         assert replay_trace(rec.trace()).consistent
+
+    def test_non_utc_clock_replays_faithfully_through_the_published_path(self) -> None:
+        """Ledger and trace share one canonical timestamp, so a -05:00 clock still
+        reproduces its own head after dump/load."""
+        est = FixedClock(datetime(2025, 12, 31, 19, tzinfo=timezone(timedelta(hours=-5))))
+        rec = Recorder("t", AgentDoc(name="a"), CHART, est, SequentialIds())
+        rec.execute(Post("p", sale()))
+        trace = load_trace(dump_trace(rec.trace()))
+        result = trace.events[-1]
+        assert isinstance(result, LedgerResultEvent) and result.posted_at is not None
+        assert result.posted_at.tzinfo is UTC
+        assert result.posted_at == rec.ledger.entries[0].posted_at
+        report = replay_trace(trace)
+        assert report.consistent and report.ledger.head == rec.ledger.head
 
     def test_unserializable_tool_payload_is_refused_at_record_time(self) -> None:
         rec = recorder()

@@ -17,11 +17,13 @@ holding a reference can still mutate them. Nothing the ledger or replay reads li
 A trace with a field this version does not know is not "probably fine"; it is a different
 version, and it fails.
 
-Three things the schema cannot say are enforced here and listed in its description:
-``seq`` strictly increases; every command has exactly one result, after it, and there are
-no other results; every currency code resolves to an exponent. A document that passes the
-schema but fails one of these is rejected by :func:`~ledgergate.trace.io.parse_trace`, so
-nothing downstream has to defend against it.
+What the schema cannot say is enforced here and listed in its description as rules (1)
+to (8): ``seq`` strictly increases; every ledger command and every tool call has exactly
+one result, after it, with none orphaned; ids are unique; a command's ``call_id`` names a
+preceding call; every currency code resolves and never contradicts a bundled exponent;
+tool payloads are bounded in aggregate. A document that passes the schema but fails one
+of these is rejected by :func:`~ledgergate.trace.io.parse_trace`, so nothing downstream
+has to defend against it.
 """
 
 from __future__ import annotations
@@ -79,7 +81,9 @@ Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 def _to_utc(value: datetime) -> datetime:
     """Normalize to UTC so equal instants serialize identically. ``AwareDatetime`` has
-    already refused a naive value by the time this runs."""
+    already refused a naive value by the time this runs. The ledger applies the same
+    normalization to every ``posted_at`` it hashes, so a recorded effect fed back on
+    replay reproduces the recorded digest exactly."""
     return value.astimezone(UTC)
 
 

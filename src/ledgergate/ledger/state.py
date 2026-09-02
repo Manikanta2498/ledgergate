@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ledgergate.ledger.accounts import Account, ChartOfAccounts, freeze
 from ledgergate.ledger.effects import Clock, IdGenerator
@@ -33,6 +33,7 @@ from ledgergate.ledger.errors import (
     EntryRequiredError,
     IdempotencyConflictError,
     InsufficientFundsError,
+    InvalidAmountError,
     UnknownEntryError,
     UnknownTransactionError,
 )
@@ -155,6 +156,20 @@ class TrialBalance:
 
 
 # --------------------------------------------------------------------- ledger
+
+
+def _canonical_time(at: datetime) -> datetime:
+    """Every timestamp the ledger stores and hashes is UTC.
+
+    The digest covers ``posted_at.isoformat()``. Two clocks reading the same instant in
+    different zones would otherwise produce different digests for the same entry, and a
+    trace that normalizes to UTC (as the schema requires) could not reproduce the head of
+    the ledger it recorded. A naive datetime is refused outright: ``astimezone`` on a
+    naive value consults the system's local zone, which is a hidden wall-clock input.
+    """
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise InvalidAmountError("Clock.now() must return a timezone-aware datetime")
+    return at.astimezone(UTC)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -385,7 +400,7 @@ class Ledger:
         entry_id = require_identifier(ids.next_id(), "generated entry id")
         if entry_id in self._by_id:
             raise DuplicateEntryIdError(entry_id)
-        posted_at: datetime = clock.now()
+        posted_at = _canonical_time(clock.now())
         digest = Entry.compute_digest(
             entry_id=entry_id,
             sequence=sequence,

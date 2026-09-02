@@ -1,5 +1,2 @@
 # SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
 # SPDX-License-Identifier: BUSL-1.1
-"""Command line interface for LedgerGate."""
-
-from __future__ import annotations

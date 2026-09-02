@@ -1,21 +1,27 @@
-.PHONY: help install check fmt lint types imports determinism test cov audit clean
+.PHONY: help install hooks check fmt lint types imports determinism licenses test cov audit secrets clean
 
 help:
 	@echo "install      install the project and dev dependencies"
-	@echo "check        run every gate (what CI runs)"
+	@echo "hooks        install the pre-commit hooks into .git/hooks"
+	@echo "check        run every gate (CI also scans the full git history for secrets)"
 	@echo "fmt          format the code"
 	@echo "lint         ruff lint"
 	@echo "types        mypy --strict"
 	@echo "imports      import-linter architecture contracts"
 	@echo "determinism  ledger core purity gate"
+	@echo "licenses     per-file SPDX boundary gate"
 	@echo "test         pytest, offline"
 	@echo "cov          pytest with coverage gates"
 	@echo "audit        dependency vulnerability scan"
+	@echo "secrets      gitleaks scan of the working tree"
 
 install:
 	uv sync --all-groups
 
-check: lint types imports determinism cov
+hooks:
+	uv run pre-commit install
+
+check: lint types imports determinism licenses cov audit secrets
 	@echo ""
 	@echo "all gates passed"
 
@@ -36,6 +42,9 @@ imports:
 determinism:
 	uv run python scripts/check_determinism.py
 
+licenses:
+	uv run python scripts/check_licenses.py
+
 test:
 	uv run pytest
 
@@ -44,6 +53,9 @@ cov:
 
 audit:
 	uv run pip-audit
+
+secrets:
+	uv run pre-commit run gitleaks --all-files
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .hypothesis htmlcov .coverage coverage.xml

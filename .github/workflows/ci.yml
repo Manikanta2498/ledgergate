@@ -57,5 +57,60 @@ jobs:
       - name: Ledger determinism gate
         run: uv run python scripts/check_determinism.py
 
+      - name: License boundary gate
+        run: uv run python scripts/check_licenses.py
+
       - name: Tests
         run: uv run pytest --cov --cov-report=term-missing --cov-fail-under=90
+
+  # Supply-chain and secret gates. Split out of the matrix because they are
+  # version-independent; running them three times would only cost minutes.
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+    steps:
+      # fetch-depth: 0 because the history scan below needs the whole history,
+      # not the single commit a shallow clone provides.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --all-groups --locked
+
+      # Installed from a pinned release verified by checksum rather than via the
+      # gitleaks action, which requires a paid license key for organization-owned
+      # repositories and would break this gate the day the repo moves to an org.
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL "$url" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tar.gz
+
+      # Cassettes are recorded provider traffic, so a leaked credential is a
+      # realistic failure mode here rather than a theoretical one. Both scans run:
+      # `dir` catches a secret sitting in the tree, `git` catches one that was
+      # committed and then deleted, which `dir` cannot see.
+      - name: Secret scan (working tree)
+        run: gitleaks dir --redact --no-banner --verbose .
+
+      - name: Secret scan (full history)
+        run: gitleaks git --redact --no-banner --verbose .
+
+      - name: Dependency vulnerability audit
+        run: uv run pip-audit

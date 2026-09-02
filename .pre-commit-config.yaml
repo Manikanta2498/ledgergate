@@ -23,15 +23,27 @@ repos:
         args: [--fix]
 
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.0
+    rev: v8.30.1
     hooks:
       - id: gitleaks
 
+  # `language: script` executes the file through its own `#!/usr/bin/env python3`
+  # shebang. `language: system` with `entry: python ...` was wrong: an installed Git
+  # hook does not inherit the PATH that `uv run` sets up, and plenty of systems
+  # (including macOS) ship `python3` with no bare `python` at all, so the hook failed
+  # for every real commit while passing under `uv run pre-commit`.
   - repo: local
     hooks:
       - id: determinism
         name: ledger core determinism gate
-        entry: python scripts/check_determinism.py
-        language: system
+        entry: scripts/check_determinism.py
+        language: script
         pass_filenames: false
         files: ^src/ledgergate/ledger/
+
+      - id: licenses
+        name: per-file SPDX boundary gate
+        entry: scripts/check_licenses.py
+        language: script
+        pass_filenames: false
+        files: ^(src/ledgergate/|corpus/|schema/)

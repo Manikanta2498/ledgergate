@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+# SPDX-License-Identifier: BUSL-1.1
 """LedgerGate idempotency package."""
 
 from __future__ import annotations

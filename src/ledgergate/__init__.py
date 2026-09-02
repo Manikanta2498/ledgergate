@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+# SPDX-License-Identifier: BUSL-1.1
 """LedgerGate: financial correctness and release-control runtime for money-moving agents.
 
 The public API surface is intentionally small and versioned independently of the

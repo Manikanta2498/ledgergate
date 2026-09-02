@@ -7,7 +7,7 @@
 
 LedgerGate makes three claims that only hold if the architecture enforces them:
 
-1. Replay is byte-reproducible, which is what makes CI cost nothing and makes
+1. Replay is reproducible to the hash, which is what makes CI cost nothing and makes
    model-drift comparisons meaningful rather than noise.
 2. The corpus is framework-agnostic, so a team on LangGraph or the raw OpenAI SDK can
    run it without adopting our harness.
@@ -20,10 +20,19 @@ without naming a backend that provides those guarantees.
 
 ## Decision
 
-**Src-layout, single distribution.** Everything lives under `src/ledgergate/`. Top-level
-`ledger` and `report` packages are already taken on PyPI and would collide on `sys.path`.
-Src-layout additionally means tests exercise the installed wheel, which catches missing
-package data. That matters here because the YAML corpus ships as package data.
+**Src-layout for the runtime.** Everything importable lives under `src/ledgergate/`.
+Top-level `ledger` and `report` packages are already taken on PyPI and would collide on
+`sys.path`. Src-layout additionally means tests exercise the installed wheel rather than
+the working tree, so a packaging mistake fails CI instead of failing a user.
+
+**The corpus and schema are not package data.** `corpus/` and `schema/` stay at the
+repository root, outside the wheel. They are Apache-2.0 and the runtime is BUSL-1.1;
+vendoring the former into the latter's distribution would blur exactly the boundary the
+license split exists to draw, and would force every adopter who only wants the schema to
+take the BUSL artifact to get it. The runtime therefore locates them by explicit path,
+and they are published separately when they stabilize. The cost is that a corpus run
+needs a path argument rather than working from a bare `pip install`; that is the correct
+trade for a contract meant to outlive this implementation.
 
 **The ledger core is pure; effects are injected.** `Clock`, `IdGenerator` and
 `FxRateSource` are Protocols supplied by the caller. The core is a function of
@@ -52,6 +61,12 @@ boundary is a build error rather than a code-review opinion.
   friction by design.
 - The schema becomes a public contract with its own version and deprecation policy.
   Breaking it is a major-version event, and contract tests pin v1 cassettes.
+- The wheel stays single-licensed. The license boundary is a directory boundary, so it is
+  checked mechanically rather than argued about: `scripts/check_licenses.py` requires a
+  BUSL-1.1 declaration on *every* file under `src/ledgergate/`, not only the `.py` ones,
+  because package data added later would otherwise enter the wheel unlabelled.
+- Corpus resolution needs an explicit path, so the CLI must fail with a clear message
+  when it is missing rather than silently scoring zero scenarios.
 - Claims in the README and in interviews are bounded by what the gates enforce. Anything
   the gates do not prove does not get claimed.
 

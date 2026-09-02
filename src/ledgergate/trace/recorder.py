@@ -74,15 +74,23 @@ class Recorder:
         # ChartOfAccounts guarantees one exponent per code, so this cannot conflict.
         self._currencies.update(self.chart.currencies())
 
-    def _register(self, cur: Currency) -> None:
-        """Record a currency for the trace, refusing a second exponent for a known code.
+    def _register_all(self, currencies: set[Currency]) -> None:
+        """Record every currency a command carries, or none of them.
 
-        Silently keeping the first would let a command in CAD/3 be replayed as CAD/2: a
-        tenfold change in meaning that a clean replay would then certify.
+        Validation runs against a candidate copy and commits only if the whole set is
+        consistent, both internally (a command carrying CAD/2 and CAD/3 at once) and
+        against what is already registered. A rejected command must leave the recorder
+        exactly as it found it; otherwise a later valid command could be refused because
+        of one that was never recorded. Silently keeping the first exponent seen would
+        let a command in CAD/3 be replayed as CAD/2: a tenfold change in meaning that a
+        clean replay would then certify.
         """
-        known = self._currencies.setdefault(cur.code, cur)
-        if known.exponent != cur.exponent:
-            raise ConflictingCurrencyError(cur.code, (known.exponent, cur.exponent))
+        candidate = dict(self._currencies)
+        for cur in sorted(currencies, key=lambda c: (c.code, c.exponent)):
+            known = candidate.setdefault(cur.code, cur)
+            if known.exponent != cur.exponent:
+                raise ConflictingCurrencyError(cur.code, (known.exponent, cur.exponent))
+        self._currencies = candidate
 
     # ----------------------------------------------------------- primitives
 
@@ -118,6 +126,8 @@ class Recorder:
     def tool_result(
         self, call_id: str, ok: bool, result: JsonValue = None, error: Exception | None = None
     ) -> None:
+        """Record a tool outcome. A failure must say why; a success must not carry an
+        error. A timeout is a failure with an error, not a call left without a result."""
         self.events.append(
             ToolResultEvent(
                 seq=self._next_seq(),
@@ -142,8 +152,7 @@ class Recorder:
         # Exponents travel with the trace, so a consumer that does not bundle this
         # currency can still replay it exactly. A conflicting exponent is refused before
         # anything is recorded: the command could not be written down faithfully.
-        for cur in command_currencies(command):
-            self._register(cur)
+        self._register_all(command_currencies(command))
         self._commands += 1
         command_id = f"cmd-{self._commands:06d}"
         self.events.append(

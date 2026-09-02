@@ -117,6 +117,9 @@ def _check_payload(value: JsonValue) -> JsonValue:
 
 
 Payload = Annotated[JsonValue, AfterValidator(_check_payload)]
+# The whole arguments object is one payload: the limits apply to the aggregate, not to
+# each value separately, or two 6,000-node arguments would pass a 10,000-node limit.
+Arguments = Annotated[dict[str, JsonValue], AfterValidator(_check_payload)]
 
 
 class _Strict(BaseModel):
@@ -383,16 +386,27 @@ class ToolCallEvent(_Event):
     type: Literal["tool_call"] = "tool_call"
     call_id: Identifier
     tool: Identifier
-    arguments: dict[str, Payload]
+    arguments: Arguments
     idempotency_key: Identifier | None = None
 
 
 class ToolResultEvent(_Event):
+    """Shape depends on ``ok``, like ``ledger_result``: a failure says why, a success
+    does not carry an error."""
+
     type: Literal["tool_result"] = "tool_result"
     call_id: Identifier
     ok: StrictBool
     result: Payload = None
     error: ErrorDoc | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> ToolResultEvent:
+        if self.ok and self.error is not None:
+            raise ValueError("successful tool_result must not carry an error")
+        if not self.ok and self.error is None:
+            raise ValueError("failed tool_result requires error")
+        return self
 
 
 class LedgerCommandEvent(_Event):
@@ -490,6 +504,31 @@ class Trace(_Strict):
             raise ValueError(f"ledger_command without a result: {unanswered}")
         if early := sorted(c for c, s in command_seq.items() if result_seq[c] <= s):
             raise ValueError(f"ledger_result precedes its command: {early}")
+
+        # Tool calls follow the same discipline as ledger commands: one call, one result,
+        # result after call, nothing orphaned. A call the run abandoned is recorded as a
+        # failed result with an error (a timeout is an outcome), not as a missing one.
+        calls = [e for e in self.events if isinstance(e, ToolCallEvent)]
+        tool_results = [e for e in self.events if isinstance(e, ToolResultEvent)]
+        call_seq = {c.call_id: c.seq for c in calls}
+        if len(call_seq) != len(calls):
+            raise ValueError("tool_call ids must be unique")
+        tool_result_seq = {r.call_id: r.seq for r in tool_results}
+        if len(tool_result_seq) != len(tool_results):
+            raise ValueError("each tool_call may have only one tool_result")
+        if orphans := sorted(tool_result_seq.keys() - call_seq.keys()):
+            raise ValueError(f"tool_result without a call: {orphans}")
+        if unanswered := sorted(call_seq.keys() - tool_result_seq.keys()):
+            raise ValueError(f"tool_call without a result: {unanswered}")
+        if early := sorted(c for c, s in call_seq.items() if tool_result_seq[c] <= s):
+            raise ValueError(f"tool_result precedes its call: {early}")
+        for command_event in commands:
+            cid = command_event.call_id
+            if cid is not None and call_seq.get(cid, command_event.seq) >= command_event.seq:
+                raise ValueError(
+                    f"ledger_command {command_event.command_id} references call {cid!r},"
+                    " which does not precede it"
+                )
 
         # Currencies: everything referenced must resolve, and declarations must not
         # contradict the bundled table (a trace cannot redefine what a US cent is).

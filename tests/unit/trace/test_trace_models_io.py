@@ -324,6 +324,98 @@ class TestTraceValidation:
         with pytest.raises(TraceError):
             parse_trace(minimal(trace_id=f"a{sep}b"))
 
+    def _call(self, seq: int, cid: str) -> dict[str, object]:
+        return {
+            "seq": seq,
+            "at": "2026-01-01T00:00:00Z",
+            "type": "tool_call",
+            "call_id": cid,
+            "tool": "t",
+            "arguments": {},
+        }
+
+    def _tres(self, seq: int, cid: str, ok: bool = True) -> dict[str, object]:
+        base: dict[str, object] = {
+            "seq": seq,
+            "at": "2026-01-01T00:00:00Z",
+            "type": "tool_result",
+            "call_id": cid,
+            "ok": ok,
+        }
+        if not ok:
+            base["error"] = {"type": "Timeout", "message": "upstream"}
+        return base
+
+    def test_tool_result_shape(self) -> None:
+        with pytest.raises(TraceError, match="requires error"):
+            parse_trace(
+                minimal(
+                    events=[self._call(1, "c"), {**self._tres(2, "c", ok=False), "error": None}]
+                )
+            )
+        with pytest.raises(TraceError, match="must not carry an error"):
+            parse_trace(
+                minimal(
+                    events=[
+                        self._call(1, "c"),
+                        {**self._tres(2, "c"), "error": {"type": "E", "message": ""}},
+                    ]
+                )
+            )
+        assert (
+            len(
+                parse_trace(
+                    minimal(events=[self._call(1, "c"), self._tres(2, "c", ok=False)])
+                ).events
+            )
+            == 2
+        )
+
+    def test_tool_call_result_pairing(self) -> None:
+        assert (
+            len(parse_trace(minimal(events=[self._call(1, "c"), self._tres(2, "c")])).events) == 2
+        )
+        cases = {
+            "tool_call ids must be unique": [
+                self._call(1, "c"),
+                self._call(2, "c"),
+                self._tres(3, "c"),
+            ],
+            "only one tool_result": [self._call(1, "c"), self._tres(2, "c"), self._tres(3, "c")],
+            "tool_result without a call": [self._tres(1, "ghost")],
+            "tool_call without a result": [self._call(1, "c")],
+            "precedes its call": [self._tres(1, "c"), self._call(2, "c")],
+        }
+        for message, events in cases.items():
+            with pytest.raises(TraceError, match=message):
+                parse_trace(minimal(events=events))
+
+    def test_ledger_command_call_id_must_name_a_preceding_call(self) -> None:
+        cmd = {**self._cmd(1, "m"), "call_id": "c"}
+        with pytest.raises(TraceError, match="does not precede"):
+            parse_trace(
+                minimal(events=[cmd, self._res(2, "m"), self._call(3, "c"), self._tres(4, "c")])
+            )
+        with pytest.raises(TraceError, match="does not precede"):
+            parse_trace(minimal(events=[cmd, self._res(2, "m")]))  # no such call at all
+        ok = [
+            self._call(1, "c"),
+            self._tres(2, "c"),
+            {**self._cmd(3, "m"), "call_id": "c"},
+            self._res(4, "m"),
+        ]
+        assert len(parse_trace(minimal(events=ok)).events) == 4
+
+    def test_payload_limit_applies_to_arguments_as_a_whole(self) -> None:
+        with pytest.raises(ValueError, match="nodes"):
+            ToolCallEvent(
+                seq=1, at=AT, call_id="c", tool="t", arguments={"a": [0] * 6000, "b": [0] * 6000}
+            )
+        assert (
+            ToolCallEvent(seq=1, at=AT, call_id="c", tool="t", arguments={"a": [0] * 6000}).call_id
+            == "c"
+        )
+
     def test_duplicate_chart_account_ids_are_rejected(self) -> None:
         acct = {"account_id": "x", "kind": "asset", "currency": "USD"}
         with pytest.raises(TraceError, match="account ids must be unique"):

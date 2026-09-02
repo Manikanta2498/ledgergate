@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Manikanta2498/ledgergate/schema/trace/v1.json",
   "title": "LedgerGate execution trace, version 1",
-  "description": "A normalized record of one agent run against a money-moving system: what the agent said and called, which ledger commands the system derived from that, and what the ledger did with them. Any agent that emits this document can be checked by the LedgerGate invariant suite, whatever framework produced it.\n\nConstraints JSON Schema cannot express, enforced by conforming consumers: (1) `seq` is strictly increasing; (2) every `ledger_command` has exactly one `ledger_result` with the same `command_id`, appearing after it, and there are no other results; (3) `command_id` values are unique; (4) every currency code used anywhere resolves to an entry in `currencies` or to one of the well-known codes the consumer bundles, and a declared code never contradicts a bundled exponent; (5) `currencies[].code` values are unique; (6) `chart[].account_id` values are unique.",
+  "description": "A normalized record of one agent run against a money-moving system: what the agent said and called, which ledger commands the system derived from that, and what the ledger did with them. Any agent that emits this document can be checked by the LedgerGate invariant suite, whatever framework produced it.\n\nConstraints JSON Schema cannot express, enforced by conforming consumers: (1) `seq` is strictly increasing; (2) every `ledger_command` has exactly one `ledger_result` with the same `command_id`, appearing after it, and there are no other results; (3) `command_id` values are unique; (4) every currency code used anywhere resolves to an entry in `currencies` or to one of the well-known codes the consumer bundles, and a declared code never contradicts a bundled exponent; (5) `currencies[].code` values are unique; (6) `chart[].account_id` values are unique; (7) every `tool_call` has exactly one `tool_result` with the same `call_id`, appearing after it, and there are no other tool results; `call_id` values are unique; a `ledger_command.call_id`, when present, names a `tool_call` that precedes it; (8) tool `arguments` (as a whole) and `result` are bounded: nesting depth at most 32 and at most 10000 values, and every number is finite.",
   "type": "object",
   "unevaluatedProperties": false,
   "required": [
@@ -577,7 +577,32 @@
             "call_id",
             "ok"
           ],
-          "unevaluatedProperties": false
+          "unevaluatedProperties": false,
+          "oneOf": [
+            {
+              "properties": {
+                "ok": {
+                  "const": true
+                }
+              },
+              "not": {
+                "required": [
+                  "error"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "ok": {
+                  "const": false
+                }
+              },
+              "required": [
+                "error"
+              ]
+            }
+          ],
+          "description": "Shape depends on `ok`, like `ledger_result`: a failure requires `error`, a success forbids it. A call the run abandoned (a timeout, a crash) is a failed result with an error, not a call without a result."
         },
         {
           "properties": {

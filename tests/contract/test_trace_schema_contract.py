@@ -141,6 +141,8 @@ REFUND_CMD = next(
     if e["type"] == "ledger_command" and e["command"]["kind"] == "refund"
 )
 LEDGER_RES = next(i for i, e in enumerate(BASE["events"]) if e["type"] == "ledger_result")
+TOOL_CALL = next(i for i, e in enumerate(BASE["events"]) if e["type"] == "tool_call")
+TOOL_RES = next(i for i, e in enumerate(BASE["events"]) if e["type"] == "tool_result")
 APPEND_RES = next(
     i for i, e in enumerate(BASE["events"]) if e["type"] == "ledger_result" and e.get("entry_id")
 )
@@ -181,6 +183,11 @@ INVALID: dict[str, dict[str, Any]] = {
     "string ok": mutate(BASE, ["events", LEDGER_RES, "ok"], "true"),
     "bad account kind": mutate(BASE, ["chart", 0, "kind"], "cash"),
     "non-string metadata": mutate(BASE, ["metadata"], {"k": 1}),
+    # Tool result shape
+    "failed tool result without error": mutate(BASE, ["events", TOOL_RES, "ok"], False),
+    "successful tool result with error": mutate(
+        BASE, ["events", TOOL_RES, "error"], {"type": "E", "message": ""}
+    ),
     # Result shape: success
     "success without head": mutate(BASE, ["events", LEDGER_RES, "head"], REMOVE),
     "success without sequence": mutate(BASE, ["events", LEDGER_RES, "sequence"], REMOVE),
@@ -260,6 +267,20 @@ RUNTIME_ONLY: dict[str, dict[str, Any]] = {
         "currencies": [*BASE["currencies"], {"code": "JPY", "exponent": 2}],
     },
     "duplicate chart account id": {**BASE, "chart": [*BASE["chart"], BASE["chart"][0]]},
+    "orphan tool result": {
+        **BASE,
+        "events": [
+            *BASE["events"],
+            {**BASE["events"][TOOL_RES], "seq": 10_000, "call_id": "ghost"},
+        ],
+    },
+    "duplicate tool call": {
+        **BASE,
+        "events": [*BASE["events"], {**BASE["events"][TOOL_CALL], "seq": 10_000}],
+    },
+    "oversize aggregate arguments": mutate(
+        BASE, ["events", TOOL_CALL, "arguments"], {"a": [0] * 6000, "b": [0] * 6000}
+    ),
 }
 
 
@@ -272,6 +293,7 @@ def test_cross_event_rules_are_runtime_only_and_documented(name: str) -> None:
     description = load_schema()["description"]
     assert "exactly one `ledger_result`" in description and "resolves" in description
     assert "`chart[].account_id` values are unique" in description
+    assert "exactly one `tool_result`" in description and "at most 32" in description
 
 
 def test_zero_amount_attempt_is_representable_by_both() -> None:

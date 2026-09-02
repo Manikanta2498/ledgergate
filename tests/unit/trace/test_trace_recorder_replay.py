@@ -36,6 +36,7 @@ from ledgergate.trace import (
     LedgerCommandEvent,
     LedgerResultEvent,
     Recorder,
+    ToolResultEvent,
     TraceError,
     dump_trace,
     parse_trace,
@@ -150,6 +151,38 @@ class TestRecorder:
         with pytest.raises(ConflictingCurrencyError):
             rec.execute(OpenTransaction("o2", "t2", Money(1000, cad2)))
         assert replay_trace(rec.trace()).ledger.transaction("t").amount == Money(1000, cad3)
+
+    def test_rejected_command_leaves_the_recorder_untouched(self) -> None:
+        """One command carrying CAD/2 and CAD/3: refused, and nothing leaks into state."""
+        cad2, cad3 = Currency("CAD", 2), Currency("CAD", 3)
+        rec = Recorder(
+            "t", AgentDoc(name="a"), ChartOfAccounts([]), SteppingClock(EPOCH), SequentialIds()
+        )
+        mixed = Refund(
+            "r",
+            "t",
+            Money(1, cad2),
+            EntryDraft.of(debit("a", Money(1, cad3)), credit("b", Money(1, cad3))),
+        )
+        with pytest.raises(ConflictingCurrencyError):
+            rec.execute(mixed)
+        assert rec.events == [] and dict(rec._currencies) == {}
+        # A later command in either exponent is still fine: the rejection had no side effects.
+        rec.execute(OpenTransaction("o", "t", Money(1, cad3)))
+        assert {c.code: c.exponent for c in rec.trace().currencies or ()} == {"CAD": 3}
+
+    def test_tool_result_shape_is_enforced_at_record_time(self) -> None:
+        rec = recorder()
+        rec.tool_call("c", "tool", {})
+        with pytest.raises(ValueError, match="requires error"):
+            rec.tool_result("c", False)
+        with pytest.raises(ValueError, match="must not carry an error"):
+            rec.tool_result("c", True, error=RuntimeError("x"))
+        rec.tool_result("c", False, error=TimeoutError("upstream timed out"))
+        res = rec.events[-1]
+        assert isinstance(res, ToolResultEvent) and res.error is not None
+        assert res.error.type == "TimeoutError"
+        assert replay_trace(rec.trace()).consistent
 
     def test_unserializable_tool_payload_is_refused_at_record_time(self) -> None:
         rec = recorder()

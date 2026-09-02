@@ -79,6 +79,7 @@ rec.execute(Advance("auth-42", "order-42", TransactionEvent.AUTHORIZE))
 rec.execute(Advance("settle-42", "order-42", TransactionEvent.SETTLE, sale))
 rec.execute(Refund("refund-42", "order-42", Money(1999, USD), sale.reversed()))
 rec.execute(Refund("refund-42", "order-42", Money(1999, USD), sale.reversed()))  # the retry
+rec.tool_result("c1", ok=True, result={"status": "refunded"})  # exactly one result per call
 
 text = dump_trace(rec.trace())  # canonical JSON: sorted keys, byte-stable
 validate_document(json.loads(text))  # against schema/trace/v1.json
@@ -99,10 +100,11 @@ exponents, so a trace using a currency this runtime does not bundle still replay
 
 The schema and the runtime models are held to each other by contract tests on both valid
 and invalid documents. The rules JSON Schema cannot express are listed in the schema's own
-description and enforced by the models: `seq` strictly increases, every command has
-exactly one result after it and there are no others, and every currency code resolves.
-One further asymmetry is pinned: the runtime refuses a whole float like `5.0` where the
-schema's `integer` must admit it, because the JSON data model has one number type.
+description and enforced by the models: `seq` strictly increases; every ledger command
+and every tool call has exactly one result after it, with none orphaned; ids are unique;
+every currency code resolves; tool payloads are bounded in depth and size. One further
+asymmetry is pinned: the runtime refuses a whole float like `5.0` where the schema's
+`integer` must admit it, because the JSON data model has one number type.
 
 ## The ledger core
 

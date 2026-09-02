@@ -35,19 +35,32 @@ README = Path(__file__).resolve().parents[2] / "README.md"
 ERROR_CASES_MARKER = "# Unbalanced entries cannot be constructed"
 
 
-def readme_block() -> str:
+def readme_blocks() -> list[str]:
     text = README.read_text(encoding="utf-8")
-    match = re.search(r"```python\n(.*?)```", text, re.DOTALL)
-    assert match, "README has no python block"
-    return match.group(1)
+    blocks = re.findall(r"```python\n(.*?)```", text, re.DOTALL)
+    assert len(blocks) >= 2, "README should show both the ledger core and the trace schema"
+    return blocks
 
 
-def test_readme_happy_path_runs() -> None:
-    block = readme_block()
-    assert ERROR_CASES_MARKER in block
+def readme_block() -> str:
+    """The ledger-core block: the one that demonstrates the documented error cases."""
+    return next(b for b in readme_blocks() if ERROR_CASES_MARKER in b)
+
+
+@pytest.mark.parametrize("index", range(2))
+def test_every_readme_block_runs(index: int) -> None:
+    """Each block is executed up to the point where it deliberately demonstrates errors."""
+    block = readme_blocks()[index]
     runnable = block.split(ERROR_CASES_MARKER)[0]
     namespace: dict[str, object] = {}
     exec(compile(runnable, str(README), "exec"), namespace)
+    # Each block ends in assertions; reaching here means they held.
+    assert namespace, "block produced no bindings"
+
+
+def test_readme_happy_path_runs() -> None:
+    namespace: dict[str, object] = {}
+    exec(compile(readme_block().split(ERROR_CASES_MARKER)[0], str(README), "exec"), namespace)
     assert namespace["retry"].replayed  # type: ignore[attr-defined]
 
 

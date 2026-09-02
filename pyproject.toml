@@ -22,9 +22,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+  "jsonschema>=4.25",
   "pydantic>=2.13",
   "pyyaml>=6.0",
-  "jsonschema>=4.25",
+  "rfc3339-validator>=0.1.4",
 ]
 
 [project.urls]
@@ -47,6 +48,7 @@ dev = [
   "types-PyYAML>=6.0",
   "pip-audit>=2.10",
   "pre-commit>=4.0",
+  "types-jsonschema>=4.23",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -152,12 +154,13 @@ root_package = "ledgergate"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layered architecture: cli -> runner -> {invariants, report} -> ledger -> schema"
+name = "Layered architecture: cli -> runner -> {invariants, report} -> trace -> ledger"
 type = "layers"
 layers = [
   "ledgergate.cli",
   "ledgergate.runner",
   "ledgergate.invariants | ledgergate.report",
+  "ledgergate.trace",
   "ledgergate.ledger",
 ]
 
@@ -170,9 +173,11 @@ forbidden_modules = [
   "ledgergate.adapters",
   "ledgergate.report",
   "ledgergate.cli",
+  "ledgergate.trace",
   "json",
   "pathlib",
   "sqlite3",
+  "pydantic",
 ]
 
 [[tool.importlinter.contracts]]

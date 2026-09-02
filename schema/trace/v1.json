@@ -1,0 +1,544 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Manikanta2498/ledgergate/schema/trace/v1.json",
+  "title": "LedgerGate execution trace, version 1",
+  "description": "A normalized record of one agent run against a money-moving system: what the agent said and called, which ledger commands the system derived from that, and what the ledger did with them. Any agent that emits this document can be checked by the LedgerGate invariant suite, whatever framework produced it. Events are ordered by `seq`, which must be strictly increasing; that constraint is stated here and enforced by consumers, because JSON Schema cannot express it.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "schema_version",
+    "trace_id",
+    "agent",
+    "started_at",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "trace_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "scenario_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "agent": {
+      "$ref": "#/$defs/agent"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "chart": {
+      "description": "The chart of accounts the ledger commands were executed against. Required by any consumer that replays the commands.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/account"
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "metadata": {
+      "$ref": "#/$defs/string_map"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "description": "Non-empty, single-line, no leading or trailing whitespace.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "string_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "currency": {
+      "description": "ISO 4217 alphabetic code.",
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "money": {
+      "description": "An exact amount in integer minor units. There is deliberately no floating-point form. Note that JSON Schema's `integer` admits `5.0` (the JSON data model has a single number type); conforming producers must emit integers without a fractional part, and the reference runtime rejects whole floats.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "integer"
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        }
+      }
+    },
+    "positive_money": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/money"
+        },
+        {
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "agent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "model": {
+          "type": "string"
+        },
+        "framework": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "account_id",
+        "kind",
+        "currency"
+      ],
+      "properties": {
+        "account_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "asset",
+            "liability",
+            "equity",
+            "revenue",
+            "expense"
+          ]
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "allow_negative": {
+          "type": "boolean",
+          "default": true
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "posting": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "account",
+        "side",
+        "money"
+      ],
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/identifier"
+        },
+        "side": {
+          "enum": [
+            "debit",
+            "credit"
+          ]
+        },
+        "money": {
+          "$ref": "#/$defs/positive_money"
+        }
+      }
+    },
+    "entry_draft": {
+      "description": "A journal entry as proposed. Consumers re-check balance; the schema only requires at least two postings.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "postings"
+      ],
+      "properties": {
+        "postings": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/posting"
+          }
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "$ref": "#/$defs/string_map"
+        }
+      }
+    },
+    "lifecycle_event": {
+      "enum": [
+        "authorize",
+        "settle",
+        "refund",
+        "dispute",
+        "resolve_dispute",
+        "cancel",
+        "fail"
+      ]
+    },
+    "command": {
+      "description": "A ledger command, one-to-one with `ledgergate.ledger` command types. Every command carries an idempotency key.",
+      "type": "object",
+      "required": [
+        "kind",
+        "key"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "post",
+            "reverse",
+            "open_transaction",
+            "advance",
+            "refund"
+          ]
+        },
+        "key": {
+          "$ref": "#/$defs/identifier"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "post"
+            },
+            "key": true,
+            "draft": {
+              "$ref": "#/$defs/entry_draft"
+            }
+          },
+          "required": [
+            "draft"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "reverse"
+            },
+            "key": true,
+            "entry_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "description": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "entry_id"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "open_transaction"
+            },
+            "key": true,
+            "transaction_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "amount": {
+              "$ref": "#/$defs/positive_money"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "amount"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "advance"
+            },
+            "key": true,
+            "transaction_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "event": {
+              "enum": [
+                "authorize",
+                "settle",
+                "dispute",
+                "resolve_dispute",
+                "cancel",
+                "fail"
+              ]
+            },
+            "entry": {
+              "$ref": "#/$defs/entry_draft"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "event"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "refund"
+            },
+            "key": true,
+            "transaction_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "money": {
+              "$ref": "#/$defs/positive_money"
+            },
+            "entry": {
+              "$ref": "#/$defs/entry_draft"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "money"
+          ],
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "type",
+        "message"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "event_base": {
+      "type": "object",
+      "required": [
+        "seq",
+        "at",
+        "type"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "enum": [
+            "message",
+            "tool_call",
+            "tool_result",
+            "ledger_command",
+            "ledger_result"
+          ]
+        }
+      }
+    },
+    "event": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/event_base"
+        }
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "seq": true,
+            "at": true,
+            "type": {
+              "const": "message"
+            },
+            "role": {
+              "enum": [
+                "system",
+                "user",
+                "assistant",
+                "tool"
+              ]
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "seq": true,
+            "at": true,
+            "type": {
+              "const": "tool_call"
+            },
+            "call_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "tool": {
+              "$ref": "#/$defs/identifier"
+            },
+            "arguments": {
+              "type": "object"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/identifier"
+            }
+          },
+          "required": [
+            "call_id",
+            "tool",
+            "arguments"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "seq": true,
+            "at": true,
+            "type": {
+              "const": "tool_result"
+            },
+            "call_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "result": {},
+            "error": {
+              "$ref": "#/$defs/error"
+            }
+          },
+          "required": [
+            "call_id",
+            "ok"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "seq": true,
+            "at": true,
+            "type": {
+              "const": "ledger_command"
+            },
+            "command_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "call_id": {
+              "description": "The tool call this command was derived from, if any.",
+              "$ref": "#/$defs/identifier"
+            },
+            "command": {
+              "$ref": "#/$defs/command"
+            }
+          },
+          "required": [
+            "command_id",
+            "command"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "properties": {
+            "seq": true,
+            "at": true,
+            "type": {
+              "const": "ledger_result"
+            },
+            "command_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "replayed": {
+              "type": "boolean"
+            },
+            "error": {
+              "$ref": "#/$defs/error"
+            },
+            "head": {
+              "description": "Hash-chain head after the command, when it succeeded.",
+              "$ref": "#/$defs/sha256"
+            },
+            "sequence": {
+              "description": "Number of entries in the ledger after the command.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "entry_id": {
+              "description": "Id of the entry this command appended, when it appended one. Together with `posted_at` these are the effects the ledger consumed, and are what a replayer feeds back to reproduce `head` exactly.",
+              "$ref": "#/$defs/identifier"
+            },
+            "posted_at": {
+              "description": "Timestamp the ledger stamped on the appended entry.",
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "command_id",
+            "ok"
+          ],
+          "unevaluatedProperties": false
+        }
+      ]
+    }
+  }
+}

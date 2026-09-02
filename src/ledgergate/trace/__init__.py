@@ -28,6 +28,7 @@ from ledgergate.trace.models import (
     AdvanceDoc,
     AgentDoc,
     CommandDoc,
+    CurrencyDoc,
     EntryDraftDoc,
     ErrorDoc,
     Event,
@@ -36,7 +37,6 @@ from ledgergate.trace.models import (
     MessageEvent,
     MoneyDoc,
     OpenTransactionDoc,
-    PositiveMoneyDoc,
     PostDoc,
     PostingDoc,
     RefundDoc,
@@ -44,7 +44,9 @@ from ledgergate.trace.models import (
     ToolCallEvent,
     ToolResultEvent,
     Trace,
+    command_currencies,
     command_doc,
+    resolve_currency,
 )
 from ledgergate.trace.recorder import Recorder
 from ledgergate.trace.replay import Divergence, ReplayReport, replay_trace
@@ -56,6 +58,7 @@ __all__ = [
     "AdvanceDoc",
     "AgentDoc",
     "CommandDoc",
+    "CurrencyDoc",
     "Divergence",
     "EntryDraftDoc",
     "ErrorDoc",
@@ -65,7 +68,6 @@ __all__ = [
     "MessageEvent",
     "MoneyDoc",
     "OpenTransactionDoc",
-    "PositiveMoneyDoc",
     "PostDoc",
     "PostingDoc",
     "Recorder",
@@ -77,6 +79,7 @@ __all__ = [
     "ToolResultEvent",
     "Trace",
     "TraceError",
+    "command_currencies",
     "command_doc",
     "default_schema_path",
     "dump_trace",
@@ -85,6 +88,7 @@ __all__ = [
     "load_trace",
     "parse_trace",
     "replay_trace",
+    "resolve_currency",
     "validate_document",
     "write_trace",
 ]

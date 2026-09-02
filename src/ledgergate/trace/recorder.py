@@ -24,6 +24,7 @@ from ledgergate.ledger import (
     ChartOfAccounts,
     Clock,
     Command,
+    Currency,
     IdGenerator,
     Ledger,
     LedgerError,
@@ -32,6 +33,7 @@ from ledgergate.trace.models import (
     SCHEMA_VERSION,
     AccountDoc,
     AgentDoc,
+    CurrencyDoc,
     ErrorDoc,
     LedgerCommandEvent,
     LedgerResultEvent,
@@ -39,6 +41,7 @@ from ledgergate.trace.models import (
     ToolCallEvent,
     ToolResultEvent,
     Trace,
+    command_currencies,
     command_doc,
 )
 
@@ -61,10 +64,13 @@ class Recorder:
     _seq: int = field(default=0, init=False)
     _commands: int = field(default=0, init=False)
     _started_at: datetime = field(init=False)
+    _currencies: dict[str, Currency] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self.ledger = Ledger.empty(self.chart)
         self._started_at = self.clock.now()
+        for account in self.chart.values():
+            self._currencies[account.currency.code] = account.currency
 
     # ----------------------------------------------------------- primitives
 
@@ -117,6 +123,10 @@ class Recorder:
         """
         self._commands += 1
         command_id = f"cmd-{self._commands:06d}"
+        # Exponents travel with the trace, so a consumer that does not bundle this
+        # currency can still replay it exactly.
+        for cur in command_currencies(command):
+            self._currencies.setdefault(cur.code, cur)
         self.events.append(
             LedgerCommandEvent(
                 seq=self._next_seq(),
@@ -180,6 +190,7 @@ class Recorder:
             agent=self.agent,
             started_at=self._started_at,
             ended_at=self.clock.now(),
+            currencies=[CurrencyDoc.of(c) for _, c in sorted(self._currencies.items())],
             chart=[AccountDoc.of(a) for a in self.chart.values()],
             events=list(self.events),
             metadata=dict(self.metadata),

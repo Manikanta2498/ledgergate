@@ -141,6 +141,12 @@ REFUND_CMD = next(
     if e["type"] == "ledger_command" and e["command"]["kind"] == "refund"
 )
 LEDGER_RES = next(i for i, e in enumerate(BASE["events"]) if e["type"] == "ledger_result")
+APPEND_RES = next(
+    i for i, e in enumerate(BASE["events"]) if e["type"] == "ledger_result" and e.get("entry_id")
+)
+FAIL_RES = next(
+    i for i, e in enumerate(BASE["events"]) if e["type"] == "ledger_result" and not e["ok"]
+)
 
 INVALID: dict[str, dict[str, Any]] = {
     "wrong schema version": mutate(BASE, ["schema_version"], "2"),
@@ -150,7 +156,6 @@ INVALID: dict[str, dict[str, Any]] = {
     "naive started_at": mutate(BASE, ["started_at"], "2026-01-01T00:00:00"),
     "garbage started_at": mutate(BASE, ["started_at"], "yesterday"),
     "string money": mutate(BASE, ["events", REFUND_CMD, "command", "money", "amount"], "500"),
-    "zero refund": mutate(BASE, ["events", REFUND_CMD, "command", "money", "amount"], 0),
     "lowercase currency": mutate(
         BASE, ["events", REFUND_CMD, "command", "money", "currency"], "usd"
     ),
@@ -176,6 +181,41 @@ INVALID: dict[str, dict[str, Any]] = {
     "string ok": mutate(BASE, ["events", LEDGER_RES, "ok"], "true"),
     "bad account kind": mutate(BASE, ["chart", 0, "kind"], "cash"),
     "non-string metadata": mutate(BASE, ["metadata"], {"k": 1}),
+    # Result shape: success
+    "success without head": mutate(BASE, ["events", LEDGER_RES, "head"], REMOVE),
+    "success without sequence": mutate(BASE, ["events", LEDGER_RES, "sequence"], REMOVE),
+    "success without replayed": mutate(BASE, ["events", LEDGER_RES, "replayed"], REMOVE),
+    "success with error": mutate(
+        BASE, ["events", LEDGER_RES, "error"], {"type": "X", "message": ""}
+    ),
+    "entry_id without posted_at": mutate(BASE, ["events", APPEND_RES, "posted_at"], REMOVE),
+    "posted_at without entry_id": mutate(BASE, ["events", APPEND_RES, "entry_id"], REMOVE),
+    "naive posted_at": mutate(BASE, ["events", APPEND_RES, "posted_at"], "2026-01-01T00:00:00"),
+    # Result shape: failure
+    "failure without error": mutate(BASE, ["events", FAIL_RES, "error"], REMOVE),
+    "failure without head": mutate(BASE, ["events", FAIL_RES, "head"], REMOVE),
+    "failure with replayed": mutate(BASE, ["events", FAIL_RES, "replayed"], False),
+    "failure with entry effects": mutate(
+        mutate(BASE, ["events", FAIL_RES, "entry_id"], "e"),
+        ["events", FAIL_RES, "posted_at"],
+        "2026-01-01T00:00:00Z",
+    ),
+    # Identifiers: every line separator, not only LF
+    "CR in id": mutate(BASE, ["trace_id"], "a\rb"),
+    "NEL in id": mutate(BASE, ["trace_id"], "a\x85b"),
+    "LS in id": mutate(BASE, ["trace_id"], "a\u2028b"),
+    "NUL in id": mutate(BASE, ["trace_id"], "a\x00b"),
+    # Currencies
+    "bad currency exponent": mutate(BASE, ["currencies", 0, "exponent"], 7),
+    "currency def extra field": mutate(BASE, ["currencies", 0, "note"], "x"),
+    # Limits
+    "oversize message": mutate(BASE, ["events", 0, "content"], "x" * 65537),
+    "oversize description": mutate(
+        BASE, ["events", REFUND_CMD, "command", "entry", "description"], "x" * 1025
+    ),
+    "too many tags": mutate(
+        BASE, ["events", REFUND_CMD, "command", "entry", "tags"], {f"k{i}": "v" for i in range(101)}
+    ),
 }
 
 
@@ -198,6 +238,45 @@ def test_runtime_is_stricter_than_json_can_express_about_floats(path: list[str |
     whole_float = mutate(BASE, path, 5.0)
     schema_ok, models_ok = both_verdicts(whole_float)
     assert schema_ok is True and models_ok is False
+
+
+RUNTIME_ONLY: dict[str, dict[str, Any]] = {
+    "duplicate command id": mutate(
+        BASE, ["events", LEDGER_CMD, "command_id"], BASE["events"][LEDGER_CMD + 2]["command_id"]
+    ),
+    "orphan result": {
+        **BASE,
+        "events": [
+            *BASE["events"],
+            {**BASE["events"][LEDGER_RES], "seq": 10_000, "command_id": "ghost"},
+        ],
+    },
+    "undeclared currency": {
+        **BASE,
+        "chart": [*BASE["chart"], {"account_id": "cad", "kind": "asset", "currency": "CAD"}],
+    },
+    "contradicted bundled exponent": {
+        **BASE,
+        "currencies": [*BASE["currencies"], {"code": "JPY", "exponent": 2}],
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(RUNTIME_ONLY))
+def test_cross_event_rules_are_runtime_only_and_documented(name: str) -> None:
+    """Pairing and currency resolution span events; JSON Schema cannot express them. The
+    schema description lists them as the consumer's job and the models enforce them."""
+    schema_ok, models_ok = both_verdicts(RUNTIME_ONLY[name])
+    assert (schema_ok, models_ok) == (True, False), (name, schema_ok, models_ok)
+    description = load_schema()["description"]
+    assert "exactly one `ledger_result`" in description and "resolves" in description
+
+
+def test_zero_amount_attempt_is_representable_by_both() -> None:
+    """A trace records attempts. The ledger rejects a zero amount at replay; the schema and
+    models must let the attempt be written down so that rejection can be checked."""
+    zero = mutate(BASE, ["events", REFUND_CMD, "command", "money", "amount"], 0)
+    assert both_verdicts(zero) == (True, True)
 
 
 def test_seq_ordering_is_enforced_by_models_and_documented_for_schema() -> None:
@@ -236,6 +315,8 @@ def flows(draw: st.DrawFn) -> list[Command]:
             commands.append(Post(f"p{i}", sale(draw(st.integers(1, 100)))))
         else:
             commands.append(Advance(f"x{i}", "t", E.SETTLE))  # missing entry: always fails
+    if draw(st.booleans()):
+        commands.append(OpenTransaction("zero", "z", Money(0, USD)))  # rejected, recorded
     return commands
 
 
@@ -249,3 +330,25 @@ def test_every_recorded_trace_is_schema_valid_round_trips_and_replays(
     trace = parse_trace(document)
     assert json.loads(dump_trace(trace)) == document
     assert replay_trace(trace).consistent
+
+
+def test_identifier_rules_agree_across_schema_models_and_ledger() -> None:
+    """One definition of 'single line', in three places, pinned to each other."""
+    from ledgergate.ledger import identifiers
+    from ledgergate.trace import models
+
+    ledger_breaks = identifiers.LINE_BREAKS
+    assert ledger_breaks == models.LINE_BREAKS
+    pattern = load_schema()["$defs"]["identifier"]["pattern"]
+    for ch in ledger_breaks:
+        probe = mutate(BASE, ["trace_id"], f"a{ch}b")
+        assert both_verdicts(probe) == (False, False), repr(ch)
+    # and the runtime ledger refuses the same set for its own keys
+    from ledgergate.ledger import InvalidIdentifierError
+    from ledgergate.ledger.identifiers import require_identifier
+
+    for ch in ledger_breaks:
+        with pytest.raises(InvalidIdentifierError):
+            require_identifier(f"a{ch}b", "probe")
+    assert require_identifier("order 42: refund", "probe") == "order 42: refund"
+    assert "\\u2028" in pattern and "\\x85" in pattern

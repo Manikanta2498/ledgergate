@@ -14,6 +14,10 @@ from ledgergate.ledger.errors import InvalidIdentifierError
 
 MAX_IDENTIFIER_LENGTH = 256
 
+# Every line break str.splitlines() recognises, plus NUL. "Single line" means none of
+# these, not merely no LF; CR, NEL and the Unicode separators split lines too.
+LINE_BREAKS = "\r\n\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\x00"
+
 
 def require_identifier(value: str, what: str) -> str:
     """Return ``value`` if it is a usable identifier, else raise :class:`InvalidIdentifierError`."""
@@ -23,7 +27,7 @@ def require_identifier(value: str, what: str) -> str:
         raise InvalidIdentifierError(what, value, "must not be empty")
     if value != value.strip():
         raise InvalidIdentifierError(what, value, "must not have leading or trailing whitespace")
-    if any(ch in value for ch in "\r\n\x00"):
+    if any(ch in value for ch in LINE_BREAKS):
         raise InvalidIdentifierError(what, value, "must be a single line")
     if len(value) > MAX_IDENTIFIER_LENGTH:
         raise InvalidIdentifierError(what, value, f"must be at most {MAX_IDENTIFIER_LENGTH} chars")

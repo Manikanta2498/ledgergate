@@ -90,11 +90,19 @@ Edit one recorded `head`, or claim the retry was not a replay, and `report.diver
 names the command and the field. That replay is the mechanism the M3 invariants are
 built on.
 
+A trace records what was *attempted*, not only what succeeded: a zero-amount refund is
+representable, the ledger's rejection of it is recorded as the result, and replay confirms
+the rejection. Every result has a fixed shape for its outcome (success carries `replayed`,
+`head`, `sequence` and the consumed effects; failure carries `error`, `head`, `sequence`),
+so a sparse result cannot pass as consistent. Currencies travel with their minor-unit
+exponents, so a trace using a currency this runtime does not bundle still replays exactly.
+
 The schema and the runtime models are held to each other by contract tests on both valid
-and invalid documents. Two asymmetries are deliberate and pinned: `seq` must strictly
-increase (JSON Schema cannot say so; the models enforce it), and the runtime refuses a
-whole float like `5.0` where the schema's `integer` must admit it, because the JSON data
-model has one number type.
+and invalid documents. The rules JSON Schema cannot express are listed in the schema's own
+description and enforced by the models: `seq` strictly increases, every command has
+exactly one result after it and there are no others, and every currency code resolves.
+One further asymmetry is pinned: the runtime refuses a whole float like `5.0` where the
+schema's `integer` must admit it, because the JSON data model has one number type.
 
 ## The ledger core
 

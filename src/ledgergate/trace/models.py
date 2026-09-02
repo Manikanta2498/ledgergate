@@ -9,30 +9,40 @@ schema alone and a consumer on this stack gets types.
 
 Every model is frozen and forbids unknown fields. A trace with a field this version does
 not know is not "probably fine"; it is a different version, and it fails.
+
+Three things the schema cannot say are enforced here and listed in its description:
+``seq`` strictly increases; every command has exactly one result, after it, and there are
+no other results; every currency code resolves to an exponent. A document that passes the
+schema but fails one of these is rejected by :func:`~ledgergate.trace.io.parse_trace`, so
+nothing downstream has to defend against it.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Iterator, Mapping
+from datetime import UTC, datetime
 from itertools import pairwise
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
     StrictBool,
     StrictInt,
-    field_validator,
     model_validator,
 )
 
 from ledgergate.ledger import (
+    CURRENCIES,
     Account,
     AccountType,
     Advance,
     ChartOfAccounts,
     Command,
+    Currency,
     EntryDraft,
     Money,
     OpenTransaction,
@@ -42,38 +52,75 @@ from ledgergate.ledger import (
     Reverse,
     Side,
     TransactionEvent,
-    currency,
 )
 
 SCHEMA_VERSION: Literal["1"] = "1"
 
-Identifier = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^\S(?:.*\S)?$")]
+# Every line break str.splitlines() recognises, plus NUL. Kept in sync with the schema's
+# identifier pattern and with ledgergate.ledger.identifiers by a contract test.
+LINE_BREAKS = "\r\n\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\x00"
+IDENTIFIER_PATTERN = rf"^[^\s{LINE_BREAKS}](?:[^{LINE_BREAKS}]*[^\s{LINE_BREAKS}])?$"
+
+Identifier = Annotated[str, Field(min_length=1, max_length=256, pattern=IDENTIFIER_PATTERN)]
+ShortText = Annotated[str, Field(max_length=1024)]
+LongText = Annotated[str, Field(max_length=65536)]
+StringMap = Annotated[dict[str, ShortText], Field(max_length=100)]
 CurrencyCode = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+def _to_utc(value: datetime) -> datetime:
+    """Normalize to UTC so equal instants serialize identically. ``AwareDatetime`` has
+    already refused a naive value by the time this runs."""
+    return value.astimezone(UTC)
+
+
+Timestamp = Annotated[AwareDatetime, AfterValidator(_to_utc)]
+
+Registry = Mapping[str, Currency]
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-# ---------------------------------------------------------------------- money
+# ------------------------------------------------------------------ currency
+
+
+class CurrencyDoc(_Strict):
+    code: CurrencyCode
+    exponent: Annotated[StrictInt, Field(ge=0, le=6)]
+
+    def to_currency(self) -> Currency:
+        return Currency(self.code, self.exponent)
+
+    @classmethod
+    def of(cls, cur: Currency) -> CurrencyDoc:
+        return cls(code=cur.code, exponent=cur.exponent)
+
+
+def resolve_currency(code: str, registry: Registry) -> Currency:
+    try:
+        return registry[code]
+    except KeyError:
+        raise LookupError(
+            f"currency {code!r} is not declared in the trace and is not bundled"
+        ) from None
 
 
 class MoneyDoc(_Strict):
-    # StrictInt: 19.0 is a float and is refused, not silently truncated to 19.
+    # StrictInt: 19.0 is a float and is refused, not silently truncated to 19. Not
+    # constrained positive: a trace records what was *attempted*, and a zero or negative
+    # attempt is exactly what the ledger's rejection, replayed, is meant to prove.
     amount: StrictInt
     currency: CurrencyCode
 
-    def to_money(self) -> Money:
-        return Money(self.amount, currency(self.currency))
+    def to_money(self, registry: Registry) -> Money:
+        return Money(self.amount, resolve_currency(self.currency, registry))
 
     @classmethod
     def of(cls, money: Money) -> MoneyDoc:
         return cls(amount=money.amount, currency=money.currency.code)
-
-
-class PositiveMoneyDoc(MoneyDoc):
-    amount: Annotated[StrictInt, Field(ge=1)]
 
 
 # -------------------------------------------------------------------- entries
@@ -82,29 +129,28 @@ class PositiveMoneyDoc(MoneyDoc):
 class PostingDoc(_Strict):
     account: Identifier
     side: Literal["debit", "credit"]
-    money: PositiveMoneyDoc
+    money: MoneyDoc
 
-    def to_posting(self) -> Posting:
-        return Posting(self.account, Side(self.side), self.money.to_money())
+    def to_posting(self, registry: Registry) -> Posting:
+        """Raises the ledger's own error for a non-positive amount."""
+        return Posting(self.account, Side(self.side), self.money.to_money(registry))
 
     @classmethod
     def of(cls, posting: Posting) -> PostingDoc:
         return cls(
-            account=posting.account_id,
-            side=posting.side.value,
-            money=PositiveMoneyDoc.of(posting.money),
+            account=posting.account_id, side=posting.side.value, money=MoneyDoc.of(posting.money)
         )
 
 
 class EntryDraftDoc(_Strict):
-    postings: Annotated[list[PostingDoc], Field(min_length=2)]
-    description: str = ""
-    tags: dict[str, str] = Field(default_factory=dict)
+    postings: Annotated[list[PostingDoc], Field(min_length=2, max_length=1000)]
+    description: ShortText = ""
+    tags: StringMap = Field(default_factory=dict)
 
-    def to_draft(self) -> EntryDraft:
+    def to_draft(self, registry: Registry) -> EntryDraft:
         """Build the runtime draft. Raises the ledger's own error if it does not balance."""
         return EntryDraft(
-            tuple(p.to_posting() for p in self.postings),
+            tuple(p.to_posting(registry) for p in self.postings),
             self.description,
             tuple(sorted(self.tags.items())),
         )
@@ -126,13 +172,13 @@ class AccountDoc(_Strict):
     kind: Literal["asset", "liability", "equity", "revenue", "expense"]
     currency: CurrencyCode
     allow_negative: StrictBool = True
-    name: str = ""
+    name: ShortText = ""
 
-    def to_account(self) -> Account:
+    def to_account(self, registry: Registry) -> Account:
         return Account(
             self.account_id,
             AccountType(self.kind),
-            currency(self.currency),
+            resolve_currency(self.currency, registry),
             self.allow_negative,
             self.name,
         )
@@ -158,28 +204,37 @@ class PostDoc(_Strict):
     key: Identifier
     draft: EntryDraftDoc
 
-    def to_command(self) -> Command:
-        return Post(self.key, self.draft.to_draft())
+    def to_command(self, registry: Registry) -> Command:
+        return Post(self.key, self.draft.to_draft(registry))
+
+    def currencies(self) -> Iterator[str]:
+        yield from (p.money.currency for p in self.draft.postings)
 
 
 class ReverseDoc(_Strict):
     kind: Literal["reverse"] = "reverse"
     key: Identifier
     entry_id: Identifier
-    description: str = ""
+    description: ShortText = ""
 
-    def to_command(self) -> Command:
+    def to_command(self, registry: Registry) -> Command:
         return Reverse(self.key, self.entry_id, self.description)
+
+    def currencies(self) -> Iterator[str]:
+        yield from ()
 
 
 class OpenTransactionDoc(_Strict):
     kind: Literal["open_transaction"] = "open_transaction"
     key: Identifier
     transaction_id: Identifier
-    amount: PositiveMoneyDoc
+    amount: MoneyDoc
 
-    def to_command(self) -> Command:
-        return OpenTransaction(self.key, self.transaction_id, self.amount.to_money())
+    def to_command(self, registry: Registry) -> Command:
+        return OpenTransaction(self.key, self.transaction_id, self.amount.to_money(registry))
+
+    def currencies(self) -> Iterator[str]:
+        yield self.amount.currency
 
 
 class AdvanceDoc(_Strict):
@@ -189,32 +244,37 @@ class AdvanceDoc(_Strict):
     event: LifecycleEvent
     entry: EntryDraftDoc | None = None
 
-    def to_command(self) -> Command:
-        entry = None if self.entry is None else self.entry.to_draft()
+    def to_command(self, registry: Registry) -> Command:
+        entry = None if self.entry is None else self.entry.to_draft(registry)
         return Advance(self.key, self.transaction_id, TransactionEvent(self.event), entry)
+
+    def currencies(self) -> Iterator[str]:
+        if self.entry is not None:
+            yield from (p.money.currency for p in self.entry.postings)
 
 
 class RefundDoc(_Strict):
     kind: Literal["refund"] = "refund"
     key: Identifier
     transaction_id: Identifier
-    money: PositiveMoneyDoc
+    money: MoneyDoc
     entry: EntryDraftDoc | None = None
 
-    def to_command(self) -> Command:
-        entry = None if self.entry is None else self.entry.to_draft()
-        return Refund(self.key, self.transaction_id, self.money.to_money(), entry)
+    def to_command(self, registry: Registry) -> Command:
+        entry = None if self.entry is None else self.entry.to_draft(registry)
+        return Refund(self.key, self.transaction_id, self.money.to_money(registry), entry)
+
+    def currencies(self) -> Iterator[str]:
+        yield self.money.currency
+        if self.entry is not None:
+            yield from (p.money.currency for p in self.entry.postings)
 
 
-CommandDoc = Annotated[
-    PostDoc | ReverseDoc | OpenTransactionDoc | AdvanceDoc | RefundDoc,
-    Field(discriminator="kind"),
-]
+AnyCommandDoc = PostDoc | ReverseDoc | OpenTransactionDoc | AdvanceDoc | RefundDoc
+CommandDoc = Annotated[AnyCommandDoc, Field(discriminator="kind")]
 
 
-def command_doc(
-    command: Command,
-) -> PostDoc | ReverseDoc | OpenTransactionDoc | AdvanceDoc | RefundDoc:
+def command_doc(command: Command) -> AnyCommandDoc:
     """The document form of a runtime command. Inverse of ``.to_command()``."""
     match command:
         case Post(key, draft):
@@ -223,7 +283,7 @@ def command_doc(
             return ReverseDoc(key=key, entry_id=entry_id, description=description)
         case OpenTransaction(key, transaction_id, amount):
             return OpenTransactionDoc(
-                key=key, transaction_id=transaction_id, amount=PositiveMoneyDoc.of(amount)
+                key=key, transaction_id=transaction_id, amount=MoneyDoc.of(amount)
             )
         case Advance(key, transaction_id, event, entry):
             return AdvanceDoc(
@@ -236,35 +296,48 @@ def command_doc(
             return RefundDoc(
                 key=key,
                 transaction_id=transaction_id,
-                money=PositiveMoneyDoc.of(money),
+                money=MoneyDoc.of(money),
                 entry=None if entry is None else EntryDraftDoc.of(entry),
             )
+
+
+def command_currencies(command: Command) -> set[Currency]:
+    """Every Currency object a runtime command carries, exponents included."""
+    found: set[Currency] = set()
+    drafts: list[EntryDraft] = []
+    match command:
+        case Post(_, draft):
+            drafts.append(draft)
+        case OpenTransaction(_, _, amount):
+            found.add(amount.currency)
+        case Advance(_, _, _, entry) if entry is not None:
+            drafts.append(entry)
+        case Refund(_, _, money, entry):
+            found.add(money.currency)
+            if entry is not None:
+                drafts.append(entry)
+    for draft in drafts:
+        found.update(p.currency for p in draft.postings)
+    return found
 
 
 # --------------------------------------------------------------------- events
 
 
 class ErrorDoc(_Strict):
-    type: Annotated[str, Field(min_length=1)]
-    message: str
+    type: Annotated[str, Field(min_length=1, max_length=256)]
+    message: ShortText
 
 
 class _Event(_Strict):
     seq: Annotated[StrictInt, Field(ge=1)]
-    at: datetime
-
-    @field_validator("at")
-    @classmethod
-    def _aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            raise ValueError("timestamps must carry a timezone")
-        return value
+    at: Timestamp
 
 
 class MessageEvent(_Event):
     type: Literal["message"] = "message"
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
+    content: LongText
 
 
 class ToolCallEvent(_Event):
@@ -291,6 +364,8 @@ class LedgerCommandEvent(_Event):
 
 
 class LedgerResultEvent(_Event):
+    """Shape depends on ``ok``; see the schema's ``ledger_result_body`` description."""
+
     type: Literal["ledger_result"] = "ledger_result"
     command_id: Identifier
     ok: StrictBool
@@ -298,16 +373,34 @@ class LedgerResultEvent(_Event):
     error: ErrorDoc | None = None
     head: Sha256 | None = None
     sequence: Annotated[StrictInt, Field(ge=0)] | None = None
-    # The effects the ledger consumed when it appended an entry. A replayer feeds these
-    # back through its Clock and IdGenerator so the recomputed head matches `head`.
     entry_id: Identifier | None = None
-    posted_at: datetime | None = None
+    posted_at: Timestamp | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> LedgerResultEvent:
+        if self.head is None or self.sequence is None:
+            raise ValueError("ledger_result requires head and sequence")
+        if self.ok:
+            if self.replayed is None:
+                raise ValueError("successful ledger_result requires replayed")
+            if self.error is not None:
+                raise ValueError("successful ledger_result must not carry an error")
+            if (self.entry_id is None) != (self.posted_at is None):
+                raise ValueError("entry_id and posted_at must be present together")
+            if self.replayed and self.entry_id is not None:
+                raise ValueError("a replayed command appends nothing; entry_id must be absent")
+        else:
+            if self.error is None:
+                raise ValueError("failed ledger_result requires error")
+            if self.replayed is not None or self.entry_id is not None or self.posted_at is not None:
+                raise ValueError(
+                    "failed ledger_result must not carry replayed, entry_id or posted_at"
+                )
+        return self
 
 
-Event = Annotated[
-    MessageEvent | ToolCallEvent | ToolResultEvent | LedgerCommandEvent | LedgerResultEvent,
-    Field(discriminator="type"),
-]
+AnyEvent = MessageEvent | ToolCallEvent | ToolResultEvent | LedgerCommandEvent | LedgerResultEvent
+Event = Annotated[AnyEvent, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------- trace
@@ -315,9 +408,9 @@ Event = Annotated[
 
 class AgentDoc(_Strict):
     name: Identifier
-    model: str | None = None
-    framework: str | None = None
-    version: str | None = None
+    model: ShortText | None = None
+    framework: ShortText | None = None
+    version: ShortText | None = None
 
 
 class Trace(_Strict):
@@ -325,41 +418,75 @@ class Trace(_Strict):
     trace_id: Identifier
     scenario_id: Identifier | None = None
     agent: AgentDoc
-    started_at: datetime
-    ended_at: datetime | None = None
-    chart: list[AccountDoc] | None = None
-    events: list[Event]
-    metadata: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("started_at", "ended_at")
-    @classmethod
-    def _aware(cls, value: datetime | None) -> datetime | None:
-        if value is not None and value.tzinfo is None:
-            raise ValueError("timestamps must carry a timezone")
-        return value
+    started_at: Timestamp
+    ended_at: Timestamp | None = None
+    currencies: Annotated[list[CurrencyDoc], Field(max_length=1000)] | None = None
+    chart: Annotated[list[AccountDoc], Field(max_length=10000)] | None = None
+    events: Annotated[list[Event], Field(max_length=100000)]
+    metadata: StringMap = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _ordered(self) -> Trace:
-        """`seq` must be strictly increasing. JSON Schema cannot say so; this can."""
-        if any(b.seq <= a.seq for a, b in pairwise(self.events)):
-            raise ValueError("event seq must be strictly increasing")
+    def _semantics(self) -> Trace:
+        """The rules the schema's description lists as the consumer's job."""
         if self.ended_at is not None and self.ended_at < self.started_at:
             raise ValueError("ended_at precedes started_at")
+        if any(b.seq <= a.seq for a, b in pairwise(self.events)):
+            raise ValueError("event seq must be strictly increasing")
+
+        commands = [e for e in self.events if isinstance(e, LedgerCommandEvent)]
+        results = [e for e in self.events if isinstance(e, LedgerResultEvent)]
+        command_seq = {c.command_id: c.seq for c in commands}
+        if len(command_seq) != len(commands):
+            raise ValueError("ledger_command ids must be unique")
+        result_seq = {r.command_id: r.seq for r in results}
+        if len(result_seq) != len(results):
+            raise ValueError("each ledger_command may have only one ledger_result")
+        if orphans := sorted(result_seq.keys() - command_seq.keys()):
+            raise ValueError(f"ledger_result without a command: {orphans}")
+        if unanswered := sorted(command_seq.keys() - result_seq.keys()):
+            raise ValueError(f"ledger_command without a result: {unanswered}")
+        if early := sorted(c for c, s in command_seq.items() if result_seq[c] <= s):
+            raise ValueError(f"ledger_result precedes its command: {early}")
+
+        # Currencies: everything referenced must resolve, and declarations must not
+        # contradict the bundled table (a trace cannot redefine what a US cent is).
+        declared: dict[str, int] = {}
+        for c in self.currencies or []:
+            if c.code in declared:
+                raise ValueError(f"currency {c.code} declared more than once")
+            if c.code in CURRENCIES and CURRENCIES[c.code].exponent != c.exponent:
+                raise ValueError(
+                    f"currency {c.code} declared with exponent {c.exponent},"
+                    f" bundled exponent is {CURRENCIES[c.code].exponent}"
+                )
+            declared[c.code] = c.exponent
+        known = set(declared) | set(CURRENCIES)
+        used = {a.currency for a in self.chart or []}
+        for command_event in commands:
+            used.update(command_event.command.currencies())
+        if unknown := sorted(used - known):
+            raise ValueError(f"currencies used but not declared and not bundled: {unknown}")
         return self
 
     # ------------------------------------------------------------- helpers
 
+    def registry(self) -> Registry:
+        """Bundled currencies plus this trace's declarations."""
+        out: dict[str, Currency] = dict(CURRENCIES)
+        out.update((c.code, c.to_currency()) for c in self.currencies or [])
+        return out
+
     def chart_of_accounts(self) -> ChartOfAccounts:
         if self.chart is None:
             raise ValueError("trace carries no chart of accounts; commands cannot be replayed")
-        return ChartOfAccounts(a.to_account() for a in self.chart)
+        registry = self.registry()
+        return ChartOfAccounts(a.to_account(registry) for a in self.chart)
 
-    def commands(self) -> list[tuple[LedgerCommandEvent, Command]]:
-        """Every ledger command in the trace, in order, with its runtime form."""
-        return [
-            (e, e.command.to_command()) for e in self.events if isinstance(e, LedgerCommandEvent)
-        ]
+    def commands(self) -> list[LedgerCommandEvent]:
+        """Every ledger command event, in order. Conversion is the caller's step, because
+        a schema-valid command can be one the ledger rejects, and that rejection is data."""
+        return [e for e in self.events if isinstance(e, LedgerCommandEvent)]
 
     def results(self) -> dict[str, LedgerResultEvent]:
-        """Ledger results indexed by command id."""
+        """Ledger results indexed by command id. Validation guarantees one per command."""
         return {e.command_id: e for e in self.events if isinstance(e, LedgerResultEvent)}

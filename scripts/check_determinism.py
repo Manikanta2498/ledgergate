@@ -134,7 +134,7 @@ class _Taint:
         aliases = [
             (target, node.value, node.lineno)
             for node in ast.walk(tree)
-            if isinstance(node, ast.Assign | ast.AnnAssign | ast.NamedExpr)
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
             and node.value is not None
             for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
             if isinstance(target, ast.Name)
@@ -144,7 +144,7 @@ class _Taint:
             changed = False
             for target, value, lineno in aliases:
                 resolved = (
-                    self.resolve(value) if isinstance(value, ast.Name | ast.Attribute) else set()
+                    self.resolve(value) if isinstance(value, (ast.Name, ast.Attribute)) else set()
                 )
                 if resolved:
                     for path in resolved:
@@ -158,7 +158,7 @@ class _Taint:
         for node in ast.walk(tree):
             if isinstance(node, ast.arg):
                 self.plain.setdefault(node.arg, node.lineno)
-            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.plain.setdefault(node.name, node.lineno)
             elif isinstance(node, ast.ExceptHandler):
                 if node.name is not None:
@@ -221,7 +221,7 @@ def check_file(path: Path) -> list[str]:
                 seen = f"{spelled}()" if spelled == target else f"{spelled}() [= {target}]"
                 violations.append(f"{path}:{node.lineno}: calls {seen} -- {BANNED_CALLS[target]}")
         elif (
-            isinstance(node, ast.Attribute | ast.Name)
+            isinstance(node, (ast.Attribute, ast.Name))
             and isinstance(node.ctx, ast.Load)
             and id(node) not in call_targets
         ):

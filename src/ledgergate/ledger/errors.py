@@ -68,6 +68,17 @@ class DuplicateAccountError(AccountError):
         super().__init__(f"account {account_id!r} is defined more than once")
 
 
+class ConflictingCurrencyError(AccountError):
+    """One currency code appears with two different minor-unit exponents."""
+
+    def __init__(self, code: str, exponents: tuple[int, int]) -> None:
+        self.code, self.exponents = code, exponents
+        super().__init__(
+            f"currency {code!r} is used with exponents {exponents[0]} and {exponents[1]};"
+            " a code means one thing"
+        )
+
+
 class AccountCurrencyMismatchError(AccountError):
     def __init__(self, account_id: str, expected: str, actual: str) -> None:
         self.account_id, self.expected, self.actual = account_id, expected, actual

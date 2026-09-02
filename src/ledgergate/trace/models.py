@@ -7,8 +7,15 @@ contract; these models are how the runtime reads and writes it. A contract test 
 they accept and reject the same documents, so a consumer on another stack can trust the
 schema alone and a consumer on this stack gets types.
 
-Every model is frozen and forbids unknown fields. A trace with a field this version does
-not know is not "probably fine"; it is a different version, and it fails.
+Every model forbids unknown fields and cannot have a field rebound. Structural fields
+(``events``, ``chart``, ``currencies``, ``postings``) are tuples, so the cross-event rules
+checked at validation cannot be undone by appending afterwards. Free-form payloads
+(``metadata``, ``tags``, tool ``arguments`` and ``result``) are plain JSON containers; they
+are validated to be JSON-serializable, finite, and bounded in depth and size, but a caller
+holding a reference can still mutate them. Nothing the ledger or replay reads lives there.
+
+A trace with a field this version does not know is not "probably fine"; it is a different
+version, and it fails.
 
 Three things the schema cannot say are enforced here and listed in its description:
 ``seq`` strictly increases; every command has exactly one result, after it, and there are
@@ -22,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from itertools import pairwise
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     AfterValidator,
@@ -30,6 +37,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     StrictBool,
     StrictInt,
     model_validator,
@@ -78,6 +86,37 @@ def _to_utc(value: datetime) -> datetime:
 Timestamp = Annotated[AwareDatetime, AfterValidator(_to_utc)]
 
 Registry = Mapping[str, Currency]
+
+MAX_PAYLOAD_DEPTH = 32
+MAX_PAYLOAD_NODES = 10_000
+
+
+def _check_payload(value: JsonValue) -> JsonValue:
+    """Tool arguments and results must be finite JSON of bounded depth and size.
+
+    ``JsonValue`` already refuses anything that is not JSON-shaped, so a stray ``object()``
+    fails here rather than at ``dump_trace``. NaN and infinities are JSON-shaped in Python
+    but not in JSON, and ``dump_trace`` uses ``allow_nan=False``, so they are refused too.
+    """
+    nodes = 0
+    stack: list[tuple[JsonValue, int]] = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_PAYLOAD_NODES:
+            raise ValueError(f"payload exceeds {MAX_PAYLOAD_NODES} nodes")
+        if depth > MAX_PAYLOAD_DEPTH:
+            raise ValueError(f"payload nesting exceeds {MAX_PAYLOAD_DEPTH}")
+        if isinstance(node, float) and (node != node or node in (float("inf"), float("-inf"))):
+            raise ValueError("payload contains a non-finite number, which JSON cannot carry")
+        if isinstance(node, dict):
+            stack.extend((v, depth + 1) for v in node.values())
+        elif isinstance(node, list):
+            stack.extend((v, depth + 1) for v in node)
+    return value
+
+
+Payload = Annotated[JsonValue, AfterValidator(_check_payload)]
 
 
 class _Strict(BaseModel):
@@ -143,7 +182,7 @@ class PostingDoc(_Strict):
 
 
 class EntryDraftDoc(_Strict):
-    postings: Annotated[list[PostingDoc], Field(min_length=2, max_length=1000)]
+    postings: Annotated[tuple[PostingDoc, ...], Field(min_length=2, max_length=1000)]
     description: ShortText = ""
     tags: StringMap = Field(default_factory=dict)
 
@@ -158,7 +197,7 @@ class EntryDraftDoc(_Strict):
     @classmethod
     def of(cls, draft: EntryDraft) -> EntryDraftDoc:
         return cls(
-            postings=[PostingDoc.of(p) for p in draft.postings],
+            postings=tuple(PostingDoc.of(p) for p in draft.postings),
             description=draft.description,
             tags=dict(draft.tags),
         )
@@ -344,7 +383,7 @@ class ToolCallEvent(_Event):
     type: Literal["tool_call"] = "tool_call"
     call_id: Identifier
     tool: Identifier
-    arguments: dict[str, Any]
+    arguments: dict[str, Payload]
     idempotency_key: Identifier | None = None
 
 
@@ -352,7 +391,7 @@ class ToolResultEvent(_Event):
     type: Literal["tool_result"] = "tool_result"
     call_id: Identifier
     ok: StrictBool
-    result: Any = None
+    result: Payload = None
     error: ErrorDoc | None = None
 
 
@@ -420,9 +459,9 @@ class Trace(_Strict):
     agent: AgentDoc
     started_at: Timestamp
     ended_at: Timestamp | None = None
-    currencies: Annotated[list[CurrencyDoc], Field(max_length=1000)] | None = None
-    chart: Annotated[list[AccountDoc], Field(max_length=10000)] | None = None
-    events: Annotated[list[Event], Field(max_length=100000)]
+    currencies: Annotated[tuple[CurrencyDoc, ...], Field(max_length=1000)] | None = None
+    chart: Annotated[tuple[AccountDoc, ...], Field(max_length=10000)] | None = None
+    events: Annotated[tuple[Event, ...], Field(max_length=100000)]
     metadata: StringMap = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -432,6 +471,10 @@ class Trace(_Strict):
             raise ValueError("ended_at precedes started_at")
         if any(b.seq <= a.seq for a, b in pairwise(self.events)):
             raise ValueError("event seq must be strictly increasing")
+
+        account_ids = [a.account_id for a in self.chart or []]
+        if len(set(account_ids)) != len(account_ids):
+            raise ValueError("chart account ids must be unique")
 
         commands = [e for e in self.events if isinstance(e, LedgerCommandEvent)]
         results = [e for e in self.events if isinstance(e, LedgerResultEvent)]

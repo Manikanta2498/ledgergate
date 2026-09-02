@@ -259,6 +259,7 @@ RUNTIME_ONLY: dict[str, dict[str, Any]] = {
         **BASE,
         "currencies": [*BASE["currencies"], {"code": "JPY", "exponent": 2}],
     },
+    "duplicate chart account id": {**BASE, "chart": [*BASE["chart"], BASE["chart"][0]]},
 }
 
 
@@ -270,6 +271,7 @@ def test_cross_event_rules_are_runtime_only_and_documented(name: str) -> None:
     assert (schema_ok, models_ok) == (True, False), (name, schema_ok, models_ok)
     description = load_schema()["description"]
     assert "exactly one `ledger_result`" in description and "resolves" in description
+    assert "`chart[].account_id` values are unique" in description
 
 
 def test_zero_amount_attempt_is_representable_by_both() -> None:

@@ -15,6 +15,8 @@ from ledgergate.ledger import (
     AccountType,
     Advance,
     ChartOfAccounts,
+    ConflictingCurrencyError,
+    Currency,
     EntryDraft,
     IllegalTransitionError,
     InvalidAmountError,
@@ -123,6 +125,39 @@ class TestRecorder:
         trace = rec.trace()
         assert trace.currencies is not None
         assert {c.code: c.exponent for c in trace.currencies} == {"USD": 2, "KWD": 3}
+
+    def test_conflicting_currency_exponent_is_refused_not_silently_coerced(self) -> None:
+        """CAD/3 recorded into a trace that declares CAD/2 would replay as ten times the amount."""
+        cad2, cad3 = Currency("CAD", 2), Currency("CAD", 3)
+        with pytest.raises(ConflictingCurrencyError):
+            ChartOfAccounts(
+                [Account("a", AccountType.ASSET, cad2), Account("b", AccountType.ASSET, cad3)]
+            )
+        rec = Recorder(
+            "t",
+            AgentDoc(name="a"),
+            ChartOfAccounts([Account("c", AccountType.ASSET, cad2)]),
+            SteppingClock(EPOCH),
+            SequentialIds(),
+        )
+        with pytest.raises(ConflictingCurrencyError):
+            rec.execute(OpenTransaction("o", "t", Money(1000, cad3)))
+        assert rec.events == [], "nothing recorded: the command could not be written faithfully"
+        rec = Recorder(
+            "t", AgentDoc(name="a"), ChartOfAccounts([]), SteppingClock(EPOCH), SequentialIds()
+        )
+        rec.execute(OpenTransaction("o", "t", Money(1000, cad3)))
+        with pytest.raises(ConflictingCurrencyError):
+            rec.execute(OpenTransaction("o2", "t2", Money(1000, cad2)))
+        assert replay_trace(rec.trace()).ledger.transaction("t").amount == Money(1000, cad3)
+
+    def test_unserializable_tool_payload_is_refused_at_record_time(self) -> None:
+        rec = recorder()
+        with pytest.raises(ValueError):
+            rec.tool_call("c", "tool", {"x": object()})  # type: ignore[dict-item]
+        with pytest.raises(ValueError):
+            rec.tool_result("c", True, {"x": float("nan")})
+        assert rec.events == []
 
     def test_run_tolerates_errors_and_records_all(self) -> None:
         rec = recorder()

@@ -17,13 +17,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+
+from pydantic import JsonValue
 
 from ledgergate.ledger import (
     Applied,
     ChartOfAccounts,
     Clock,
     Command,
+    ConflictingCurrencyError,
     Currency,
     IdGenerator,
     Ledger,
@@ -69,8 +71,18 @@ class Recorder:
     def __post_init__(self) -> None:
         self.ledger = Ledger.empty(self.chart)
         self._started_at = self.clock.now()
-        for account in self.chart.values():
-            self._currencies[account.currency.code] = account.currency
+        # ChartOfAccounts guarantees one exponent per code, so this cannot conflict.
+        self._currencies.update(self.chart.currencies())
+
+    def _register(self, cur: Currency) -> None:
+        """Record a currency for the trace, refusing a second exponent for a known code.
+
+        Silently keeping the first would let a command in CAD/3 be replayed as CAD/2: a
+        tenfold change in meaning that a clean replay would then certify.
+        """
+        known = self._currencies.setdefault(cur.code, cur)
+        if known.exponent != cur.exponent:
+            raise ConflictingCurrencyError(cur.code, (known.exponent, cur.exponent))
 
     # ----------------------------------------------------------- primitives
 
@@ -84,8 +96,14 @@ class Recorder:
         )
 
     def tool_call(
-        self, call_id: str, tool: str, arguments: dict[str, Any], idempotency_key: str | None = None
+        self,
+        call_id: str,
+        tool: str,
+        arguments: dict[str, JsonValue],
+        idempotency_key: str | None = None,
     ) -> None:
+        """Record a tool invocation. ``arguments`` must be finite, bounded JSON; anything
+        else is refused here, not at ``dump_trace``."""
         self.events.append(
             ToolCallEvent(
                 seq=self._next_seq(),
@@ -98,7 +116,7 @@ class Recorder:
         )
 
     def tool_result(
-        self, call_id: str, ok: bool, result: Any = None, error: Exception | None = None
+        self, call_id: str, ok: bool, result: JsonValue = None, error: Exception | None = None
     ) -> None:
         self.events.append(
             ToolResultEvent(
@@ -121,12 +139,13 @@ class Recorder:
         On a :class:`LedgerError` the failure is recorded and the error re-raised; the
         ledger is unchanged, because the core never half-applies.
         """
+        # Exponents travel with the trace, so a consumer that does not bundle this
+        # currency can still replay it exactly. A conflicting exponent is refused before
+        # anything is recorded: the command could not be written down faithfully.
+        for cur in command_currencies(command):
+            self._register(cur)
         self._commands += 1
         command_id = f"cmd-{self._commands:06d}"
-        # Exponents travel with the trace, so a consumer that does not bundle this
-        # currency can still replay it exactly.
-        for cur in command_currencies(command):
-            self._currencies.setdefault(cur.code, cur)
         self.events.append(
             LedgerCommandEvent(
                 seq=self._next_seq(),
@@ -190,8 +209,8 @@ class Recorder:
             agent=self.agent,
             started_at=self._started_at,
             ended_at=self.clock.now(),
-            currencies=[CurrencyDoc.of(c) for _, c in sorted(self._currencies.items())],
-            chart=[AccountDoc.of(a) for a in self.chart.values()],
-            events=list(self.events),
+            currencies=tuple(CurrencyDoc.of(c) for _, c in sorted(self._currencies.items())),
+            chart=tuple(AccountDoc.of(a) for a in self.chart.values()),
+            events=tuple(self.events),
             metadata=dict(self.metadata),
         )

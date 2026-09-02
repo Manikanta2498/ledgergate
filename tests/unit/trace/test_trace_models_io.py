@@ -165,7 +165,7 @@ class TestConversions:
 class TestTraceValidation:
     def test_minimal_parses(self) -> None:
         trace = parse_trace(minimal())
-        assert trace.trace_id == "t" and trace.events == [] and trace.metadata == {}
+        assert trace.trace_id == "t" and trace.events == () and trace.metadata == {}
 
     def test_unknown_field_is_rejected(self) -> None:
         with pytest.raises(TraceError) as exc:
@@ -323,6 +323,60 @@ class TestTraceValidation:
     def test_identifiers_reject_every_line_break(self, sep: str) -> None:
         with pytest.raises(TraceError):
             parse_trace(minimal(trace_id=f"a{sep}b"))
+
+    def test_duplicate_chart_account_ids_are_rejected(self) -> None:
+        acct = {"account_id": "x", "kind": "asset", "currency": "USD"}
+        with pytest.raises(TraceError, match="account ids must be unique"):
+            parse_trace(minimal(chart=[acct, acct]))
+
+    def test_structural_fields_are_tuples(self) -> None:
+        """Cross-event rules are checked at validation; appending afterwards must be impossible."""
+        ev = {
+            "type": "message",
+            "at": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "content": "x",
+            "seq": 1,
+        }
+        trace = parse_trace(
+            minimal(
+                events=[ev],
+                chart=[{"account_id": "c", "kind": "asset", "currency": "USD"}],
+                currencies=[{"code": "USD", "exponent": 2}],
+            )
+        )
+        assert isinstance(trace.events, tuple)
+        assert isinstance(trace.chart, tuple) and isinstance(trace.currencies, tuple)
+        with pytest.raises(AttributeError):
+            trace.events.append(ev)  # type: ignore[attr-defined]
+        draft = EntryDraftDoc(
+            postings=(
+                PostingDoc(account="a", side="debit", money=MoneyDoc(amount=1, currency="USD")),
+                PostingDoc(account="b", side="credit", money=MoneyDoc(amount=1, currency="USD")),
+            )
+        )
+        assert isinstance(draft.postings, tuple)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"x": object()},
+            {"x": float("nan")},
+            {"x": [1, float("inf")]},
+            {"x": float("-inf")},
+            {"deep": eval("[" * 40 + "]" * 40)},
+            {"wide": [0] * 10_001},
+        ],
+    )
+    def test_tool_payloads_must_be_finite_bounded_json(self, payload: dict[str, object]) -> None:
+        with pytest.raises(ValueError):
+            ToolCallEvent(seq=1, at=AT, call_id="c", tool="t", arguments=payload)
+
+    def test_ordinary_json_payload_is_fine(self) -> None:
+        ev = ToolCallEvent(
+            seq=1, at=AT, call_id="c", tool="t", arguments={"n": {"l": [1, 2.5, "s", None, True]}}
+        )
+        assert ev.arguments["n"] == {"l": [1, 2.5, "s", None, True]}
 
     def test_chart_of_accounts_requires_chart(self) -> None:
         with pytest.raises(ValueError, match="no chart"):

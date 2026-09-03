@@ -22,17 +22,23 @@ raises and leaves its idempotency map untouched, so the same key can be retried.
 journal records `rejected` as a terminal outcome: the key is spent, and a retry replays
 the rejection. This is the ledger-of-record reading of "same key, same result": a caller
 who wants to try again after `InsufficientFundsError` uses a new key, and the journal
-shows both attempts. The README's idempotency row states this. One fingerprint function
-exists, `ledgergate.ledger`'s canonical fingerprint; the journal stores its value in
-`operations.fingerprint` and the core recomputes the same value when it executes, so the
-two cannot disagree.
+shows both attempts. The README's idempotency row states this. The operation fingerprint is the core's, computed by one exported function. Today the
+core's `fingerprint(kind, payload)` primitive is called with five inlined payload layouts
+inside `Ledger` (`state.py`); M2b lifts those into a public
+`ledgergate.ledger.command_fingerprint(command) -> str` that `Ledger.execute` and the
+journal both call, so there is one definition and `operations.fingerprint` equals what the
+core would compute. `PolicyContext.command_digest` **is** `operations.fingerprint`; there
+is no second command digest.
 
-**Request.** The unit the write protocol admits is a canonical `Request`: `tool`,
-`arguments` (JSON object), `call_id`, `principal`, `key` (idempotency key), optional
-`approval` (an artefact). Every digest over "the request" is over its canonical
-serialization (sorted keys, no whitespace, UTF-8). M4's MCP transport maps tool-call
-params onto a `Request`; the journal never sees transport bytes, so digests are stable
-across milestones.
+**Admission input and Request.** The transport hands admission one untyped JSON value
+(M4's MCP layer decodes the wire and passes the params object; the journal never sees
+wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `arguments`
+(JSON object), `call_id`, `principal`, `key` (idempotency key), optional `approval`. Two
+named digests, both SHA-256 over canonical JSON (sorted keys, no whitespace, UTF-8):
+`input_digest`, over the untyped input, is what the failure envelope records, because a
+malformed input has no `Request` to digest; `request_digest`, over the `Request`, is
+recorded on every admitted invocation. Neither is the operation fingerprint (next
+paragraph), which is over the decoded *command*.
 
 ## Sequences
 
@@ -44,9 +50,11 @@ Three distinct things, kept distinct because conflating them was a review findin
   `journal (journal_sequence INTEGER PRIMARY KEY, kind TEXT NOT NULL)`. Each write
   protocol step that creates a fact row first inserts a `journal` row naming the fact
   table, then inserts the fact row with that value as its own `PRIMARY KEY`, which is
-  also a foreign key to `journal`. Committed values are strictly increasing; a rolled-back
-  transaction leaves a gap, which is permitted (trace `seq` is a dense re-enumeration and
-  never exposes gaps). `journal` is never read for anything but allocation and ordering.
+  also a foreign key to `journal`. Committed values are strictly increasing. Gaps, if any
+  arise, are permitted (trace `seq` is a dense re-enumeration and never exposes them).
+  `kind` is enforced: each fact table has a `BEFORE INSERT` trigger asserting that its
+  `journal_sequence` row has the matching `kind`, so an allocation cannot be consumed by
+  the wrong table.
 - **Projection cursor**: the `journal_sequence` of the latest **outcome** row folded into
   the projection, or `0` for a projection into which nothing has been folded. Only
   outcomes change the ledger; invocations, events, decisions, approvals and reads advance
@@ -125,7 +133,8 @@ validation code; M4 consumes it), signed with a key whose verification counterpa
 **Validation and consumption**, performed inside the write transaction, after the
 invocation row exists (the presentation references it) and *before* the `PolicyContext`
 is built. First the `approvals` presentation row is written, so the audit of the attempt
-survives whatever follows. Then the checks run **in order and short-circuit: the first
+survives every recorded path (it is lost only with the whole transaction, on the fatal
+configuration error below). Then the checks run **in order and short-circuit: the first
 failure is the verdict, and no later check runs**. Consumption is check 4 and is therefore
 attempted if and only if checks 1 to 3 all passed; an invalid, expired or mis-scoped
 artefact never touches `approval_consumptions`.
@@ -158,9 +167,13 @@ record*. The operator fixes the policy set; nothing is consumed and the operatio
 `awaiting_approval`.
 
 **An artefact presented on any other disposition** (`new`, `replay` of a terminal outcome,
-`conflict`, `read`) is not silently dropped: an `approvals` presentation row is written
-with verdict `approval_not_applicable`, nothing is consumed, and the disposition's normal
-path continues. Approval is a two-step protocol by design: a request that needs one is
+`conflict`, `read`) is not silently dropped: an `approvals` presentation row with verdict
+`approval_not_applicable` is written immediately after the inbound `events` row (so its
+`invocation` reference resolves), nothing is consumed, and the disposition's normal path
+continues. On `invalid`, no `Request` was decoded, so there is no artefact to present; any
+approval-shaped content is part of the bounded envelope blob. The presentation row is
+carried into the v2 trace on `invocation_resolution` as a presentation reference, so the
+trace does not drop what the journal kept. Approval is a two-step protocol by design: a request that needs one is
 first told so (`awaiting_approval`), and only then is an artefact meaningful.
 
 **Why a validated approval is consumed before policy runs, whatever policy then says.**
@@ -195,9 +208,9 @@ fixed here rather than left to policy authors:
 | `approval_valid` (consumed) | `allow` | `applied` or `rejected` from the core | terminal | per the core's result |
 
 A failed presentation never forecloses the operation; only a genuine policy denial or the
-core's own verdict does. Each row of the new-operation table is an M2b test (under the
-null policy only the `allow` row is reachable, and the test asserts the others are not);
-each row of the pending-operation table is an M3 test.
+core's own verdict does. The `allow` row of the new-operation table is an M2b test, together
+with a property test that the null policy returns `allow` for every context; the other
+rows of both tables are M3 tests.
 
 ## What M2b ships, and what it stubs
 
@@ -219,8 +232,13 @@ milestones replace an implementation, never the protocol:
   `matched_rule = "none.allow_all"`, `reason = "null policy set: no rules configured"`,
   and a `PolicyContext` with principal `local`, the admitted subject, the command digest,
   the evaluation time from the injected clock, an empty aggregates map, and no approval.
-  Approval artefacts are not presented under the null policy (nothing asks for one); the
-  `approvals` tables exist and are tested empty.
+  The artefact wire format and `ledgergate approve` are M3 deliverables, so under M2b's
+  identity admitter a `Request` with a non-null `approval` field **fails admission** with
+  code `approval_unsupported` (disposition `invalid`). The `approvals` and
+  `approval_consumptions` tables exist with their constraints and are tested empty, and
+  the test that makes that claim is the one that presents an artefact and asserts the
+  `invalid` path. From M3 the admitter accepts artefacts and the presentation rules below
+  apply.
 - **Trace derivation** is M3, with schema v2. M2b exposes the journal for inspection
   (`ledgergate journal dump`) but derives no trace; the M2a replayer is not run against
   a journal in M2b. The roadmap says so.
@@ -234,9 +252,11 @@ anything that references it, an operation before the invocation that references 
 
 1. Take the write lock.
 2. **Cursor.** If the projection's cursor is not `COALESCE(MAX(outcomes.journal_sequence), 0)`,
-   rebuild from `definition` and all outcome rows in order. An `awaiting_approval` or
-   `denied` outcome is folded as a no-op on the books but advances the cursor, so a
-   process cannot miss it. The entry-chain head is checked against the rebuilt projection
+   rebuild from `definition` and all outcome rows in order. An `applied` outcome is folded
+   by executing the recorded `command` with the recorded effects (`entry_id`, `posted_at`)
+   fed back, never by re-deciding anything; an `awaiting_approval`, `denied` or `rejected`
+   outcome is folded as a no-op on the books but advances the cursor, so a process cannot
+   miss it and the core is never asked to re-raise. The entry-chain head is checked against the rebuilt projection
    as an integrity test; it is not the cursor, because lifecycle commands leave it
    unchanged.
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
@@ -268,7 +288,8 @@ anything that references it, an operation before the invocation that references 
    - Present, fingerprint matches, current outcome `awaiting_approval`, no approval:
      `invocations` (`replay`).
    - Present, fingerprint differs: `invocations` (`conflict`, with attempted fingerprint
-     and command).
+     and command). If an approval was presented, an `approvals` row with verdict
+     `approval_not_applicable` follows the inbound event.
 5. Write the inbound `events` row (the admitted `tool_call`), referencing the invocation.
 6. **Short paths.** For `replay`: `invocation_responses` (`replayed`, naming the
    operation's current outcome row, which is the one the response is rendered from);
@@ -344,7 +365,8 @@ snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable s
 1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3; an invalid read writes
 `invocations` (`invalid`), the failure-envelope inbound event, `invocation_responses`
 (`invalid`, no outcome), the outbound event; commits; returns). 4. `invocations` (`read`).
-5. Inbound `events`. 6. `decisions` if the read is policy-gated. On `deny`: no `reads`
+5. Inbound `events`; then, if an approval was presented, an `approvals` row with verdict
+`approval_not_applicable`. 6. `decisions` if the read is policy-gated. On `deny`: no `reads`
 row; disposition stays `read`; go to 8 with `ok=false`/`PolicyDenied` as the outbound
 event. 7. Serve from the projection; write `reads` with cursor, head and result digest.
 8. `invocation_responses` (`read`, no outcome); outbound `events`; commit; respond.

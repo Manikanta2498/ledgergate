@@ -18,7 +18,8 @@ tool_call                        ordinal 0
   [command_intent | read_intent]   1   iff disposition != invalid
   invocation_resolution            2   exactly one; disposition, operation ref, the exact outcome
                                        that answered this invocation (from invocation_responses),
-                                       attempted digest
+                                       attempted digest, approval presentation ref if one was
+                                       presented (whatever its verdict)
                                        disposition: new | replay | conflict | approval | read | invalid
   [policy_decision]                3   iff disposition in {new, approval} or a policy-gated read
   [ledger_command                  4   iff a policy_decision == allow on a write intent

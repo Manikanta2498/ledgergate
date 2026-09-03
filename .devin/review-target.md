@@ -1,25 +1,11 @@
-# Review target (written by the orchestrating agent before invoking spec-review)
+# Review target
 
-- Branch: `plan/adr-0002-revision`; expected HEAD: `da5a0e9` or later on that branch.
-- Scope: `docs/adr/0002-runtime-surface-and-plan.md`, `docs/spec/journal.md`,
-  `docs/spec/trace-v2.md`, `docs/spec/identifiers-and-redaction.md`, README roadmap and
-  design-commitments rows. Code to verify against: `src/ledgergate/ledger/` (state.py,
-  identifiers.py, entries.py), `src/ledgergate/trace/`, `schema/trace/v1.json`,
-  `pyproject.toml` import-linter contracts.
-- This is revision 13. Your previous pass (on d68dd64) found seven P2s and eleven P3s.
-  Revision 13 claims to close all of them:
-  1. failed verdict: runtime writes the decision (`runtime.approval_rejected`), policy set
-     not invoked; 2. valid approval x approval_required is a runtime fatal config error,
-  not "rejected at definition load"; 3. approval presented on other dispositions gets a
-  presentation row with verdict `approval_not_applicable`; 4. `rejected` spends the key in
-  the journal, divergence from the core stated in Terms, ADR and README, one fingerprint
-  function; 5. `journal` allocator table as the single counter, gaps permitted;
-  6. canonical `Request` envelope; 7. README corpus milestone fixed to M6.
-  P3s: rule 5 restated as implied by the schema; UNIQUE(journal_sequence, operation);
-  events.invocation nullable for messages; envelope mentioned in events row; `response`
-  semantics defined; COALESCE aligned; `ledgergate approve` placed in M3; approval key
-  `none` in M2b; pending-table rows are M3 tests; `ledgergate.journal` placed in the layer
-  contract.
-- Verify each is actually closed by tracing the text, then look for anything revision 13
-  newly broke or that remains. State whether M2b can be built without further document
-  changes.
+- Branch `plan/adr-0002-revision`, revision 14 (HEAD after commit "revision 14").
+- Scope: ADR-0002, docs/spec/*.md, README rows; code: src/ledgergate/ledger/ (state.py, entries.py, identifiers.py), src/ledgergate/trace/, schema/trace/v1.json, pyproject.toml.
+- Your previous pass (on 3d79ea3) found P1-1 and P2-1..4 plus P3s. Revision 14 claims:
+  P1-1: under M2b a Request with non-null approval fails admission (`approval_unsupported`, disposition invalid); approvals tables tested empty via that path; artefact format is M3.
+  P2-1: admission input is an untyped JSON value; `Request` is admission's output; two named digests, input_digest (envelope) and request_digest; neither is the operation fingerprint.
+  P2-2/3: M2b adds public `ledgergate.ledger.command_fingerprint(command)`, used by Ledger.execute and the journal; PolicyContext.command_digest := operations.fingerprint.
+  P2-4: rebuild folds applied from recorded command + effects, never re-decides; awaiting_approval/denied/rejected are no-ops that advance the cursor.
+  P3s: gap wording; journal.kind enforced by per-table trigger; not_applicable row placement for conflict/read, invalid has none; audit-survives qualifier; presentation ref on invocation_resolution; test wording; derivation layer `ledgergate.derive`; history count; ADR-0001 supersession.
+- Verify closure by tracing; look for anything newly broken; say whether M2b can be built without further document changes.

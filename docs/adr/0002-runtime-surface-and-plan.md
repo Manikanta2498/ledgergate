@@ -58,10 +58,12 @@ And a rejected command spends its key in the journal, where the in-memory core l
 unspent: the ledger of record treats "what happened to this request" as the answer, even
 when what happened is a refusal. Retrying after a refusal is a new request with a new key.
 
-*Placement:* the journal is a new package, `ledgergate.journal`, between the runner and
-the core in the layer contract (`cli -> runner -> {invariants, report} -> {trace, journal}
--> ledger`). It imports `sqlite3`; the core still may not. M2b updates the import-linter
-contract accordingly.
+*Placement:* the journal is a new package, `ledgergate.journal`, a sibling of `trace`
+above the core: `cli -> runner -> {invariants, report} -> {trace, journal} -> ledger`. It
+imports `sqlite3`; the core still may not. The M3 derivation `trace(journal) -> Trace`
+depends on both siblings and lives in `ledgergate.invariants`' layer as
+`ledgergate.derive`, so the M2b import-linter edit is the final shape. This supersedes the
+layer line in ADR-0001, which predates `trace`.
 
 ### 2. Authority is a pure layer with explicit inputs (M3)
 
@@ -164,7 +166,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 ## History
 
-Four review rounds on 2026-09-03 moved this document from guarantees without mechanisms,
+Thirteen revisions on 2026-09-03 moved this document from guarantees without mechanisms,
 to mechanisms without invariants, to a mutable row that defeated its own cursor, to a
 protocol that never inserted the row everything referenced and consumed approvals before
 validating them. Each round pushed a check earlier and removed a place where two things

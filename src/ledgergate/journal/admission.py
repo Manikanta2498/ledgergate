@@ -21,6 +21,7 @@ tokenizing and redacting one.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -33,6 +34,7 @@ from ledgergate.ledger import (
     InvalidIdentifierError,
     LedgerError,
     OpenTransaction,
+    Post,
     Refund,
     Reverse,
 )
@@ -195,19 +197,24 @@ class IdentityAdmitter:
         try:
             command = decode_command(doc, scope.registry)
         except CodecError as exc:
-            raise AdmissionError("malformed_command", exc.where) from exc
+            raise AdmissionError("malformed_command", _argument_path(exc.where)) from exc
         except LedgerError as exc:
             # The codec is structural and lets the core's constructors raise. An unbalanced
             # draft is still malformed input; it is recorded as such, not lost.
             raise AdmissionError(f"malformed_command:{type(exc).__name__}", "arguments") from exc
-        for path, value_ in _caller_identifiers(command):
+        for path, value_ in _identifier_fields(command):
             _identifier(value_, path)
+        for path, account in _account_references(command):
+            if account not in set(scope.chart):
+                raise AdmissionError("unknown_account", path)
         return Request(tool, arguments, call_id, scope.principal, key, None, command)
 
 
-def _caller_identifiers(command: Command) -> list[tuple[str, str]]:
-    """Class-2 identifiers a command carries besides its key. Validated at admission so an
-    invalid one is recorded as `invalid` rather than reaching the core as a rejection."""
+def _identifier_fields(command: Command) -> list[tuple[str, str]]:
+    """Identifier-shaped fields a command carries besides its key, validated at admission so
+    an invalid one is recorded as `invalid` rather than reaching the core as a rejection.
+    ``transaction_id`` is caller-supplied (class 2: tokenized in M2c); ``entry_id`` is a
+    reference to a runtime-generated id (validated, never tokenized)."""
     match command:
         case Reverse(_, entry_id, _):
             return [("arguments.entry_id", entry_id)]
@@ -216,3 +223,26 @@ def _caller_identifiers(command: Command) -> list[tuple[str, str]]:
         case Refund(_, transaction_id, _, _):
             return [("arguments.transaction_id", transaction_id)]
     return []
+
+
+def _account_references(command: Command) -> list[tuple[str, str]]:
+    """Every account a command's postings name, with its path. Chart membership is static
+    configuration, so it is admission's check on writes as it is on reads."""
+    match command:
+        case Post(_, draft):
+            return [
+                (f"arguments.draft.postings[{i}].account", p.account_id)
+                for i, p in enumerate(draft.postings)
+            ]
+        case Advance(_, _, _, entry) | Refund(_, _, _, entry) if entry is not None:
+            return [
+                (f"arguments.entry.postings[{i}].account", p.account_id)
+                for i, p in enumerate(entry.postings)
+            ]
+    return []
+
+
+def _argument_path(where: str) -> str:
+    """Codec locations are rooted at ``command(<kind>)``; the request rooted them under
+    ``arguments``. One grammar for the envelope."""
+    return re.sub(r"^command(\([a-z_]+\))?", "arguments", where)

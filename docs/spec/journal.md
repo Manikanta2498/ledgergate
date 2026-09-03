@@ -36,7 +36,8 @@ recompute. There is no third digest.
 (M4's MCP layer decodes the wire and passes the params object; the journal never sees
 wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `arguments`
 (JSON object), `call_id`, `principal`, `key` (idempotency key), optional `approval`. Two
-named digests, both SHA-256 over canonical JSON (sorted keys, no whitespace, UTF-8):
+named digests over canonical JSON (RFC 8785, below), SHA-256 in M2b and, for
+`input_digest`, keyed from M2c:
 `input_digest`, over the untyped input, is what the failure envelope records, because a
 malformed input has no `Request` to digest. It is computed by the admitter (`digest_input`),
 so that under M2c it is *keyed* under the token key and a stored digest of rejected content
@@ -149,7 +150,7 @@ All strictly append-only. No row is ever updated or deleted.
    outcomes and do not move it; the outcome this transaction appends becomes the new
    cursor on commit.
 6. Every row is written after every row it references (immediate foreign keys); the
-   protocols' step order is the only legal one.
+   protocols' step order is one legal linearization of that partial order.
 7. Every invocation has exactly one `invocation_responses` row, and for `new`, `replay`
    and `approval` dispositions it names the exact outcome the response was rendered from.
 8. Each operation's outcomes form a single chain: one root, no forks, every successor
@@ -362,8 +363,9 @@ anything that references it, an operation before the invocation that references 
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
    identifier invalid after tokenization, a command document the codec cannot decode, a
    command the core's own constructors reject such as an unbalanced draft or a zero
-   posting, or a read naming an account the chart does not have): write `invocations`
-   (`invalid`, no operation),
+   posting, a posting or a read naming an account the chart does not have, since chart
+   membership is static configuration and admission's check on both sides): write
+   `invocations` (`invalid`, no operation),
    then the inbound `events` row holding a **failure envelope** rather than the request's
    raw structural form: the tokenized `call_id` if one was recoverable; the tool name only if it is a
    known operator-defined tool; `input_digest` as defined under *Admission input and
@@ -418,8 +420,9 @@ anything that references it, an operation before the invocation that references 
 10. Render and return the response.
 
 **Crash analysis.** Before commit: nothing exists in the journal, and the process keeps
-the projection reference it held before the transaction; the `Ledger` value produced in
-step 8 is discarded (it is an immutable value, so nothing has to be undone). A retry runs
+a projection of committed rows only (the one it held, or the one step 2 rebuilt from
+committed outcomes); the `Ledger` value produced in step 8 is discarded (it is an
+immutable value, so nothing has to be undone). A retry runs
 afresh. After commit,
 before step 10: a complete invocation exists including its outbound event. A retry of a
 committed `new` resolves as `replay`. A retry of a committed `approval` resolves as `replay`
@@ -445,9 +448,12 @@ record.
 ## Foreign keys
 
 Every reference points to a row written earlier in the same or an earlier transaction;
-SQLite foreign keys are enabled and **immediate**, so the write order in the protocols
-above is the only legal one and an implementation that reorders it fails at the
-constraint, not in review. Targets are `journal_sequence` values.
+SQLite foreign keys are enabled and **immediate**, so every dependency edge in this table
+is enforced at the constraint: a row cannot precede a row it references. The edges fix a
+partial order; where two rows of one invocation reference only the invocation (its inbound
+event and its decision, its `reads` row and its response), their relative order is
+protocol, and nothing downstream depends on it, since trace derivation anchors every event
+of an invocation to the invocation's own sequence. Targets are `journal_sequence` values.
 
 | Column | References |
 | :--- | :--- |

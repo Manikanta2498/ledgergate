@@ -224,7 +224,7 @@ class TestInvalidAdmission:  # family 2
             (
                 {"tool": "post", "call_id": "c", "key": "k"},
                 "malformed_command",
-                "command(post).draft",
+                "arguments.draft",
             ),
             (
                 {"tool": "teleport", "call_id": "c", "key": "k", "arguments": {}},
@@ -986,8 +986,10 @@ class TestCreateHardening:
         conn = sqlite3.connect(foreign)
         conn.execute("CREATE TABLE customers (id INTEGER)")
         conn.close()
+        before = Path(foreign).read_bytes()
         with pytest.raises(JournalError, match="not a journal"):
             Journal.create(foreign, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert Path(foreign).read_bytes() == before  # refused byte-for-byte unchanged
         text = tmp_path / "text.sqlite"
         text.write_text("hello")
         with pytest.raises(JournalError, match="cannot create"):
@@ -1091,6 +1093,34 @@ class TestRegistryBinding:
         with pytest.raises(JournalError, match="not a journal"):
             Journal.open(str(foreign), clock=SteppingClock(EPOCH), ids=SequentialIds())
         assert foreign.read_bytes() == before  # no WAL switch, no schema, nothing
+
+    def test_write_to_unknown_account_is_an_admission_failure(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        draft = {
+            "postings": [
+                {"account": "nope", "side": "debit", "money": {"amount": 1, "currency": "USD"}},
+                {"account": "revenue", "side": "credit", "money": {"amount": 1, "currency": "USD"}},
+            ]
+        }
+        r = journal.handle(
+            {"tool": "post", "call_id": "c", "key": "k", "arguments": {"draft": draft}}
+        )
+        assert r.response == "invalid"
+        assert r.error_message == "unknown_account at arguments.draft.postings[0].account"
+        assert count(raw, "operations") == 0
+        assert journal.handle(post("k")).response == "applied"  # the key was never spent
+
+    def test_corrupt_definition_is_an_integrity_failure(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET chart = 'not json'")
+        conn.close()
+        with pytest.raises(JournalError, match="definition does not decode"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
 
     def test_message_role_is_constrained(self, journal: Journal) -> None:
         with pytest.raises(ValueError, match="role"):

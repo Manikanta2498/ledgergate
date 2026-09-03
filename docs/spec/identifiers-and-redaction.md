@@ -8,7 +8,7 @@ content, the failure envelope's `input_digest`, is necessarily over the raw inpu
 therefore keyed under the token key (the admitter's `digest_input`), so it commits to the
 input without being reversible by dictionary.
 
-## Three classes of field
+## Four classes of field
 
 1. **Free text** (`description`, message `content`, tool `arguments` and `result`, tag
    values, account `name` in the definition): fail-closed redaction. A field not on the
@@ -22,7 +22,11 @@ input without being reversible by dictionary.
    to the same value and finds it. A retry with the raw key tokenizes to the same key.
    Replay operates only on stored tokens and needs no key.
 3. **Operator-defined identifiers** (`account_id`, tool names): configuration in the
-   ledger definition, stored as given. The definition loader warns on values that look
+   ledger definition, stored as given.
+4. **References to runtime-generated identifiers** (`entry_id` in a `reverse`): the
+   caller repeats an id the ledger issued. Validated by `require_identifier` at admission,
+   never tokenized, because tokenizing it would make every reference resolve to nothing.
+   Generated ids carry no caller content by construction. The definition loader warns on values that look
    like emails, phone numbers or card numbers; the operator owns what they name their
    accounts.
 

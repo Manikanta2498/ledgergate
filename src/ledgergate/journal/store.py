@@ -19,6 +19,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from ledgergate.codec import (
@@ -40,7 +41,14 @@ from ledgergate.journal.admission import (
     Request,
 )
 from ledgergate.journal.policy import NullPolicySet, PolicyContext, PolicySet
-from ledgergate.journal.schema import FACT_TABLES, SCHEMA_VERSION, connect, create_schema, probe
+from ledgergate.journal.schema import (
+    FACT_TABLES,
+    SCHEMA_VERSION,
+    connect,
+    create_schema,
+    probe,
+    tables_of,
+)
 from ledgergate.ledger import (
     CURRENCIES,
     Account,
@@ -208,21 +216,21 @@ class Journal:
         policy: PolicySet | None = None,
     ) -> Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
+        target = Path(path)
+        if target.exists() and target.stat().st_size > 0:
+            # Inspect read-only before any pragma touches the file: a database that is not
+            # a journal is refused byte-for-byte unchanged.
+            try:
+                foreign = tables_of(path) - {"journal", "sqlite_sequence", *FACT_TABLES}
+            except sqlite3.Error as exc:
+                raise JournalError(f"cannot create journal at {path}: {exc}") from exc
+            if foreign:
+                raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
         try:
             self._conn = connect(path)
         except sqlite3.Error as exc:
             raise JournalError(f"cannot create journal at {path}: {exc}") from exc
         try:
-            ours = {"journal", "sqlite_sequence", *FACT_TABLES}
-            tables = {
-                name
-                for (name,) in self._conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            foreign = tables - ours
-            if foreign:
-                raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
             create_schema(self._conn)
             if self._conn.execute("SELECT 1 FROM definition").fetchone():
                 raise JournalError("journal already has a definition; use open()")
@@ -315,8 +323,11 @@ class Journal:
                     f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
                     f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
                 )
-            currencies = {code: Currency(code, exp) for code, exp in json.loads(row[7]).items()}
-            chart = _decode_chart(json.loads(row[6]), currencies)
+            try:
+                currencies = {code: Currency(code, exp) for code, exp in json.loads(row[7]).items()}
+                chart = _decode_chart(json.loads(row[6]), currencies)
+            except (ValueError, KeyError, TypeError, LedgerError) as exc:
+                raise IntegrityError(f"definition does not decode: {exc}") from exc
             self._definition = Definition(
                 row[0], chart, currencies, row[1], row[2], row[3], row[4], row[5]
             )
@@ -673,13 +684,13 @@ class Journal:
         cursor = 0
         for seq, outcome, command_json, entry_id, posted_at, head_after in rows:
             if outcome == "applied":
+                effects = _Effects(self.clock, self.ids, ledger)
                 try:
                     command = decode_command(json.loads(command_json), registry)
+                    if entry_id is not None:
+                        effects.script(entry_id, datetime.fromisoformat(posted_at))
                 except (CodecError, LedgerError, ValueError) as exc:
                     raise IntegrityError(f"applied outcome {seq} does not decode: {exc}") from exc
-                effects = _Effects(self.clock, self.ids, ledger)
-                if entry_id is not None:
-                    effects.script(entry_id, datetime.fromisoformat(posted_at))
                 try:
                     ledger = ledger.execute(command, clock=effects, ids=effects).ledger
                 except LedgerError as exc:

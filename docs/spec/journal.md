@@ -462,7 +462,7 @@ fault of this process's injected effects (an id generator that repeats an id the
 already holds or produces an invalid one, a clock that returns a naive datetime; these are
 not verdicts on the command and must never spend its key), a transport-level I-JSON
 violation (a number outside the JCS-safe range, a non-finite
-double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval or for a read intent, or a
+double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the

@@ -199,9 +199,10 @@ premature projection fails; and its `result_digest` is the JCS digest of the val
 caller was served in the `tool_result`, so the served value is bound to the row (agreement
 of that value with the replayed books is not checked). A further row checks that what the
 caller was told is what the journal did, per the decision-to-outcome tables: success iff a
-read was not denied or the ledger applied, otherwise the error type of the path taken with
-the decision's rule and reason as the message, an applied write's served head, sequence and
-entry equal to the ledger result's, and a replay told exactly what the producing invocation
+read was not denied or the ledger applied, otherwise the error type of the path taken and,
+on a decided path, the decision's rule and reason as the message; an applied write's served
+head, sequence and entry equal to the ledger result's and a rejected write's served error
+equal to the ledger result's; and a replay told exactly what the producing invocation
 was told (the same result with `replayed` set, or the same error verbatim).
 The scorecard is the combined result and is itself tri-state: `fail` if any invariant
 failed, `pass` only if none failed *and at least one ran*, otherwise `no_evidence`. The

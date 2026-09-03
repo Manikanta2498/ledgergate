@@ -622,6 +622,15 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 expected_ok = lr.ok
                 expected_error = None if lr.error is None else lr.error.type
                 served = tr.result if isinstance(tr.result, dict) else {}
+                if not lr.ok and tr.error != lr.error:
+                    out.append(
+                        Finding(
+                            "caller_was_told_what_happened",
+                            "error",
+                            f"{r.intent_id}: served error differs from the ledger result's",
+                            r.intent_id,
+                        )
+                    )
                 if lr.ok and (
                     served.get("head") != lr.head
                     or served.get("sequence") != lr.sequence

@@ -1795,3 +1795,52 @@ class TestTwelfthReviewFindings:
         tr["error"]["message"] = "other.rule: swapped"
         card = check(TraceV2.model_validate(doc))
         assert {r.name: r.status for r in card.results}["caller_was_told_what_happened"] == "fail"
+
+
+class TestPostApprovalTightening:
+    def test_scalar_replay_results_are_compared(self, journal_path: str) -> None:
+        from ledgergate.invariants import caller_was_told_what_happened
+
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        new_ok = next(e for e in events if e["type"] == "ledger_result" and e["ok"])
+        producer_tr = events[events.index(new_ok) + 1]
+        replay = next(
+            e
+            for e in events
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        replay_tr = next(e for e in events[events.index(replay) :] if e["type"] == "tool_result")
+        producer_tr["result"], replay_tr["result"] = 1, 2
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in events))
+        assert any("not told exactly" in f.message for f in caller_was_told_what_happened(built))
+
+    def test_rejected_write_served_error_is_the_ledger_results(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        lr = next(e for e in events if e["type"] == "ledger_result" and not e["ok"])
+        tr = events[events.index(lr) + 1]
+        assert tr["type"] == "tool_result" and tr["error"] == lr["error"]
+        tr["error"]["message"] = "softened"
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["caller_was_told_what_happened"] == "fail"
+
+    def test_a_policy_set_naming_the_runtime_namespace_is_refused(self, tmp_path: Path) -> None:
+        from ledgergate.journal import ConfigurationError
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class Impostor(ThresholdPolicySet):
+            def evaluate(self, context: PolicyContext) -> Decision:
+                return Decision("deny", "runtime.approval_rejected", "approval_expired")
+
+        j = Journal.create(
+            str(tmp_path / "imp.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=Impostor(version="imp"),
+        )
+        with pytest.raises(ConfigurationError, match="reserved"):
+            j.handle(_open("k", "c", 5))
+        j.close()

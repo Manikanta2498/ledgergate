@@ -191,8 +191,9 @@ class TraceV2(_Strict):
     bracketed by a tool_call immediately before and a tool_result immediately after with
     the same call_id; events of one intent appear in ordinal order; seq is dense and
     strictly increasing; every ledger_command has exactly one ledger_result and command_id
-    is unique; every operation and outcome reference resolves to one recorded earlier, and
-    a produced outcome is produced once, in allocation order; derived references
+    is unique; every operation and outcome reference resolves to one recorded earlier, a
+    replay or failed approval names the operation's outcome current at the time, and a
+    produced outcome is produced once, in allocation order; derived references
     (outcome, presentation, consumption) follow their fixed grammars."""
 
     model_config = ConfigDict(
@@ -321,11 +322,14 @@ class TraceV2(_Strict):
         self, resolutions: list[InvocationResolution], by_intent: dict[str, list[AnyV2Event]]
     ) -> None:
         """Every reference resolves to something recorded earlier: a new operation and a
-        produced outcome are fresh; a replay, conflict or approval names an operation an
-        earlier new created; a replay or failed approval names an outcome that operation
-        produced earlier."""
+        produced outcome are fresh and in allocation order; a replay, conflict or approval
+        names an operation an earlier new created; a replay or failed approval names the
+        outcome that was that operation's current one at the time, and a failed approval's
+        was pending."""
         operations: set[str] = set()
         outcomes: dict[str, str] = {}  # outcome_ref -> operation_id
+        current: dict[str, str] = {}  # operation_id -> its latest produced outcome
+        pending: dict[str, bool] = {}  # operation_id -> latest outcome awaits approval
         last_produced = 0
         for r in resolutions:
             op, out = r.operation_id, r.outcome_ref
@@ -355,8 +359,16 @@ class TraceV2(_Strict):
                     raise ValueError(f"{r.intent_id}: outcome {out} is out of allocation order")
                 last_produced = number
                 outcomes[out] = op
-            elif out is not None and outcomes.get(out) != op:
-                raise ValueError(f"{r.intent_id}: outcome {out} was not produced for {op}")
+                current[op] = out
+                assert decision is not None
+                pending[op] = decision.decision == "approval_required"
+            elif out is not None:
+                # A replay, or a failed-verdict approval, names the operation's *current*
+                # outcome at the time: the latest one produced before this resolution.
+                if current.get(op) != out:
+                    raise ValueError(f"{r.intent_id}: outcome {out} was not {op}'s current outcome")
+                if r.disposition == "approval" and not pending[op]:
+                    raise ValueError(f"{r.intent_id}: approval against a non-pending outcome")
 
     def _check_boundary(
         self, r: InvocationResolution, group: list[AnyV2Event], positions: dict[int, int]

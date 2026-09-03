@@ -157,11 +157,12 @@ class _Derivation:
         response = self.c.execute(
             "SELECT * FROM invocation_responses WHERE invocation = ?", (seq,)
         ).fetchone()
-        presentation = self.c.execute(
-            "SELECT journal_sequence FROM approvals WHERE invocation = ? ORDER BY journal_sequence"
-            " LIMIT 1",
-            (seq,),
-        ).fetchone()
+        presentations = self.c.execute(
+            "SELECT journal_sequence FROM approvals WHERE invocation = ?", (seq,)
+        ).fetchall()
+        if len(presentations) > 1:
+            raise DerivationError(f"invocation {seq} has {len(presentations)} presentations")
+        presentation = presentations[0] if presentations else None
         out: list[tuple[int, Any]] = []
 
         # 0: tool_call
@@ -353,6 +354,10 @@ class _Derivation:
         rows = self.c.execute(
             "SELECT direction, body FROM events WHERE invocation = ?", (inv_seq,)
         ).fetchall()
+        if [r["direction"] for r in rows].count("inbound") != 1 or [
+            r["direction"] for r in rows
+        ].count("outbound") != 1:
+            raise DerivationError(f"invocation {inv_seq} lacks exactly one event per direction")
         by = {r["direction"]: json.loads(r["body"]) for r in rows}
         return by["inbound"], by["outbound"]
 

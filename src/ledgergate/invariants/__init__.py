@@ -172,10 +172,10 @@ def every_write_was_decided(t: TraceV2) -> list[Finding]:
 
 
 def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
-    """A ``runtime.``-prefixed decision is a deny with a failed approval verdict as reason, on an
-    ``approval`` intent, carrying its own presentation and no consumption; conversely every
-    failed verdict was decided by the runtime, and a consumption is kept exactly for a valid
-    verdict."""
+    """Over every decision: it references the presentation its own invocation made and none
+    otherwise; a ``runtime.``-prefixed decision is a deny on an ``approval`` intent with a
+    failed verdict as its reason and no consumption; every failed verdict was decided by the
+    runtime; a consumption is kept exactly for a valid verdict."""
     out = []
     by_id = {r.intent_id: r for r in t.resolutions()}
     failed = {
@@ -186,6 +186,28 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
     }
     for iid, d in _decided(t).items():
         verdict = None if d.approval is None else d.approval.verdict
+        r = by_id[iid]
+        # A decision references the presentation its own invocation made, and none otherwise.
+        mine = None if d.approval is None else d.approval.presentation_ref
+        if mine != r.presentation_ref:
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: decision presentation {mine!r} differs from the invocation's"
+                    f" {r.presentation_ref!r}",
+                    iid,
+                )
+            )
+        if d.runtime_written and d.approval is None:
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: a runtime-written decision must carry the verdict it decided on",
+                    iid,
+                )
+            )
         if (d.consumption_ref is not None) != (verdict == "approval_valid"):
             out.append(
                 Finding(
@@ -206,7 +228,6 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
             )
         if not d.runtime_written:
             continue
-        r = by_id[iid]
         ok = (
             d.decision == "deny"
             and r.disposition == "approval"
@@ -427,7 +448,7 @@ REGISTRY: tuple[Invariant, ...] = (
         runtime_decisions_are_verdicts.__doc__ or "",
         "docs/spec/journal.md, approval artefacts",
         runtime_decisions_are_verdicts,
-        lambda t: any(d.approval is not None for d in t.decisions().values()),
+        lambda t: bool(t.decisions()),
     ),
     Invariant(
         "context_matches_decision",

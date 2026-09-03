@@ -931,7 +931,7 @@ class TestThirdReviewFindings:
             if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
         )
         replay["outcome_ref"] = "outcome-999999"
-        with pytest.raises(ValidationError, match="was not produced"):
+        with pytest.raises(ValidationError, match="current outcome"):
             TraceV2.model_validate(doc)
         doc = t.model_dump(mode="json")
         news = [
@@ -1064,3 +1064,99 @@ class TestFourthReviewFindings:
                 outcome_ref="outcome-1",
                 attempted_digest="0" * 64,
             )
+
+
+class TestFifthReviewFindings:
+    def _failed_approval_journal(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "fa.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(
+            _open(
+                "big",
+                "c2",
+                500,
+                approval=_artefact(j, "big", expires_at=EPOCH + timedelta(seconds=1)),
+            )
+        )
+        j.handle(_open("big", "c3", 500, approval=_artefact(j, "big", approval_id="good")))
+        j.handle(_open("big", "c4", 500))
+        j.close()
+        return path
+
+    def test_stripping_the_verdict_from_a_runtime_decision_fails(self, tmp_path: Path) -> None:
+        doc = derive(self._failed_approval_journal(tmp_path)).model_dump(mode="json")
+        d = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["matched_rule"].startswith("runtime.")
+        )
+        d.pop("approval")
+        d["context"]["approval"] = None
+        card = check(TraceV2.model_validate(doc))
+        assert not card.passed
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+    def test_a_consumption_without_any_approval_fails(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        d = next(
+            e for e in doc["events"] if e["type"] == "policy_decision" and e.get("approval") is None
+        )
+        d["consumption_ref"] = "consumption-77"
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+    def test_a_decision_presentation_must_be_its_own_invocations(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        d = next(
+            e for e in doc["events"] if e["type"] == "policy_decision" and e.get("approval") is None
+        )
+        d["approval"] = {
+            "presentation_ref": "presentation-999",
+            "verdict": "approval_not_applicable",
+        }
+        d["context"]["approval"] = {"presentation": 999, "verdict": "approval_not_applicable"}
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+    def test_a_replay_must_name_the_outcome_current_at_the_time(self, tmp_path: Path) -> None:
+        t = derive(self._failed_approval_journal(tmp_path))
+        new, failed, approved, replay = t.resolutions()
+        assert failed.outcome_ref == new.outcome_ref and replay.outcome_ref == approved.outcome_ref
+        doc = t.model_dump(mode="json")
+        res = [e for e in doc["events"] if e["type"] == "invocation_resolution"]
+        res[3]["outcome_ref"] = res[0]["outcome_ref"]  # claim the retry was told "awaiting"
+        with pytest.raises(ValidationError, match="current outcome"):
+            TraceV2.model_validate(doc)
+        doc = t.model_dump(mode="json")
+        res = [e for e in doc["events"] if e["type"] == "invocation_resolution"]
+        res[1]["outcome_ref"], res[1]["seq"] = res[2]["outcome_ref"], res[1]["seq"]
+        with pytest.raises(ValidationError):  # a failed approval cannot name a later outcome
+            TraceV2.model_validate(doc)
+
+    def test_derivation_refuses_a_journal_with_two_presentations_for_one_invocation(
+        self, tmp_path: Path
+    ) -> None:
+        import sqlite3
+
+        path = self._failed_approval_journal(tmp_path)
+        conn = sqlite3.connect(path, isolation_level=None)
+        (pres,) = conn.execute(
+            "SELECT * FROM approvals ORDER BY journal_sequence LIMIT 1"
+        ).fetchall()
+        conn.execute("BEGIN")
+        seq = conn.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
+        conn.execute(
+            "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *pres[1:])
+        )
+        conn.execute("COMMIT")
+        conn.close()
+        with pytest.raises(DerivationError, match="presentations"):
+            derive(path)

@@ -44,12 +44,14 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   derived from a whole journal, under one read snapshot, so every reference resolves, and
   the model enforces it: a `new` creates a fresh operation and a fresh outcome; a `replay`,
   `conflict` or `approval` names an operation an earlier `new` created; a `replay` or a
-  failed-verdict `approval` names an outcome that operation produced earlier; a produced
-  outcome is produced exactly once).
+  failed-verdict `approval` names the outcome that was that operation's current one at the
+  time, a failed approval's being pending; a produced outcome is produced exactly once, in
+  allocation order).
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
-  names the operation's pending tip, an outcome produced by an *earlier* invocation, exactly
-  as a `replay` does; the `policy_decision` carries the `runtime.approval_rejected` rule and
+  names the operation's pending tip, the outcome that was *current* at the time (the latest
+  one produced before this resolution, and one whose decision was `approval_required`),
+  exactly as a `replay` names the current outcome; the `policy_decision` carries the `runtime.approval_rejected` rule and
   the verdict.
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.

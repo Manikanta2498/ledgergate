@@ -33,7 +33,7 @@ All strictly append-only. No row is ever updated or deleted.
 | `outcomes` | `operation`, `previous_outcome`, `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `call_id`. |
 | `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, and the `consumption` row if one was kept. |
-| `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`): the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and this presentation's validation verdict. Presenting the same artefact twice appends two rows with two verdicts. |
+| `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and this presentation's validation verdict. Presenting the same artefact twice appends two rows with two verdicts. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse, so the row can exist before the decision does. |
 | `events` | Boundary events: the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`) or message, and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
 | `reads` | For read tools: the `journal_sequence` and head the projection was at when served, and the result digest. |
@@ -47,6 +47,8 @@ All strictly append-only. No row is ever updated or deleted.
 4. A `tool_call` row never exists without the data for its `tool_result`.
 5. The projection cursor equals the journal's max `journal_sequence` whenever a command is
    evaluated against it.
+6. Every row is written after every row it references (immediate foreign keys); the
+   protocols' step order is the only legal one.
 
 ## Approval artefacts
 
@@ -55,8 +57,9 @@ whose verification counterpart is in `definition`. Binds to exactly one pending 
 `fingerprint`, tokenized `key`, subject, amount and currency.
 
 **Validation and reservation**, performed inside the write transaction *before* the
-`PolicyContext` is built. First the `approvals` presentation row is written (outside any
-savepoint, so the audit of the attempt survives whatever follows). Then the checks run
+`PolicyContext` is built and after the invocation row exists (the presentation references
+it). First the `approvals` presentation row is written (outside any savepoint, so the
+audit of the attempt survives whatever follows). Then the checks run
 **in order and short-circuit: the first failure is the verdict, and no later check runs**.
 In particular, the reservation in check 4 is attempted if and only if checks 1 to 3 all
 passed; an invalid, expired or mis-scoped artefact never touches `approval_consumptions`.
@@ -88,7 +91,7 @@ fixed here rather than left to policy authors:
 A failed presentation therefore never forecloses the operation; only a genuine policy
 denial or the core's own verdict does. Each row of this table is a required test.
 
-**Settling the reservation** happens in step 6 of the write protocol, *before* the
+**Settling the reservation** happens in step 7 of the write protocol, *before* the
 decision row is written, because `ROLLBACK TO` undoes everything after the savepoint and
 the decision must survive:
 
@@ -107,7 +110,9 @@ fail after policy has run because the reservation was taken before it.
 ## Write protocol
 
 One invocation, one SQLite transaction, `BEGIN IMMEDIATE`. SQLite serializes write
-transactions; exactly one is active at a time, whatever the process count.
+transactions; exactly one is active at a time, whatever the process count. Rows are
+written in an order that satisfies the immediate foreign keys below: an invocation before
+anything that references it, an operation before the invocation that references it.
 
 1. Take the write lock.
 2. **Cursor.** If the projection's cursor is not the journal's max `journal_sequence`,
@@ -116,35 +121,40 @@ transactions; exactly one is active at a time, whatever the process count.
    lifecycle commands leave it unchanged.
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
-   identifier invalid after tokenization): write inbound `events`, `invocations`
-   (`invalid`), outbound `events` with the error; commit; return. No operation exists.
-4. Write the inbound `events` row.
-5. **Resolve the key** in `operations`:
+   identifier invalid after tokenization): write `invocations` (`invalid`, no operation,
+   with whatever `call_id` and attempted data admission recovered), then the inbound
+   `events` row as received, then the outbound `events` row with the error; commit;
+   return. No operation exists.
+4. **Resolve the key** in `operations` and write the invocation:
    - Absent: insert `operations` (`key`, `fingerprint`, canonical `command`), then
-     `invocations` (`new`). Continue to 6.
-   - Present, fingerprint matches, current outcome terminal: `invocations` (`replay`);
-     outbound `events` from the stored outcome; commit; return. No decision row.
-   - Present, fingerprint matches, current outcome `awaiting_approval`, approval presented:
-     validate and reserve per *Approval artefacts*; `invocations` (`approval`); continue to
-     6 with the verdict in the context.
+     `invocations` (`new`, referencing it).
+   - Present, fingerprint matches, current outcome terminal: `invocations` (`replay`).
+   - Present, fingerprint matches, current outcome `awaiting_approval`, approval
+     presented: `invocations` (`approval`).
    - Present, fingerprint matches, current outcome `awaiting_approval`, no approval:
-     `replay` of that outcome.
+     `invocations` (`replay`).
    - Present, fingerprint differs: `invocations` (`conflict`, with attempted fingerprint
-     and command); outbound `events`; commit; return. No decision row.
-6. **Decide.** Build the `PolicyContext`, reading aggregates from `outcomes` and
-   `decisions` in this transaction. Evaluate. **Settle any approval reservation first**
+     and command).
+5. Write the inbound `events` row (the admitted `tool_call`), referencing the invocation.
+6. **Short paths.** For `replay`: outbound `events` derived from the current outcome;
+   commit; return. For `conflict`: outbound `events` with the conflict error; commit;
+   return. Neither writes a decision row: no policy evaluation happened. For `approval`:
+   validate and reserve per *Approval artefacts* (this writes the `approvals` presentation
+   row, which references the invocation, hence its position here), then continue.
+7. **Decide.** Build the `PolicyContext`, reading aggregates from `outcomes` and
+   `decisions` in this transaction. Evaluate. Settle any approval reservation first
    (release on `allow`, roll back the savepoint otherwise; see *Approval artefacts*), then
-   write `decisions`. If not `allow`: append outcome (`denied` or `awaiting_approval`);
-   outbound `events`; commit; return.
-7. **Execute.** Run the command through the pure core.
-8. Append outcome (`applied` or `rejected`, with effects and heads). Outbound `events`.
+   write `decisions`. If not `allow`: append outcome (`denied` or `awaiting_approval` per
+   the decision-to-outcome table); outbound `events`; commit; return.
+8. **Execute.** Run the command through the pure core.
+9. Append outcome (`applied` or `rejected`, with effects and heads). Outbound `events`.
    Commit.
-9. Render and return the response.
+10. Render and return the response.
 
 **Crash analysis.** Before commit: nothing exists; a retry runs afresh. After commit,
-before 9: a complete invocation exists including its outbound event; a retry resolves as
-`replay`. Every path from step 5 onward that created an operation appends an outcome in
-the same transaction (invariant 2).
+before step 10: a complete invocation exists including its outbound event; a retry
+resolves as `replay`. Every path from step 4 onward that created an operation appends an
+outcome in the same transaction (invariant 2).
 
 **Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
 violation other than the approval reservation, an integrity failure at step 2, or a
@@ -170,6 +180,7 @@ constraint, not in review. Targets are `journal_sequence` values.
 | `decisions.operation` | `operations` (null for reads) |
 | `decisions.presentation` | `approvals` (null when none presented) |
 | `decisions.consumption` | `approval_consumptions` (null unless kept) |
+| `approvals.invocation` | `invocations` |
 | `approval_consumptions.presentation` | `approvals` |
 | `approval_consumptions.invocation` | `invocations` |
 | `events.invocation` | `invocations` |
@@ -185,12 +196,12 @@ the reservation ordering depends on.
 and accepts serialization; a deferred transaction that upgrades to write after taking its
 snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable state.
 
-1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3; an invalid read is
-recorded with disposition `invalid`). 4. Inbound `events`, `invocations` (`read`).
-5. `decisions` if the read is policy-gated. On `deny`: no `reads` row is written, the
-outbound event is `ok=false`/`PolicyDenied`, the disposition stays `read`; go to 7.
-6. Serve from the projection; write `reads` with cursor, head and result digest.
-7. Outbound `events`; commit; respond.
+1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3; an invalid read writes
+`invocations` (`invalid`) then its events, commits, returns). 4. `invocations` (`read`).
+5. Inbound `events`. 6. `decisions` if the read is policy-gated. On `deny`: no `reads`
+row, outbound event `ok=false`/`PolicyDenied`, disposition stays `read`; go to 8.
+7. Serve from the projection; write `reads` with cursor, head and result digest.
+8. Outbound `events`; commit; respond.
 
 Unaudited reads of the projection by the process itself are snapshot reads and write
 nothing.

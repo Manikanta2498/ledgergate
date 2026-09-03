@@ -43,7 +43,7 @@ All strictly append-only. No row is ever updated or deleted.
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, canonical `command`. |
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `call_id`. |
-| `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from; `CHECK`: non-null iff the invocation's disposition is `new`, `replay` or `approval`), `response` (`applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
+| `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (`applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
 | `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, and the `consumption` row if check 4 succeeded. |
 | `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and this presentation's validation verdict. Presenting the same artefact twice appends two rows with two verdicts. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse: the row is written during validation, before the decision exists. |
@@ -76,8 +76,9 @@ All strictly append-only. No row is ever updated or deleted.
 ## Outcome chain
 
 `outcomes.previous_outcome` is not decoration; the projection rebuild and the approval
-history both depend on it being unambiguous. Constraints, all enforced by the schema, not
-by convention:
+history both depend on it being unambiguous. Four structural rules are enforced by the
+schema; the fifth, which needs to know what was *current* at the time, is enforced by the
+write protocol under the lock and is verifiable after the fact:
 
 | Rule | Enforcement |
 | :--- | :--- |
@@ -85,7 +86,7 @@ by convention:
 | No forks | `UNIQUE (previous_outcome)` |
 | A predecessor belongs to the same operation | composite foreign key `(previous_outcome, operation)` references `outcomes (journal_sequence, operation)` |
 | Only `awaiting_approval` has successors | trigger: a row with non-null `previous_outcome` requires the predecessor's `outcome = 'awaiting_approval'` |
-| Successor references the latest | protocol rule: the appending transaction reads the operation's current outcome under the write lock and uses it; with no forks and one writer, "latest" is well defined |
+| Successor references the latest | **protocol**, not schema: the appending transaction reads the operation's current outcome under the write lock and uses it. With no forks and one writer, "latest" is well defined, and it is checkable afterwards: for every successor, no other outcome of the same operation may have a `journal_sequence` between the predecessor's and its own. Rebuild asserts this and refuses a journal that violates it. |
 
 Rebuild folds each operation's chain from root to tip in `journal_sequence` order; a chain
 that violates any rule above cannot exist in the journal, so rebuild needs no recovery path.
@@ -192,17 +193,19 @@ anything that references it, an operation before the invocation that references 
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
    identifier invalid after tokenization): write `invocations` (`invalid`, no operation),
-   then the inbound `events` row holding a **failure envelope**, never the request as
-   received: the tokenized `call_id` if one was recoverable; the tool name only if it is a
+   then the inbound `events` row holding a **failure envelope** rather than the request's
+   raw structural form: the tokenized `call_id` if one was recoverable; the tool name only if it is a
    known operator-defined tool; a SHA-256 digest of the raw request bytes for
    correlation; the structured admission error (a code and the failing field path, no
    values); and the raw payload only after the redactor has run over it as an untyped
    blob, bounded to 4 KiB. Malformed input is exactly where field-aware redaction is
    weakest, so undecodable content is treated as the most sensitive kind, not the least.
    Then `invocation_responses` (`invalid`, no outcome) and the outbound `events` row with
-   the error; commit; return. Under M2b's identity admitter the redactor step is a
-   pass-through, but the envelope shape and bound apply from M2b so M2c changes nothing
-   structural.
+   the error; commit; return. **Scope of the guarantee by milestone:** the envelope's
+   *shape* and 4 KiB *bound* apply from M2b, so M2c changes nothing structural; but under
+   M2b's identity admitter the redactor is a pass-through and the bounded payload may
+   contain unredacted values. Protection of sensitive content begins with M2c, and M2b
+   must not be deployed against data that needs it.
 4. **Resolve the key** in `operations` and write the invocation:
    - Absent: insert `operations` (`key`, `fingerprint`, canonical `command`), then
      `invocations` (`new`, referencing it).

@@ -178,7 +178,7 @@ What is in the box:
 | Entries | `EntryDraft` cannot exist unbalanced (checked per currency at construction), strictly positive postings, sign lives in the side |
 | Accounts | Five account types with normal sides, per-account currency, optional no-overdraft rule that fails an over-refund loudly |
 | Ledger | Immutable, append-only, reversal by mirror entry, trial balance, per-account history, SHA-256 hash chain; `verify_chain()` recomputes every digest *and* re-derives every balance and index from the entries, so an edited balance fails as surely as an edited entry |
-| Idempotency | Every command carries a key; same key + same request replays the original result, same key + different request raises. Fingerprints are SHA-256 over an unambiguous length-prefixed encoding, so no delimiter trick can make two different requests serialize the same |
+| Idempotency | Every command carries a key; same key + same request replays the original result, same key + different request raises. In the in-memory core a rejected command leaves the key unspent; in the durable journal (M2b) a rejection is itself the recorded result and the key is spent, so retrying after a rejection means a new key. Fingerprints are SHA-256 over an unambiguous length-prefixed encoding, so no delimiter trick can make two different requests serialize the same |
 | Lifecycle | `PENDING -> AUTHORIZED -> SETTLED -> PARTIALLY_REFUNDED -> REFUNDED` plus dispute, cancel, fail; illegal moves raise. `SETTLE` and `REFUND` *require* a journal entry that moves exactly the stated amount in the transaction's currency, posted atomically with the transition; other events must not carry one |
 | FX | Balanced four-line conversion through clearing accounts, so cross-currency moves cannot leak |
 | Effects | `Clock`, `IdGenerator`, `FxRateSource` Protocols with deterministic reference implementations |
@@ -245,7 +245,7 @@ CI additionally scans the **full Git history** for secrets, not just the working
 Source-available, split deliberately:
 
 - `corpus/` and `schema/` are **Apache-2.0**. Adopt, redistribute and cite them freely,
-  including in production. The trace schema is published; the corpus lands in M3.
+  including in production. The trace schema is published; the corpus lands in M6.
 - The runtime under `src/ledgergate/` is **BUSL-1.1**. Read it, modify it, run it in
   development, CI and evaluation. Production use requires a commercial license. Converts
   to Apache-2.0 on 2030-08-31.

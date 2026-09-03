@@ -52,8 +52,16 @@ global maximum (most rows are audit, not state). And every invocation records th
 outcome that answered it, because "the operation's current outcome" is a different fact
 by the time the journal is read.
 
-*Trade-off:* audited reads serialize with writes. A balance query is cheap, and the
+*Trade-offs:* audited reads serialize with writes; a balance query is cheap, and the
 alternative (a deferred read that upgrades to write) can fail after its snapshot is taken.
+And a rejected command spends its key in the journal, where the in-memory core leaves it
+unspent: the ledger of record treats "what happened to this request" as the answer, even
+when what happened is a refusal. Retrying after a refusal is a new request with a new key.
+
+*Placement:* the journal is a new package, `ledgergate.journal`, between the runner and
+the core in the layer contract (`cli -> runner -> {invariants, report} -> {trace, journal}
+-> ledger`). It imports `sqlite3`; the core still may not. M2b updates the import-linter
+contract accordingly.
 
 ### 2. Authority is a pure layer with explicit inputs (M3)
 

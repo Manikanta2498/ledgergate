@@ -61,7 +61,7 @@ carries the inputs, not a summary of them:
 | `intent_id` | the intent judged |
 | `policy_set_version` | which rules ran (`none` for the M2b null policy) |
 | `decision` | `allow`, `deny`, `approval_required` |
-| `matched_rule`, `reason` | the rule that decided, and why |
+| `matched_rule`, `reason` | the rule that decided, and why. A `runtime.` prefix (`runtime.approval_rejected`) means the runtime wrote the decision without invoking the policy set, and a consumer must not attempt to recompute it from policy code |
 | `context` | the canonical serialized `PolicyContext`: principal, subject, command digest, evaluation time, and every historical aggregate value the rules read |
 | `approval` | presentation reference and validation verdict, when one was presented |
 | `consumption` | consumption reference, when one was kept |

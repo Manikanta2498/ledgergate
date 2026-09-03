@@ -98,7 +98,7 @@ the decision must survive:
 - Final decision `allow`: `RELEASE reserve`. Then write `decisions`, which references the
   consumption row. The consumption row itself references the presentation and the
   invocation, not the decision, precisely so it can be written before the decision exists.
-  The `UNIQUE` on `approval_id` has held since step 4, so nothing consumed it in between.
+  The `UNIQUE` on `approval_id` has held since check 4, so nothing consumed it in between.
 - Final decision not `allow`: `ROLLBACK TO reserve; RELEASE reserve` (removes only the
   reservation; the presentation row and everything before the savepoint remain). Then
   write `decisions` with the verdict, then append the outcome. The approval remains

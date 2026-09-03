@@ -43,12 +43,11 @@ is an *operation* (immutable identity) with an appended history of *outcomes*; e
 attempt is an *invocation*. A retry is therefore visible in the trace as a retry and
 invisible to the books as an effect, which is the property the README leads with.
 
-Invariants the spec enforces: every row a response depends on is committed before the
-response; every operation has an outcome in the transaction that created it; an approval
-is consumed at most once and only by an `allow`; a recorded `tool_call` always has the
-data for its `tool_result`; a command is only ever evaluated against a projection at the
-journal's current position. The projection cursor is the global sequence, not the
-entry-chain head, because lifecycle commands change state without touching the chain.
+The five invariants an implementation is held to are listed in
+[spec/journal.md, *Invariants*](../spec/journal.md#invariants); the protocol that
+maintains them is the section after. One is worth naming here because it changed the
+design: the projection cursor is the global sequence, not the entry-chain head, because
+lifecycle commands change state without touching the chain.
 
 *Trade-off:* audited reads serialize with writes. A balance query is cheap, and the
 alternative (a deferred read that upgrades to write) can fail after its snapshot is taken.
@@ -63,11 +62,10 @@ the policy set version. The full context is persisted with every decision, owned
 invocation that evaluated it. Offline evaluation over a trace and online evaluation at the
 boundary run the same code on the same inputs.
 
-Approvals are signed artefacts bound to one pending operation (fingerprint, key, subject,
-amount, currency, expiry). They are validated *before* entering the context, reserved
-under a savepoint, and kept only if the final decision is `allow`, so a valid approval is
-never burned by an unrelated denial and the context always states the true consumption
-state.
+Approvals are signed artefacts bound to one pending operation and validated before they
+enter the context; single use is a database constraint, not a flag. The reservation
+mechanics, and the ordering that keeps a valid approval from being burned by an unrelated
+denial, are in [spec/journal.md, *Approval artefacts*](../spec/journal.md#approval-artefacts).
 
 ### 3. The runtime surface is a local MCP server (M4)
 

@@ -19,8 +19,9 @@ tool_call
   invocation_resolution            exactly one; disposition, operation ref, attempted digest
                                    disposition: new | replay | conflict | approval | read | invalid | legacy
   [policy_decision]                iff disposition in {new, approval} or a policy-gated read
-  [ledger_command -> ledger_result] iff a policy_decision == allow on a write intent
-  [read_result]                    iff disposition == read and not denied
+  [ledger_command -> ledger_result] iff (a policy_decision == allow on a write intent)
+                                       or disposition == legacy
+  [read_result]                    iff disposition == read and no policy_decision == deny
 tool_result
 ```
 
@@ -33,8 +34,12 @@ tool_result
   ledger pair follows.
 - `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error). No
   intent, no operation, no decision. Applies identically to write and read tools.
-- `read`: `read_intent`, resolution, optional decision, `read_result` with the journal
-  position observed, head, and result digest.
+- `read`: `read_intent`, resolution, optional decision. If no decision or the decision is
+  `allow`: `read_result` with the journal position observed, head, and result digest. If
+  the decision is `deny`: no `read_result`; the `tool_result` carries the denial. The
+  disposition is `read` in both cases.
+- `legacy`: a v1 pair lifted on import. Its `ledger_command`/`ledger_result` carry the same
+  reference semantics as a runtime write's; there is no decision to reference.
 
 Cardinality and order are rules of the schema description, enforced by the models as
 v1's are.

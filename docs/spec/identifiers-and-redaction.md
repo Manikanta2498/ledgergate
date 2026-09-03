@@ -34,9 +34,10 @@ The raw value is first validated by `require_identifier` (non-empty, single line
 tk1_<domain>_<base64url(HMAC-SHA256(key, domain || 0x00 || raw))>
 ```
 
-with no padding (43 digest characters), a domain of at most 32 `[a-z0-9-]` characters, and
-a fixed `tk1` version prefix: at most 80 characters of `[A-Za-z0-9_-]`, validated once more
-after construction. The token domain and key version are in `definition`; rotating the key
+with no padding (43 digest characters), a domain matching `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`
+(one to 32 characters, no leading or trailing hyphen, never empty, so domain separation is
+always meaningful), and a fixed `tk1` version prefix: between 49 and 80 characters of
+`[A-Za-z0-9_-]`, validated once more after construction. The token domain and key version are in `definition`; rotating the key
 means a new journal, and cross-journal correlation is an explicit operation.
 
 ## Scope

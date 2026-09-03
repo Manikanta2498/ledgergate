@@ -36,9 +36,13 @@ recompute. There is no third digest.
 (M4's MCP layer decodes the wire and passes the params object; the journal never sees
 wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `arguments`
 (JSON object), `call_id`, `principal`, `key` (idempotency key), optional `approval`. Two
-named digests, both SHA-256 over canonical JSON (sorted keys, no whitespace, UTF-8):
+named digests over canonical JSON (RFC 8785, below), SHA-256 in M2b and, for
+`input_digest`, keyed from M2c:
 `input_digest`, over the untyped input, is what the failure envelope records, because a
-malformed input has no `Request` to digest; `request_digest`, over the `Request`, is
+malformed input has no `Request` to digest. It is computed by the admitter (`digest_input`),
+so that under M2c it is *keyed* under the token key and a stored digest of rejected content
+is not a dictionary-reversible commitment to it; under M2b's identity admitter it is plain
+SHA-256 over JCS; `request_digest`, over the `Request`, is
 recorded on every admitted invocation. Neither is the operation fingerprint, defined under *Terms*, which is over the decoded *command*. "Canonical JSON" means RFC 8785 (JSON
 Canonicalization Scheme): UTF-16 code-unit key order, ECMAScript number formatting, no
 whitespace, UTF-8. Under JCS `5.0` and `5` are the same number and serialize as `5`; the
@@ -118,9 +122,9 @@ All strictly append-only. No row is ever updated or deleted.
 
 | Table | Holds |
 | :--- | :--- |
-| `definition` | Written once: `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry, codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
+| `definition` | Written once: `schema_version` and `created_at`, `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. Opening a journal whose `schema_version`, codec version, policy set version or token key differs from the running process is refused, read-only, before any pragma touches the file; a file whose table set (SQLite's own `sqlite_*` tables aside) is not exactly the journal's is likewise refused untouched. Creation proceeds only on a missing or zero-byte path, an empty database, or a complete journal that has no definition yet; a database with any other table set, or a complete journal that already has a definition, is refused untouched, however its names overlap the journal's. Schema creation is one transaction, so a file is either empty or a complete journal. |
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, `command` as encoded by the codec (a storage form, not a digest input; identity is `fingerprint`). |
-| `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
+| `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message (present iff `rejected`; a `denied` or `awaiting_approval` outcome's explanation is its decision's rule and reason), `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
 | `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row if check 4 succeeded. |
@@ -146,7 +150,7 @@ All strictly append-only. No row is ever updated or deleted.
    outcomes and do not move it; the outcome this transaction appends becomes the new
    cursor on commit.
 6. Every row is written after every row it references (immediate foreign keys); the
-   protocols' step order is the only legal one.
+   protocols' step order is one legal linearization of that partial order.
 7. Every invocation has exactly one `invocation_responses` row, and for `new`, `replay`
    and `approval` dispositions it names the exact outcome the response was rendered from.
 8. Each operation's outcomes form a single chain: one root, no forks, every successor
@@ -287,6 +291,20 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
+**One seam, seven calls.** The `Admitter` protocol is the only place caller content is
+transformed, and the journal calls it at exactly these sites: `admit` (the request);
+`redact_text` on the four kinds of free text that bypass `admit` (the core's own error
+messages, which can echo a caller identifier; standalone message content; account names in
+the definition; the failure envelope's bounded payload, which is the whole rejected input
+serialized as an untyped blob); `tokenize_identifier` on the envelope's recovered
+`call_id` (the one identifier a rejected request can still yield); and `digest_input` for
+the envelope's `input_digest`. The admission error's `path` is never caller-controlled: it
+is a literal field path, and for an unknown member it is `$`, since the member name is the
+caller's and belongs in the redacted payload, not the error. From M2b the identity
+implementation returns its input; M2c changes the implementation, not the call sites. The
+admitter's `token_domain` and `token_key_version` are written into the definition at
+creation and compared at open, so a journal is never read with a different token key.
+
 ## What M2b ships, and what it stubs
 
 The protocol below names admission (tokenization and redaction), policy, and trace
@@ -342,7 +360,11 @@ anything that references it, an operation before the invocation that references 
    unchanged.
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
-   identifier invalid after tokenization): write `invocations` (`invalid`, no operation),
+   identifier invalid after tokenization, a command document the codec cannot decode, a
+   command the core's own constructors reject such as an unbalanced draft or a zero
+   posting, a posting or a read naming an account the chart does not have, since chart
+   membership is static configuration and admission's check on both sides): write
+   `invocations` (`invalid`, no operation),
    then the inbound `events` row holding a **failure envelope** rather than the request's
    raw structural form: the tokenized `call_id` if one was recoverable; the tool name only if it is a
    known operator-defined tool; `input_digest` as defined under *Admission input and
@@ -374,8 +396,11 @@ anything that references it, an operation before the invocation that references 
      `approval_not_applicable` follows the inbound event.
 5. Write the inbound `events` row (the admitted `tool_call`), referencing the invocation.
 6. **Short paths.** For `replay`: `invocation_responses` (`replayed`, naming the
-   operation's current outcome row, which is the one the response is rendered from);
-   outbound `events` derived from that outcome; commit; return. For `conflict`:
+   operation's current outcome row); the outbound `events` row is a copy of the outbound
+   event of the invocation that *produced* that outcome (the earliest response row naming
+   it); a successful result is copied with `replayed` set, a failed one is copied as is
+   and the response row's `replayed` marks it; so a retry is told exactly what the first
+   caller was told; commit; return. For `conflict`:
    `invocation_responses` (`conflict`, no outcome); outbound `events` with the conflict
    error; commit; return. Neither writes a decision row: no policy evaluation happened.
    For `approval`:
@@ -394,8 +419,9 @@ anything that references it, an operation before the invocation that references 
 10. Render and return the response.
 
 **Crash analysis.** Before commit: nothing exists in the journal, and the process keeps
-the projection reference it held before the transaction; the `Ledger` value produced in
-step 8 is discarded (it is an immutable value, so nothing has to be undone). A retry runs
+a projection of committed rows only (the one it held, or the one step 2 rebuilt from
+committed outcomes); the `Ledger` value produced in step 8 is discarded (it is an
+immutable value, so nothing has to be undone). A retry runs
 afresh. After commit,
 before step 10: a complete invocation exists including its outbound event. A retry of a
 committed `new` resolves as `replay`. A retry of a committed `approval` resolves as `replay`
@@ -406,9 +432,12 @@ another presentation row is appended, nothing is consumed). A retry of a committ
 is a fresh read. None of these apply anything twice. Every path from step 4 onward that created an operation appends an
 outcome in the same transaction (invariant 2).
 
-**Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
+**Failures the journal cannot record.** `SQLITE_BUSY` past the connection's busy timeout (five seconds), a constraint
 violation other than the approval consumption `UNIQUE`, an integrity failure at step 2, a
-transport-level I-JSON violation (a number outside the JCS-safe range, a non-finite
+fault of this process's injected effects (an id generator that repeats an id the ledger
+already holds or produces an invalid one, a clock that returns a naive datetime; these are
+not verdicts on the command and must never spend its key), a transport-level I-JSON
+violation (a number outside the JCS-safe range, a non-finite
 double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval, or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
@@ -418,9 +447,12 @@ record.
 ## Foreign keys
 
 Every reference points to a row written earlier in the same or an earlier transaction;
-SQLite foreign keys are enabled and **immediate**, so the write order in the protocols
-above is the only legal one and an implementation that reorders it fails at the
-constraint, not in review. Targets are `journal_sequence` values.
+SQLite foreign keys are enabled and **immediate**, so every dependency edge in this table
+is enforced at the constraint: a row cannot precede a row it references. The edges fix a
+partial order; where two rows of one invocation reference only the invocation (its inbound
+event and its decision, its `reads` row and its response), their relative order is
+protocol, and nothing downstream depends on it, since trace derivation anchors every event
+of an invocation to the invocation's own sequence. Targets are `journal_sequence` values.
 
 | Column | References |
 | :--- | :--- |
@@ -488,4 +520,7 @@ in M2b.
 
 Any number of unaudited readers under WAL. Every journal write, including audited reads,
 is a serialized `BEGIN IMMEDIATE` transaction. Multiple writer processes are correct under
-write step 2 and not optimized.
+write step 2, with one precondition: each process's id generator must be fresh with
+respect to the journal (it must not repeat an entry id already applied). A process that
+violates it gets an unrecorded effect fault, never a recorded rejection. Multi-process
+writing is not optimized.

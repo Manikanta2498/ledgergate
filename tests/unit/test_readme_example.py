@@ -38,7 +38,7 @@ ERROR_CASES_MARKER = "# Unbalanced entries cannot be constructed"
 def readme_blocks() -> list[str]:
     text = README.read_text(encoding="utf-8")
     blocks = re.findall(r"```python\n(.*?)```", text, re.DOTALL)
-    assert len(blocks) >= 2, "README should show both the ledger core and the trace schema"
+    assert len(blocks) >= 3, "README should show the trace schema, the journal and the ledger core"
     return blocks
 
 
@@ -47,12 +47,13 @@ def readme_block() -> str:
     return next(b for b in readme_blocks() if ERROR_CASES_MARKER in b)
 
 
-@pytest.mark.parametrize("index", range(2))
-def test_every_readme_block_runs(index: int) -> None:
-    """Each block is executed up to the point where it deliberately demonstrates errors."""
+@pytest.mark.parametrize("index", range(3))
+def test_every_readme_block_runs(index: int, tmp_path: Path) -> None:
+    """Each block is executed up to the point where it deliberately demonstrates errors.
+    The journal block expects a ``path`` binding, which the README leaves to the reader."""
     block = readme_blocks()[index]
     runnable = block.split(ERROR_CASES_MARKER)[0]
-    namespace: dict[str, object] = {}
+    namespace: dict[str, object] = {"path": str(tmp_path / "readme.journal")}
     exec(compile(runnable, str(README), "exec"), namespace)
     # Each block ends in assertions; reaching here means they held.
     assert namespace, "block produced no bindings"

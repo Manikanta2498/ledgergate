@@ -18,7 +18,7 @@ from pathlib import Path
 
 # ruff: noqa: S608 - table names are interpolated from FACT_TABLES, a module constant, never input
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: definition.token_check
 
 FACT_TABLES = (
     "definition",
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS definition (
     policy_set_version TEXT NOT NULL,
     token_domain TEXT NOT NULL,
     token_key_version TEXT NOT NULL,
+    token_check TEXT NOT NULL,
     approval_key TEXT NOT NULL,
     chart TEXT NOT NULL,
     currencies TEXT NOT NULL,

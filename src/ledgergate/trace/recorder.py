@@ -20,16 +20,24 @@ from datetime import datetime
 
 from pydantic import JsonValue
 
+from ledgergate.codec import Tokenizer
 from ledgergate.ledger import (
+    Advance,
     Applied,
     ChartOfAccounts,
     Clock,
     Command,
     ConflictingCurrencyError,
     Currency,
+    EntryDraft,
     IdGenerator,
     Ledger,
     LedgerError,
+    Post,
+    Refund,
+    Reverse,
+    UnknownAccountError,
+    UnknownEntryError,
 )
 from ledgergate.trace.models import (
     SCHEMA_VERSION,
@@ -61,6 +69,8 @@ class Recorder:
     ids: IdGenerator
     scenario_id: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    redactor: Tokenizer | None = None
+    tools: frozenset[str] | None = None
     ledger: Ledger = field(init=False)
     events: list[EventDoc] = field(default_factory=list)
     _seq: int = field(default=0, init=False)
@@ -69,6 +79,8 @@ class Recorder:
     _currencies: dict[str, Currency] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        if self.redactor is not None:
+            self.redactor.tokenize(self.trace_id)  # fail now, not after a whole run
         self.ledger = Ledger.empty(self.chart)
         self._started_at = self.clock.now()
         # ChartOfAccounts guarantees one exponent per code, so this cannot conflict.
@@ -99,6 +111,8 @@ class Recorder:
         return self._seq
 
     def message(self, role: str, content: str) -> None:
+        if self.redactor is not None:
+            content = self.redactor.redact(content)
         self.events.append(
             MessageEvent(seq=self._next_seq(), at=self.clock.now(), role=role, content=content)
         )
@@ -111,7 +125,17 @@ class Recorder:
         idempotency_key: str | None = None,
     ) -> None:
         """Record a tool invocation. ``arguments`` must be finite, bounded JSON; anything
-        else is refused here, not at ``dump_trace``."""
+        else is refused here, not at ``dump_trace``. With a redactor, ``call_id`` and the
+        idempotency key are tokenized and every string in ``arguments`` is redacted."""
+        if self.redactor is not None:
+            call_id = self.redactor.tokenize(call_id)
+            arguments = self.redactor.redact_json(arguments)
+            if idempotency_key is not None:
+                idempotency_key = self.redactor.tokenize(idempotency_key)
+            if self.tools is None or tool not in self.tools:
+                # A tool name is operator configuration only if the operator declared it;
+                # anything else (a hallucinated name) is caller text.
+                tool = self.redactor.redact(tool)
         self.events.append(
             ToolCallEvent(
                 seq=self._next_seq(),
@@ -128,6 +152,11 @@ class Recorder:
     ) -> None:
         """Record a tool outcome. A failure must say why; a success must not carry an
         error. A timeout is a failure with an error, not a call left without a result."""
+        message = None if error is None else str(error)
+        if self.redactor is not None:
+            call_id = self.redactor.tokenize(call_id)
+            result = self.redactor.redact_json(result)
+            message = None if message is None else self.redactor.redact(message)
         self.events.append(
             ToolResultEvent(
                 seq=self._next_seq(),
@@ -136,8 +165,8 @@ class Recorder:
                 ok=ok,
                 result=result,
                 error=None
-                if error is None
-                else ErrorDoc(type=type(error).__name__, message=str(error)),
+                if error is None or message is None
+                else ErrorDoc(type=type(error).__name__, message=message),
             )
         )
 
@@ -147,8 +176,22 @@ class Recorder:
         """Run ``command`` against the ledger, recording the command and its outcome.
 
         On a :class:`LedgerError` the failure is recorded and the error re-raised; the
-        ledger is unchanged, because the core never half-applies.
+        ledger is unchanged, because the core never half-applies. With a redactor the
+        command is transformed *before* it is recorded or executed, so the recorded
+        fingerprints and heads are over the stored form and the trace replays exactly.
         """
+        if self.redactor is not None:
+            # A reference is free of caller content only once it resolves. Under a redactor
+            # an unresolved entry or account reference must not be recorded at all; the
+            # journal's admission makes the same two checks before the core runs.
+            if isinstance(command, Reverse) and not self.ledger.has_entry(command.entry_id):
+                raise UnknownEntryError(command.entry_id)
+            for account in _accounts_referenced(command):
+                if account not in set(self.chart):
+                    raise UnknownAccountError(account)
+            command = self.redactor.command(command)
+            if call_id is not None:
+                call_id = self.redactor.tokenize(call_id)
         # Exponents travel with the trace, so a consumer that does not bundle this
         # currency can still replay it exactly. A conflicting exponent is refused before
         # anything is recorded: the command could not be written down faithfully.
@@ -167,6 +210,9 @@ class Recorder:
         try:
             applied = self.ledger.execute(command, clock=self.clock, ids=self.ids)
         except LedgerError as exc:
+            # Not redacted: the command the core saw was already transformed, so its message
+            # carries only tokens and operator identifiers, and replay recomputes and
+            # compares this exact string.
             self.events.append(
                 LedgerResultEvent(
                     seq=self._next_seq(),
@@ -200,26 +246,55 @@ class Recorder:
         return applied
 
     def run(self, commands: Sequence[Command]) -> Ledger:
-        """Execute a batch, tolerating ledger errors so the trace records all of them."""
+        """Execute a batch, tolerating ledger errors so the trace records all of them.
+
+        Only a *recorded* failure is tolerated. A command refused before anything was
+        appended (a conflicting currency exponent on either path; under a redactor also an
+        unresolved account or entry reference or an invalid identifier) left no record, and
+        swallowing it would make a trace certify itself consistent about an attempt it never
+        saw; that refusal propagates.
+        """
         for command in commands:
+            before = len(self.events)
             try:
                 self.execute(command)
             except LedgerError:
+                if len(self.events) == before:
+                    raise
                 continue
         return self.ledger
 
     # --------------------------------------------------------------- output
 
     def trace(self) -> Trace:
+        """The document. With a redactor, ``trace_id`` is tokenized, account names are
+        redacted and metadata values are redacted; scenario ids and agent descriptors are
+        operator configuration and stay as given."""
+        rd = self.redactor
+        chart = tuple(AccountDoc.of(a) for a in self.chart.values())
+        if rd is not None:
+            chart = tuple(a.model_copy(update={"name": rd.redact(a.name)}) for a in chart)
         return Trace(
             schema_version=SCHEMA_VERSION,
-            trace_id=self.trace_id,
+            trace_id=self.trace_id if rd is None else rd.tokenize(self.trace_id),
             scenario_id=self.scenario_id,
             agent=self.agent,
             started_at=self._started_at,
             ended_at=self.clock.now(),
             currencies=tuple(CurrencyDoc.of(c) for _, c in sorted(self._currencies.items())),
-            chart=tuple(AccountDoc.of(a) for a in self.chart.values()),
+            chart=chart,
             events=tuple(self.events),
-            metadata=dict(self.metadata),
+            metadata=dict(self.metadata)
+            if rd is None
+            else {rd.redact(k): rd.redact(v) for k, v in self.metadata.items()},
         )
+
+
+def _accounts_referenced(command: Command) -> list[str]:
+    drafts: list[EntryDraft] = []
+    match command:
+        case Post(_, draft):
+            drafts.append(draft)
+        case Advance(_, _, _, entry) | Refund(_, _, _, entry) if entry is not None:
+            drafts.append(entry)
+    return [p.account_id for d in drafts for p in d.postings]

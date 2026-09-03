@@ -12,9 +12,11 @@ the protocol's step order is one linearization of it.
 
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 import sqlite3
+import warnings
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -30,6 +32,7 @@ from ledgergate.codec import (
     decode_command,
     digest,
     encode_command,
+    looks_sensitive,
     require_ijson,
 )
 from ledgergate.journal.admission import (
@@ -113,6 +116,7 @@ class Definition:
     policy_set_version: str = "none"
     token_domain: str = "none"  # noqa: S105 - a domain label, not a credential
     token_key_version: str = "none"  # noqa: S105 - a version label, not a credential
+    token_check: str = "none"  # noqa: S105 - identifies the key; not key material
     approval_key: str = "none"
 
     @property
@@ -227,8 +231,13 @@ class Journal:
                 raise JournalError(f"cannot create journal at {path}: {exc}") from exc
             if tables and tables != JOURNAL_TABLES:
                 raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
-            if tables and _read_definition_row(path) is not None:
-                raise JournalError("journal already has a definition; use open()")
+            if tables:
+                try:
+                    defined = _read_definition_row(path) is not None
+                except sqlite3.Error as exc:
+                    raise JournalError(f"cannot create journal at {path}: {exc}") from exc
+                if defined:
+                    raise JournalError("journal already has a definition; use open()")
         try:
             self._conn = connect(path)
         except sqlite3.Error as exc:
@@ -249,6 +258,13 @@ class Journal:
     def _define(
         cls, self: Journal, chart: ChartOfAccounts, currencies: Mapping[str, Currency] | None
     ) -> Journal:
+        for account in chart.values():
+            if looks_sensitive(account.account_id):
+                warnings.warn(
+                    f"account id {account.account_id!r} looks like an email, phone or card"
+                    " number; operator-defined identifiers are stored as given",
+                    stacklevel=3,
+                )
         definition = Definition(
             journal_id=secrets.token_hex(16),
             chart=chart,
@@ -256,12 +272,13 @@ class Journal:
             policy_set_version=self.policy.version,
             token_domain=self.admitter.token_domain,
             token_key_version=self.admitter.token_key_version,
+            token_check=self.admitter.key_check(),
         )
         registry = definition.registry
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
                     1,
@@ -271,6 +288,7 @@ class Journal:
                     definition.policy_set_version,
                     definition.token_domain,
                     definition.token_key_version,
+                    definition.token_check,
                     definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
@@ -295,15 +313,14 @@ class Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
         try:
             probe(path)  # read-only: a foreign file is refused before any pragma touches it
-            row = _read_definition_row(path)  # also read-only
+            row = _read_definition_row(path)  # also read-only; refuses another schema version
         except (sqlite3.Error, ValueError) as exc:
             raise JournalError(f"cannot open journal at {path}: {exc}") from exc
         if row is None:
             raise JournalError(f"cannot open journal at {path}: no definition; use create()")
-        if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
+        if row[1] != CODEC_VERSION:
             raise ConfigurationError(
-                f"journal is schema {row[8]}/codec {row[1]!r};"
-                f" this process is schema {SCHEMA_VERSION}/codec {CODEC_VERSION!r}"
+                f"journal is codec {row[1]!r}; this process is codec {CODEC_VERSION!r}"
             )
         if row[2] != self.policy.version:
             raise ConfigurationError(
@@ -314,6 +331,11 @@ class Journal:
             raise ConfigurationError(
                 f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
                 f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
+            )
+        if not hmac.compare_digest(row[9], self.admitter.key_check()):
+            raise ConfigurationError(
+                "this admitter's key does not reproduce the journal's token check;"
+                " a different key under the same label would fork the identifier space"
             )
         try:
             self._conn = connect(path, create=False)
@@ -326,7 +348,7 @@ class Journal:
             except (ValueError, KeyError, TypeError, LedgerError) as exc:
                 raise IntegrityError(f"definition does not decode: {exc}") from exc
             self._definition = Definition(
-                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[5]
+                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[9], row[5]
             )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
@@ -372,9 +394,11 @@ class Journal:
             require_ijson(value)
         except IJsonError as exc:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
-        scope = AdmissionScope(self._definition.registry, self._definition.chart, self.principal)
         with self._txn():
             self._ensure_current()  # step 2
+            scope = AdmissionScope(
+                self._definition.registry, self._definition.chart, self.principal, self._ledger
+            )
             try:
                 request = self.admitter.admit(value, scope)  # step 3
             except AdmissionError as exc:
@@ -500,7 +524,9 @@ class Journal:
         try:
             applied = self._ledger.execute(command, clock=effects, ids=effects)
         except LedgerError as exc:
-            message = self.admitter.redact_text(str(exc))
+            # The core saw the admitted command, so its message carries only tokens and
+            # operator identifiers; it is recorded as is, and a derived trace replays it.
+            message = str(exc)
             outcome_seq = self._outcome(
                 op_seq, "rejected", dec_seq, head, head, error=(type(exc).__name__, message)
             )
@@ -925,12 +951,21 @@ def _decode_chart(doc: list[dict[str, Any]], currencies: Mapping[str, Currency])
 
 def _read_definition_row(path: str) -> tuple[Any, ...] | None:
     """The definition row over a read-only connection, so version checks happen before any
-    pragma is applied to the file."""
+    pragma is applied to the file. ``schema_version`` is read first and alone, so a journal
+    from another schema version is refused by the version comparison, not by whichever
+    column the newer layout happens to lack."""
     conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     try:
+        version = conn.execute("SELECT schema_version FROM definition").fetchone()
+        if version is None:
+            return None
+        if version[0] != SCHEMA_VERSION:
+            raise ConfigurationError(
+                f"journal is schema {version[0]}; this process is schema {SCHEMA_VERSION}"
+            )
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-            " token_key_version, approval_key, chart, currencies, schema_version"
+            " token_key_version, approval_key, chart, currencies, schema_version, token_check"
             " FROM definition"
         ).fetchone()
         return None if row is None else tuple(row)

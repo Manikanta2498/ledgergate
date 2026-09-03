@@ -122,7 +122,7 @@ All strictly append-only. No row is ever updated or deleted.
 
 | Table | Holds |
 | :--- | :--- |
-| `definition` | Written once: `schema_version` and `created_at`, `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. Opening a journal whose `schema_version`, codec version, policy set version or token key differs from the running process is refused, read-only, before any pragma touches the file; a file whose table set (SQLite's own `sqlite_*` tables aside) is not exactly the journal's is likewise refused untouched. Creation proceeds only on a missing or zero-byte path, an empty database, or a complete journal that has no definition yet; a database with any other table set, or a complete journal that already has a definition, is refused untouched, however its names overlap the journal's. Schema creation is one transaction, so a file is either empty or a complete journal. |
+| `definition` | Written once: `schema_version` and `created_at`, `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), token check value (identifies the token key without revealing it; compared at open), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. Opening a journal whose `schema_version`, codec version, policy set version or token key differs from the running process is refused, read-only, before any pragma touches the file; a file whose table set (SQLite's own `sqlite_*` tables aside) is not exactly the journal's is likewise refused untouched. Creation proceeds only on a missing or zero-byte path, an empty database, or a complete journal that has no definition yet; a database with any other table set, or a complete journal that already has a definition, is refused untouched, however its names overlap the journal's. Schema creation is one transaction, so a file is either empty or a complete journal. |
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, `command` as encoded by the codec (a storage form, not a digest input; identity is `fingerprint`). |
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message (present iff `rejected`; a `denied` or `awaiting_approval` outcome's explanation is its decision's rule and reason), `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
@@ -291,14 +291,17 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
-**One seam, seven calls.** The `Admitter` protocol is the only place caller content is
+**One seam, six calls.** The `Admitter` protocol is the only place caller content is
 transformed, and the journal calls it at exactly these sites: `admit` (the request);
-`redact_text` on the four kinds of free text that bypass `admit` (the core's own error
-messages, which can echo a caller identifier; standalone message content; account names in
-the definition; the failure envelope's bounded payload, which is the whole rejected input
-serialized as an untyped blob); `tokenize_identifier` on the envelope's recovered
-`call_id` (the one identifier a rejected request can still yield); and `digest_input` for
-the envelope's `input_digest`. The admission error's `path` is never caller-controlled: it
+`redact_text` on the three kinds of free text that bypass `admit` (standalone message
+content; account names in the definition; the failure envelope's bounded payload, which is
+the whole rejected input serialized as an untyped blob); `tokenize_identifier` on the
+envelope's recovered `call_id` (the one identifier a rejected request can still yield); and
+`digest_input` for the envelope's `input_digest`. The core's own error messages
+(`outcomes.error_message`, the outbound event's `error.message`) are deliberately *not*
+redacted: the core only ever sees the admitted command, so a message can echo a token or an
+operator-defined account id but never raw caller content, and a trace derived from the
+journal must replay that message byte for byte, which a second transformation would break. The admission error's `path` is never caller-controlled: it
 is a literal field path, and for an unknown member it is `$`, since the member name is the
 caller's and belongs in the redacted payload, not the error. From M2b the identity
 implementation returns its input; M2c changes the implementation, not the call sites. The
@@ -363,8 +366,9 @@ anything that references it, an operation before the invocation that references 
    identifier invalid after tokenization, a command document the codec cannot decode, a
    command the core's own constructors reject such as an unbalanced draft or a zero
    posting, a posting or a read naming an account the chart does not have, since chart
-   membership is static configuration and admission's check on both sides): write
-   `invocations` (`invalid`, no operation),
+   membership is static configuration and admission's check on both sides, or a `reverse`
+   naming an entry the projection does not hold, since an unresolved reference is caller
+   text until it resolves): write `invocations` (`invalid`, no operation),
    then the inbound `events` row holding a **failure envelope** rather than the request's
    raw structural form: the tokenized `call_id` if one was recoverable; the tool name only if it is a
    known operator-defined tool; `input_digest` as defined under *Admission input and

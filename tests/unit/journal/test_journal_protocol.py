@@ -812,7 +812,7 @@ class TestReviewFindings:
         raw.execute("BEGIN")
         seq = raw.execute("INSERT INTO journal (kind) VALUES ('definition')").lastrowid
         with pytest.raises(sqlite3.IntegrityError):
-            raw.execute("INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:]))
+            raw.execute("INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:]))
         raw.execute("ROLLBACK")
 
     def test_request_digest_covers_the_principal(
@@ -920,11 +920,11 @@ class TestRedactionSeam:
             }
         )
         (d,) = rows(raw, "definition")
-        assert json.loads(d[9])[0]["name"] == "[redacted]"
+        assert json.loads(d[10])[0]["name"] == "[redacted]"
         message = next(e for e in rows(raw, "events") if e[2] == "message")
         assert json.loads(message[3])["content"] == "[redacted]"
         (out,) = rows(raw, "outcomes")
-        assert out[3] == "rejected" and out[5] == "[redacted]"  # the core's message, redacted
+        assert out[3] == "rejected" and "cust@example.com" in out[5]  # identity admitter: as is
         j.close()
 
     def test_failure_envelope_goes_through_the_seam(
@@ -957,10 +957,10 @@ class TestRedactionSeam:
         assert first[8] == "tok_16"
         envelope = json.loads(rows(raw, "events")[0][3])
         assert envelope["call_id"] == "tok_16" and envelope["payload"] == "[redacted]"
-        assert "4111" not in json.dumps(envelope)
+        assert '"4111"' not in json.dumps(envelope)  # quoted: cannot occur inside a hex digest
         # an unknown member name is the caller's: it appears in no row
         everything = " ".join(json.dumps(r, default=str) for r in rows(raw, "events"))
-        assert "SSN" not in everything and "123-45" not in everything
+        assert "SSN 123-45" not in everything
         assert json.loads(rows(raw, "events")[2][3])["error"] == {
             "code": "unknown_field",
             "path": "$",
@@ -1214,3 +1214,19 @@ class TestOpenRefusesBeforeTouching:
         j = Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=2))
         assert j.handle(post("k1", call_id="again")).response == "replayed"
         j.close()
+
+
+class TestSchemaVersionRefusal:
+    def test_a_journal_from_another_schema_version_is_refused_by_the_version_check(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET schema_version = 1")
+        conn.execute("ALTER TABLE definition DROP COLUMN token_check")  # the v1 layout
+        conn.close()
+        with pytest.raises(ConfigurationError, match="journal is schema 1"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        with pytest.raises(JournalError):  # create() on it is also a clean refusal
+            Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())

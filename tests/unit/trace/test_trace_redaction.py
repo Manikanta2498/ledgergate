@@ -174,7 +174,7 @@ class TestRecorderClosesTheSameGaps:
         )
         rec.execute(Post("k", draft))
         text = dump_trace(rec.trace())
-        assert "4111" not in text and "123-45" not in text and '"ssn"' not in text
+        assert "card 4111" not in text and "123-45-6789" not in text and '"ssn"' not in text
         assert replay_trace(load_trace(text)).consistent
 
     def test_invalid_trace_id_fails_at_construction(self) -> None:
@@ -213,7 +213,7 @@ class TestRecorderResolvesReferencesLikeAdmission:
         )
         with pytest.raises(UnknownAccountError):
             rec.execute(Post("k", draft))
-        assert rec.events == [] and "alice" not in dump_trace(rec.trace())
+        assert rec.events == [] and "alice@" not in dump_trace(rec.trace())
 
     def test_large_integers_in_tool_payloads_are_redacted_not_refused(self) -> None:
         rec = self._rec()

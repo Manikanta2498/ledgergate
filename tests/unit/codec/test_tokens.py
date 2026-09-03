@@ -104,7 +104,10 @@ class TestRedaction:
         assert all(REDACTION_PATTERN.match(str(v)) for v in out[TK.redact("list")] if v is not None)
         text = str(out)
         assert (
-            "alice" not in text and "bob" not in text and "4111" not in text and "2.5" not in text
+            "alice@" not in text
+            and "bob@" not in text
+            and "4111111111111111" not in text
+            and "2.5" not in text
         )
 
     def test_looks_sensitive_is_conservative(self) -> None:

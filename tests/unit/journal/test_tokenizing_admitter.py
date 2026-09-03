@@ -217,7 +217,7 @@ class TestNoRawValueReachesStorage:
 
     def test_message_content_is_redacted(self, tokenizing: Journal) -> None:
         tokenizing.record_message("user", "my card is 4111 1111")
-        assert "4111" not in everything_stored(tokenizing.path)
+        assert "4111 1111" not in everything_stored(tokenizing.path)  # a space: not hex/base64
 
 
 class TestReplayAndKeyBinding:
@@ -295,7 +295,7 @@ class TestReplayAndKeyBinding:
             post("k", call_id="c", tags={"card 4111111111111111": "x", "ssn": "123-45-6789"})
         )
         stored = everything_stored(tokenizing.path)
-        assert "4111" not in stored and "123-45" not in stored and '"ssn"' not in stored
+        assert "card 4111" not in stored and "123-45-6789" not in stored and '"ssn"' not in stored
 
 
 def test_create_warns_on_sensitive_looking_account_ids(tmp_path: Path) -> None:

@@ -59,10 +59,19 @@ unspent: the ledger of record treats "what happened to this request" as the answ
 when what happened is a refusal. Retrying after a refusal is a new request with a new key.
 
 *Placement:* the journal is a new package, `ledgergate.journal`, a sibling of `trace`
-above the core: `cli -> runner -> {invariants, report} -> {trace, journal} -> ledger`. It
-imports `sqlite3`; the core still may not. The M3 derivation `trace(journal) -> Trace`
-depends on both siblings and lives in `ledgergate.invariants`' layer as
-`ledgergate.derive`, so the M2b import-linter edit is the final shape. This supersedes the
+above the core. Both need to encode a `Command` to JSON and back, and today that codec
+lives inside `trace.models` (pydantic), which `journal` may not import. M2b therefore
+extracts it into `ledgergate.codec`, a thin layer below both siblings that imports only
+the standard library and the core, and `trace.models` delegates to it. The codec is tested
+to one invariant: `command_fingerprint(decode(encode(c))) == command_fingerprint(c)`. The
+resulting contract, which M2b writes into import-linter and which is the final shape:
+
+```
+cli -> runner -> {invariants, report, derive} -> {trace, journal} -> codec -> ledger
+```
+
+`journal` imports `sqlite3`; the core still may not; `ledgergate.derive` (M3) is the
+`trace(journal) -> Trace` derivation and depends on both siblings. This supersedes the
 layer line in ADR-0001, which predates `trace`.
 
 ### 2. Authority is a pure layer with explicit inputs (M3)
@@ -166,7 +175,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 ## History
 
-Thirteen revisions on 2026-09-03 moved this document from guarantees without mechanisms,
+Repeated review rounds on 2026-09-03 moved this document from guarantees without mechanisms,
 to mechanisms without invariants, to a mutable row that defeated its own cursor, to a
 protocol that never inserted the row everything referenced and consumed approvals before
 validating them. Each round pushed a check earlier and removed a place where two things

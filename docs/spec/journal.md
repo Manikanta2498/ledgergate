@@ -47,7 +47,7 @@ Three distinct things, kept distinct because conflating them was a review findin
 - **`journal_sequence`**: every row in every fact table carries one, from a single
   monotonic counter. It orders every durable fact. Per-table sequences do not exist.
   SQLite has no cross-table sequence, so the counter is a table:
-  `journal (journal_sequence INTEGER PRIMARY KEY, kind TEXT NOT NULL)`. Each write
+  `journal (journal_sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL)`; `AUTOINCREMENT` makes strictly-increasing a database mechanism rather than a consequence of never deleting. Each write
   protocol step that creates a fact row first inserts a `journal` row naming the fact
   table, then inserts the fact row with that value as its own `PRIMARY KEY`, which is
   also a foreign key to `journal`. Committed values are strictly increasing. Gaps, if any
@@ -75,10 +75,10 @@ All strictly append-only. No row is ever updated or deleted.
 | `definition` | Written once: chart, currency registry, codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, canonical `command`. |
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
-| `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `call_id`. |
+| `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
-| `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, and the `consumption` row if check 4 succeeded. |
-| `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and this presentation's validation verdict. Presenting the same artefact twice appends two rows with two verdicts. |
+| `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, or the presentation's check result when checks 1 to 3 failed), and the `consumption` row if check 4 succeeded. |
+| `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and the **check result** of the pure checks 1 to 3 (`checks_passed`, `approval_invalid`, `approval_expired`, `approval_scope_mismatch`, or `approval_not_applicable`). The *final verdict*, which also depends on check 4 (consumption), lives on the `decisions` row that considered this presentation; a row written before a check cannot carry that check's result. Presenting the same artefact twice appends two rows. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse: the row is written during validation, before the decision exists. |
 | `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own single-row transaction and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
 | `reads` | For read tools: the `journal_sequence` and head the projection was at when served, and the result digest. |
@@ -126,17 +126,17 @@ that violates any rule above cannot exist in the journal, so rebuild needs no re
 ## Approval artefacts
 
 Issued out of band by the operator via `ledgergate approve` (delivered in M3 with the
-validation code; M4 consumes it), signed with a key whose verification counterpart is in
-`definition`. Binds to exactly one pending operation:
+validation and consumption code; M4 is only the transport that presents artefacts), signed
+with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation:
 `fingerprint`, tokenized `key`, subject, amount and currency.
 
 **Validation and consumption**, performed inside the write transaction, after the
 invocation row exists (the presentation references it) and *before* the `PolicyContext`
-is built. First the `approvals` presentation row is written, so the audit of the attempt
-survives every recorded path (it is lost only with the whole transaction, on the fatal
-configuration error below). Then the checks run **in order and short-circuit: the first
-failure is the verdict, and no later check runs**. Consumption is check 4 and is therefore
-attempted if and only if checks 1 to 3 all passed; an invalid, expired or mis-scoped
+is built. The checks run **in order and short-circuit: the first failure is the result,
+and no later check runs**. Checks 1 to 3 are pure and run first; the `approvals`
+presentation row is then written carrying their result; check 4 (consumption) runs only if
+they all passed and references that row. The final verdict is recorded on the `decisions`
+row, which is written after check 4 and so can hold it. An invalid, expired or mis-scoped
 artefact never touches `approval_consumptions`.
 
 1. Signature verifies against the definition's key, else verdict `approval_invalid`.
@@ -145,11 +145,16 @@ artefact never touches `approval_consumptions`.
 4. **Consumption.** `INSERT INTO approval_consumptions (approval_id, presentation,
    invocation)`. A `UNIQUE` violation means an earlier *committed* transaction consumed
    this logical approval (writes are serialized, so there is no other way): verdict
-   `approval_already_used`; the failed insert leaves nothing behind. Success: verdict
-   `approval_valid`; the approval is consumed.
+   `approval_already_used`; the failed insert leaves behind only a permitted allocator
+   gap. Success: verdict `approval_valid`; the approval is consumed.
 
 The verdict enters the `PolicyContext`. Nothing is consumed on any verdict other than
 `approval_valid`.
+
+**Failed verdicts are exactly the outputs of checks 1 to 4 other than `approval_valid`.**
+`approval_not_applicable` is not a failed verdict: it records that an artefact was
+presented where none was expected, and the disposition's normal path, policy included,
+continues.
 
 **On a failed verdict the policy set is not invoked.** The runtime writes the decision
 itself: `decision = deny`, `matched_rule = runtime.approval_rejected`, `reason` = the
@@ -163,8 +168,10 @@ total.
 rule that asked for approval has been satisfied; a policy set that asks again cannot be
 detected statically (policies are code over a context), so it is caught at runtime: the
 transaction is rolled back and the failure is reported under *Failures the journal cannot
-record*. The operator fixes the policy set; nothing is consumed and the operation stays
-`awaiting_approval`.
+record*. Nothing is consumed and the operation stays `awaiting_approval`. Fixing the
+policy set means a new definition and therefore a new journal; a pending operation does not
+migrate. It expires with the retired journal, and the caller resubmits under a new key in
+the new one. The retired journal remains the record of what was attempted.
 
 **An artefact presented on any other disposition** (`new`, `replay` of a terminal outcome,
 `conflict`, `read`) is not silently dropped: an `approvals` presentation row with verdict
@@ -237,8 +244,8 @@ milestones replace an implementation, never the protocol:
   code `approval_unsupported` (disposition `invalid`). The `approvals` and
   `approval_consumptions` tables exist with their constraints and are tested empty, and
   the test that makes that claim is the one that presents an artefact and asserts the
-  `invalid` path. From M3 the admitter accepts artefacts and the presentation rules below
-  apply.
+  `invalid` path. M2c's tokenizing admitter returns the same `approval_unsupported`; from
+  M3 the admitter accepts artefacts and the presentation rules below apply.
 - **Trace derivation** is M3, with schema v2. M2b exposes the journal for inspection
   (`ledgergate journal dump`) but derives no trace; the M2a replayer is not run against
   a journal in M2b. The roadmap says so.
@@ -253,10 +260,12 @@ anything that references it, an operation before the invocation that references 
 1. Take the write lock.
 2. **Cursor.** If the projection's cursor is not `COALESCE(MAX(outcomes.journal_sequence), 0)`,
    rebuild from `definition` and all outcome rows in order. An `applied` outcome is folded
-   by executing the recorded `command` with the recorded effects (`entry_id`, `posted_at`)
-   fed back, never by re-deciding anything; an `awaiting_approval`, `denied` or `rejected`
-   outcome is folded as a no-op on the books but advances the cursor, so a process cannot
-   miss it and the core is never asked to re-raise. The entry-chain head is checked against the rebuilt projection
+   by executing the recorded `command` through the core with the recorded effects
+   (`entry_id`, `posted_at`) fed back. The core re-validates as it always does; if it
+   raises on an `applied` fold the journal is corrupt and this is the integrity failure
+   named in step 2. No policy is re-evaluated. An `awaiting_approval`, `denied` or
+   `rejected` outcome is folded as a no-op on the books but advances the cursor, so a
+   process cannot miss it and the core is never asked to re-raise a recorded rejection. The entry-chain head is checked against the rebuilt projection
    as an integrity test; it is not the cursor, because lifecycle commands leave it
    unchanged.
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
@@ -264,8 +273,9 @@ anything that references it, an operation before the invocation that references 
    identifier invalid after tokenization): write `invocations` (`invalid`, no operation),
    then the inbound `events` row holding a **failure envelope** rather than the request's
    raw structural form: the tokenized `call_id` if one was recoverable; the tool name only if it is a
-   known operator-defined tool; a SHA-256 digest of the raw request bytes for
-   correlation; the structured admission error (a code and the failing field path, no
+   known operator-defined tool; `input_digest` as defined under *Admission input and
+   Request* (wire-level correlation is not offered by the journal; that is the transport's
+   concern); the structured admission error (a code and the failing field path, no
    values); and the raw payload only after the redactor has run over it as an untyped
    blob, bounded to 4 KiB. Malformed input is exactly where field-aware redaction is
    weakest, so undecodable content is treated as the most sensitive kind, not the least.
@@ -312,8 +322,10 @@ anything that references it, an operation before the invocation that references 
 10. Render and return the response.
 
 **Crash analysis.** Before commit: nothing exists; a retry runs afresh. After commit,
-before step 10: a complete invocation exists including its outbound event; a retry
-resolves as `replay`. Every path from step 4 onward that created an operation appends an
+before step 10: a complete invocation exists including its outbound event. A retry of a
+committed `new` or `approval` resolves as `replay`; a retry of a committed `conflict` is a
+fresh `conflict`; a retry of a committed `invalid` is a fresh `invalid`; a retry of a read
+is a fresh read. None of these apply anything twice. Every path from step 4 onward that created an operation appends an
 outcome in the same transaction (invariant 2).
 
 **Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
@@ -366,7 +378,8 @@ snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable s
 `invocations` (`invalid`), the failure-envelope inbound event, `invocation_responses`
 (`invalid`, no outcome), the outbound event; commits; returns). 4. `invocations` (`read`).
 5. Inbound `events`; then, if an approval was presented, an `approvals` row with verdict
-`approval_not_applicable`. 6. `decisions` if the read is policy-gated. On `deny`: no `reads`
+`approval_not_applicable`. 6. `decisions` if the read is policy-gated (its `PolicyContext.command_digest` is the
+invocation's `request_digest`; a read has no operation and no fingerprint). On `deny`: no `reads`
 row; disposition stays `read`; go to 8 with `ok=false`/`PolicyDenied` as the outbound
 event. 7. Serve from the projection; write `reads` with cursor, head and result digest.
 8. `invocation_responses` (`read`, no outcome); outbound `events`; commit; respond.

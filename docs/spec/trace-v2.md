@@ -18,8 +18,9 @@ tool_call                        ordinal 0
   [command_intent | read_intent]   1   iff disposition != invalid
   invocation_resolution            2   exactly one; disposition, operation ref, the exact outcome
                                        that answered this invocation (from invocation_responses),
-                                       attempted digest, approval presentation ref if one was
-                                       presented (whatever its verdict)
+                                       attempted digest (= attempted_fingerprint for writes,
+                                       request_digest for reads, input_digest for invalid),
+                                       approval presentation ref if one was presented
                                        disposition: new | replay | conflict | approval | read | invalid
   [policy_decision]                3   iff disposition in {new, approval} or a policy-gated read
   [ledger_command                  4   iff a policy_decision == allow on a write intent
@@ -64,7 +65,7 @@ carries the inputs, not a summary of them:
 | `decision` | `allow`, `deny`, `approval_required` |
 | `matched_rule`, `reason` | the rule that decided, and why. A `runtime.` prefix (`runtime.approval_rejected`) means the runtime wrote the decision without invoking the policy set, and a consumer must not attempt to recompute it from policy code |
 | `context` | the canonical serialized `PolicyContext`: principal, subject, command digest, evaluation time, and every historical aggregate value the rules read |
-| `approval` | presentation reference and validation verdict, when one was presented |
+| `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
 A consumer with the policy set at `policy_set_version` can recompute `decision` from

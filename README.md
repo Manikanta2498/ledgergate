@@ -211,9 +211,9 @@ These are enforced by CI gates, not by convention:
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
 | **M2a** | Trace schema v1, recorder, replay | **done** |
-| M2b | Durable command log: one command, one transaction; key looked up, command run, effects and outcome committed, *then* returned. Ledger is a projection of the log; traces are derived from it | next |
-| M2c | Fail-closed redaction *at admission*: free text is redacted before the ledger hashes it, so redacted traces replay exactly | |
-| M3 | Trace schema v2 with `policy_decision`; **policy layer** over an explicit `PolicyContext` (limits, approval thresholds, velocity caps with in-transaction state); invariant registry; scorecard; `ledgergate verify` | |
+| M2b | Durable log of *operations* (one per idempotency key) and *invocations* (one per attempt): one attempt, one transaction, result returned only after commit. Ledger is a projection with an explicit cursor; traces are a deterministic function of the log | next |
+| M2c | Redaction *at admission*: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | |
+| M3 | Trace schema v2 built around *intents* (a denied command never reaches the ledger and the schema says so); **policy layer** over an explicit, persisted `PolicyContext`; invariant registry; scorecard; `ledgergate verify` | |
 | M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |

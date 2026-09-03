@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-09-03
-- Amended: 2026-09-03, after review found the first version made guarantees its
-  decisions did not support. The amendments are marked in each section.
+- Amended: 2026-09-03 (twice), after review found first that the guarantees lacked
+  mechanisms, then that the mechanisms lacked invariants. Amendments are marked.
 
 ## Context
 
@@ -42,61 +42,82 @@ the outbox with the provider's own idempotency key, and a reconciliation step cl
 loop or records the discrepancy. Until then, the MCP tools operate on LedgerGate's ledger
 and nothing else, and the README says so.
 
-## Decision 1: the ledger persists as an append-only command log (M2b)
+## Decision 1: the ledger persists as an append-only log of operations and invocations (M2b)
 
-*(Amended: the first version said "one row per command plus UNIQUE(key)" and called
-restart-safe idempotency a consequence. That is the mechanism, not the protocol. This
-section specifies the protocol.)*
+*(Amended twice. The first version said "one row per command plus UNIQUE(key)". The
+second gave that row a protocol. Review of the second found that one unique row cannot
+record a retry, that the entry-chain head is not a completeness cursor, and that "trace as
+outbox" needs a derivation rule. This version separates what was conflated.)*
 
-**Authority.** The command log is the single authoritative artefact. The in-memory ledger
-is a projection rebuilt by replaying it. Trace events are *derived* from the log (an
-outbox), never written independently, so the two cannot disagree; a trace produced from a
-log is a view of it.
+**Authority.** The log is the single authoritative artefact. The in-memory ledger is a
+projection rebuilt from it. Traces are a *pure function* of the log, computed on demand
+or materialized, never written by a second path. That is why the two cannot disagree:
+there is no second writer, so there is nothing to reconcile.
 
-**What one row holds.** Everything replay needs and nothing else can supply:
+**Two things that the first drafts conflated.** An *operation* is the durable fact about
+an idempotency key: what was asked, once, and what the answer is. An *invocation* is one
+attempt by a caller, of which a key may see many. The first invocation of a key creates
+its operation; every later one with a matching fingerprint is a replay of it; one with a
+different fingerprint is a conflict. `replayed` is a property of an invocation, never of an
+operation. The ledger rebuilds from operations; the trace derives from invocations.
 
-| Column | Why |
+**Tables.** All append-only except the one transition noted under `operations.outcome`.
+
+| Table | Holds |
 | :--- | :--- |
-| `sequence` | Position; the primary key |
-| `key` | Idempotency key, `UNIQUE` |
-| `fingerprint` | Canonical request digest, to tell a replay from a conflict |
-| `command` | Canonical encoded command, schema-versioned |
-| `outcome` | `applied`, `replayed`, or `rejected` with the error type and message |
-| `entry_id`, `posted_at` | The effects the ledger consumed, when it appended |
-| `head_before`, `head_after`, `ledger_sequence` | To detect a projection that diverged |
-| `policy_version`, `decision` | From M3; null before |
+| `definition` | Written once: chart, currency registry, codec version, policy set version, identifier token domain and key version. A log is bound to one definition; changing it means a new log. |
+| `operations` | `sequence` (PK), `key` (`UNIQUE`), `fingerprint`, canonical `command`, `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision_id` |
+| `invocations` | `sequence` (PK), `operation_sequence`, `requested_at`, `response` (`applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`), `call_id` linkage, principal |
+| `decisions` | `id`, the canonical serialized `PolicyContext`, policy set version, decision, matched rule, reason, approval reference. One per operation that reached policy. |
+| `events` | Message, `tool_call` and `tool_result` events the runtime receives at its boundary, with their `invocation_sequence` where one applies |
 
-**Ledger definition.** A separate `definition` table holds, once per log: the chart of
-accounts, the currency registry with exponents, the command codec version, and the
-policy set version. It is written when the log is created and never updated. Changing
-any of these means a new log. A log therefore replays the same way regardless of what
-the deployment's configuration says today.
+`operations.outcome` has exactly one legal transition: `awaiting_approval` to a terminal
+outcome, performed by a later invocation of the same key and fingerprint that carries a
+valid approval. The approval is part of the `PolicyContext`, not of the fingerprint, so
+the retry matches. The invocation row records the transition, so history is preserved
+even though the operation row is updated. Every other outcome is terminal; a retry of a
+rejected or denied key replays the rejection or denial.
 
-**Transaction protocol.** One command, one SQLite transaction, `BEGIN IMMEDIATE`:
+**Transaction protocol.** One invocation, one SQLite transaction, `BEGIN IMMEDIATE`.
+SQLite serializes write transactions; there is exactly one active at a time, whatever
+the process count.
 
-1. Take the write lock. SQLite serializes writers; there is exactly one at a time.
-2. Look up `key`. If present and `fingerprint` matches, return the stored outcome without
-   touching anything. If present and it differs, return a conflict. Because the row is
-   written only on commit, there is no "in progress" state to observe: a key is either
-   fully recorded or absent.
-3. Confirm the projection is at `head_after` of the last row; if not, rebuild it from the
-   log before continuing. This is what makes a second process safe: it cannot apply a
-   command against a stale view.
-4. Run the command through the pure core (and, from M3, through policy). This is
-   deterministic and cheap.
-5. Insert the row with the outcome and effects. Commit.
-6. Only now return the result to the caller.
+1. Take the write lock.
+2. **Confirm the projection is current.** The projection carries
+   `last_applied_operation_sequence`. If it is not the log's max, rebuild from
+   `definition` and all operations. The entry-chain head is *not* the cursor: lifecycle
+   commands change transaction state without touching the chain, so a projection can have
+   the right head and still be stale. The head is kept as an integrity check on the
+   rebuilt projection, not as a freshness test.
+3. Look up `key`. Present with matching fingerprint: insert an invocation row
+   (`replayed`, or the approval transition if applicable), commit, return the operation's
+   outcome. Present with a different fingerprint: insert an invocation row (`conflict`),
+   commit, return the conflict. Absent: continue.
+4. Evaluate policy over the `PolicyContext`, reading any velocity aggregates from
+   `operations` and `decisions` *inside this transaction*. Write the `decisions` row. If
+   the decision is not `allow`, write the operation (`denied` or `awaiting_approval`) and
+   invocation rows, commit, return.
+5. Run the command through the pure core. Deterministic and cheap.
+6. Write the operation row (`applied` or `rejected`, with effects and heads) and the
+   invocation row. Commit.
+7. Only now return the result to the caller.
 
-A crash before step 5 commits leaves nothing: no key claimed, no result, no trace. The
-caller retries with the same key and the command runs afresh. A crash after commit but
-before step 6 leaves a committed row; the caller's retry hits step 2 and receives the
-stored outcome. In neither case does the ledger apply twice, and in neither case does a
-key exist without its complete result. Rejected commands are rows too, so a replayed
-rejection returns the same rejection.
+A crash before commit leaves nothing: no key claimed, no result, no trace. A retry runs
+afresh. A crash after commit but before step 7 leaves a complete operation; the retry
+hits step 3 and gets the stored outcome, recorded as one more invocation. At no point
+does a key exist without its complete result, and at no point does the ledger apply
+twice.
 
-**Concurrency.** M2b supports one writer process at a time, enforced by the SQLite lock,
-with any number of readers under WAL. Multiple writer processes are correct under this
-protocol (step 3) but not optimized; that is a later concern.
+**Trace derivation.** `trace(log) -> Trace` is deterministic. Event identity is
+`(invocation_sequence, kind)`; ordering is the log's; there is no consumer offset because
+there is no queue. Each invocation yields a `command_intent`, a `policy_decision`, and
+(only when the policy allowed and the invocation is the first for its key) a
+`ledger_command`/`ledger_result` pair, all in schema v2 (Decision 4). Messages and tool
+events come from `events`. The M2a replayer, run on the derived trace, is the consistency
+check between a log and its projection.
+
+**Concurrency.** Any number of readers under WAL; write transactions serialized by
+SQLite. Multiple writer processes are correct under step 2 and not optimized.
 
 ## Decision 2: authority is a pure layer with explicit inputs (M3)
 
@@ -119,9 +140,16 @@ command alone. The context is explicit, serializable, and recorded with the deci
   whether it has been consumed. Consumption is recorded in the same transaction.
 - **Policy set version**: which rules judged this.
 
-A decision is `allow`, `deny`, or `approval_required`, with the matched rule. Policies
-stay pure: given the same context they return the same decision, so offline evaluation
-over a trace and online evaluation at the boundary run the same code on the same inputs.
+A decision is `allow`, `deny`, or `approval_required`, with the matched rule and reason.
+Policies stay pure: given the same context they return the same decision, so offline
+evaluation over a trace and online evaluation at the boundary run the same code on the
+same inputs.
+
+*(Amended: where the context is stored.)* The full canonical `PolicyContext`, not a
+summary of it, is written to the `decisions` table in the same transaction as the
+operation it judged, including the historical aggregate values the velocity rules read
+and the approval artefact if one was consumed. Replaying a decision needs no access to
+live state: everything it evaluated is in the row.
 
 ## Decision 3: the runtime surface is a local MCP server (M4)
 
@@ -148,32 +176,62 @@ refuses to start with one.
 MCP is chosen because it is the one tool protocol the major clients share. Stdio is its
 default transport and is exactly the boundary M4 can defend.
 
-## Decision 4: trace schema v2 carries policy decisions (M3)
+## Decision 4: trace schema v2 is built around intents (M3)
 
-*(Amended: the first version said policy violations are "first-class outcomes in the
-trace". Schema v1 has closed event variants and no policy event, so that required a
-versioning decision it did not make.)*
+*(Amended twice. The second version said v2 "adds a policy_decision event" without
+saying what a denied request's command/result pair looks like. Under v1's rule, a
+`ledger_command` requires a `ledger_result`, but a denied command never reaches the
+ledger. v2 therefore cannot be v1 plus one event.)*
 
-Schema v1 is frozen as published. M3 publishes **schema v2**, which adds a
-`policy_decision` event (policy set version, decision, matched rule, context digest,
-approval reference) and links it to the command it judged by `command_id`. The runtime
-reads v1 and v2 and writes v2. The v1 replayer keeps working on v1 documents; a v2
-document with policy events replays policy as well as ledger.
+Schema v1 is frozen as published. M3 publishes **schema v2**, in which the unit is an
+**intent**: a proposed command, identified before anything decides on it.
 
-## Decision 5: redaction happens at admission, over v1 fields only (M2c)
+```
+tool_call
+  command_intent      intent_id, command, context digest        exactly one per invocation
+  policy_decision     intent_id, decision, rule, policy version exactly one per intent
+  [ledger_command     intent_id                                  iff decision == allow
+   ledger_result]     command_id                                 iff ledger_command
+tool_result
+```
 
-*(Amended: the first version promised "redacted traces still replay" without saying how.
-`EntryDraft.description` is inside the entry digest; redacting a recorded trace afterwards
-would change the digest and break its own replay.)*
+Cardinality and order are rules of the schema description, enforced by the models as v1's
+are. A `deny` or `approval_required` intent ends at its decision and is replayed by
+policy alone; an `allow` intent continues into the v1-style pair and is replayed by both
+policy and ledger. A later invocation that resolves an `awaiting_approval` operation is a
+new intent whose decision carries the approval reference.
 
-Free-text fields (`description`, message `content`, tool `arguments` and `result`, tag
-values) are redacted **before the ledger sees them**: the runtime and recorder apply the
-redactor at the admission boundary, so every digest is computed over already-redacted
-text and a trace replays exactly. Identifiers, amounts, currencies, account ids and keys
-are never redacted; they are structural, and in this model they are not personal data.
-Redaction is fail-closed: a field not on the allowlist is redacted. Tokens are
-deterministic (keyed HMAC), so equal inputs redact equally across runs. M2c covers schema
-v1 fields; v2's policy fields are designed redaction-aware in M3.
+A v1 document maps into v2 by giving each `ledger_command` an intent whose decision is
+`allow` under policy version `none`; that is how the v1 replayer's guarantees carry over.
+The runtime reads v1 and v2 and writes v2.
+
+## Decision 5: redaction at admission; caller identifiers are tokenized (M2c)
+
+*(Amended twice. The second version declared identifiers "structural, not personal data".
+Nothing enforces that: `Account("customer@example.com", ...)` is accepted today, and a
+caller can put a phone number in an idempotency key. The claim is withdrawn and replaced
+with a mechanism.)*
+
+Three classes of field, three treatments, all applied **before the ledger hashes
+anything**, so every digest is computed over the stored form and a trace replays exactly:
+
+1. **Free text** (`description`, message `content`, tool `arguments` and `result`, tag
+   values): fail-closed redaction. A field not on the allowlist is redacted. Replacement
+   tokens are deterministic (keyed HMAC), so equal inputs redact equally across runs.
+2. **Caller-supplied identifiers** (`transaction_id`, idempotency keys, `call_id`,
+   `trace_id`): deterministically tokenized with the same keyed HMAC at admission. The
+   caller retries with the raw key; it tokenizes to the same value; the lookup works.
+   Replay uses the stored tokens and needs no key. The token domain and key version are
+   in `definition`; rotating the key means a new log, and cross-log correlation is an
+   explicit operation, not an accident.
+3. **Operator-defined identifiers** (`account_id`, tool names): configuration, written by
+   the operator into the ledger definition, not by callers or agents at runtime. They are
+   stored as given. The definition loader warns on values that look like emails, phone
+   numbers or card numbers; the operator owns what they name their accounts.
+
+Amounts, currencies, sides and account references remain in the clear; they are the
+books, and a ledger whose amounts are redacted is not a ledger. M2c covers schema v1
+fields; v2's intent and policy fields are designed under the same three classes in M3.
 
 ## Decision 6: OpenTelemetry GenAI is the primary *observational* adapter (M5)
 
@@ -205,9 +263,9 @@ The suite's claim is that these are stopped; the red-team corpus is the evidence
 
 | Milestone | Contents |
 | :--- | :--- |
-| M2b | Command log with the protocol above; ledger definition table; ledger as projection; trace as outbox |
-| M2c | Fail-closed redaction at admission over v1 fields; deterministic tokens; redacted traces replay |
-| M3 | Trace schema v2 with `policy_decision`; `PolicyContext`; policy layer with in-transaction velocity state; invariant registry; scorecard; `ledgergate verify` |
+| M2b | Operations, invocations, decisions and events tables; definition table; the transaction protocol; projection cursor; deterministic trace derivation |
+| M2c | Redaction and identifier tokenization at admission; token domain in the definition; redacted traces replay |
+| M3 | Trace schema v2 around intents; `PolicyContext` persisted per decision; policy layer with in-transaction velocity state; approval transition; invariant registry; scorecard; `ledgergate verify` |
 | M4 | `ledgergate serve`: stdio MCP, single local principal, log protocol on every call |
 | M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
 | M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |
@@ -216,8 +274,11 @@ The suite's claim is that these are stopped; the red-team corpus is the evidence
 
 ## Consequences
 
-- The command log is the one durable truth. Traces are views of it. The M2a replayer
-  becomes the consistency check between a log and any trace claimed to derive from it.
+- The log is the one durable truth. Traces are a deterministic function of it. The M2a
+  replayer, run on the derived trace, checks a log against its own projection.
+- Operations and invocations are distinct, so a retry is visible in the trace as a retry
+  and invisible to the ledger as an effect, which is exactly the property the README
+  leads with.
 - A log is bound to one ledger definition. Reconfiguring means a new log, and migration
   between logs is an explicit, replayed operation, not an edit.
 - Policies need a versioning story from day one, and they have one: the version is in

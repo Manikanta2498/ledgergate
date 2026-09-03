@@ -232,6 +232,8 @@ pass         context_matches_decision
 pass         ledger_pairs_replay
 pass         books_balance_and_chain_verifies
 pass         read_observed_the_recorded_head
+pass         caller_was_told_what_happened
+pass         read_result_binds_the_served_value
 no_evidence  legacy_carries_no_policy_evidence
 PASS: 8 intents, 3 ledger commands
 ```

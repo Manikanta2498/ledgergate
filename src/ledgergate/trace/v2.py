@@ -385,6 +385,13 @@ class TraceV2(_Strict):
                 # An approval, whatever its verdict, is against an operation whose current
                 # outcome is pending; a terminal operation has nothing left to approve.
                 raise ValueError(f"{r.intent_id}: approval against a non-pending operation")
+            if r.disposition == "replay" and r.presentation_ref is not None and pending.get(op):
+                # Same fingerprint, pending operation, artefact presented: the runtime's
+                # disposition is approval, never replay (journal write step 4; a conflict is
+                # decided on the fingerprint before the artefact is considered).
+                raise ValueError(
+                    f"{r.intent_id}: an artefact against a pending operation is an approval"
+                )
             if produced:
                 assert out is not None
                 if out in outcomes:
@@ -476,6 +483,16 @@ class TraceV2(_Strict):
                 )
             op = r.operation_id
             assert op is not None
+            pair = next((e for e in group if isinstance(e, LedgerCommandEvent)), None)
+            if pair is not None:
+                if pair.command != intent.command:
+                    raise ValueError(
+                        f"{r.intent_id}: ledger_command differs from the intent's command"
+                    )
+                if pair.command_id != op or pair.call_id != getattr(intent, "call_id", None):
+                    raise ValueError(
+                        f"{r.intent_id}: ledger_command names another operation or call"
+                    )
             if r.disposition == "legacy":
                 continue
             if r.disposition == "new":
@@ -489,16 +506,6 @@ class TraceV2(_Strict):
                 raise ValueError(
                     f"{r.intent_id}: {r.disposition} carries a command other than the operation's"
                 )
-            pair = next((e for e in group if isinstance(e, LedgerCommandEvent)), None)
-            if pair is not None:
-                if pair.command != intent.command:
-                    raise ValueError(
-                        f"{r.intent_id}: ledger_command differs from the intent's command"
-                    )
-                if pair.command_id != op or pair.call_id != intent.call_id:
-                    raise ValueError(
-                        f"{r.intent_id}: ledger_command names another operation or call"
-                    )
 
     def _check_boundary(
         self, r: InvocationResolution, group: list[AnyV2Event], positions: dict[int, int]

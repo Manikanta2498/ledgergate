@@ -42,8 +42,6 @@ from ledgergate.trace.v2 import (
     TraceV2,
 )
 
-READ_TOOLS = frozenset({"balance", "trial_balance"})
-
 
 class DerivationError(ValueError):
     """The journal cannot be read as a trace (wrong version, missing definition)."""

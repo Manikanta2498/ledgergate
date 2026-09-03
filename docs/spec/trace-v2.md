@@ -190,11 +190,16 @@ it. Each invariant is a pure function of the trace grounded in a named document,
 such and never as a pass. Several registry rows restate rules the v2 model also enforces at
 load; a document violating them fails to load rather than failing a row, and the scorecard
 then records that the loaded document satisfies them. The registry is the statement of what
-is checked; the validator is one of its mechanisms. The read invariant is the one check of
-the projection a trace supports: every `read_result` head equals the most recent recorded
-`ledger_result` head (or genesis) and its cursor equals the largest outcome any earlier
-resolution referenced, since every outcome is named by the resolution that produced it and
-that resolution precedes any later read; a stale or premature projection fails.
+is checked; the validator is one of its mechanisms. Two rows check reads: every `read_result`
+head equals the most recent recorded `ledger_result` head (or genesis) and its cursor equals
+the largest outcome any earlier resolution referenced, since every outcome is named by the
+resolution that produced it and that resolution precedes any later read, so a stale or
+premature projection fails; and its `result_digest` is the JCS digest of the value the
+caller was served in the `tool_result`, so the served value is bound to the row (agreement
+of that value with the replayed books is not checked). A further row checks that what the
+caller was told is what the journal did, per the decision-to-outcome tables: success iff a
+read was not denied or the ledger applied, otherwise the error type of the path taken, and
+a replay told exactly what the producing invocation was told.
 The scorecard is the combined result and is itself tri-state: `fail` if any invariant
 failed, `pass` only if none failed *and at least one ran*, otherwise `no_evidence`. The
 process exits 0 for `pass`, 1 for `fail`, 3 for `no_evidence`, 2 when the source could not

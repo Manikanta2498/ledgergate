@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ledgergate.ledger import GENESIS_HASH, LedgerError
-from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent
+from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent, ToolResultEvent
 from ledgergate.trace.replay import replay_trace
 from ledgergate.trace.v2 import (
     InvocationResolution,
@@ -481,6 +481,138 @@ def read_observed_the_recorded_head(t: TraceV2) -> list[Finding]:
     return out
 
 
+def _tool_results(t: TraceV2) -> dict[str, ToolResultEvent]:
+    """The tool_result that closes each runtime intent's bracket (the event after its last)."""
+    out: dict[str, ToolResultEvent] = {}
+    last: dict[str, int] = {}
+    for i, e in enumerate(t.events):
+        iid = getattr(e, "intent_id", None)
+        if iid is not None:
+            last[iid] = i
+    owners = _pair_owners(t)
+    for iid, cid in owners.items():
+        for i, e in enumerate(t.events):
+            if isinstance(e, LedgerResultEvent) and e.command_id == cid:
+                last[iid] = max(last[iid], i)
+    for iid, i in last.items():
+        nxt = t.events[i + 1] if i + 1 < len(t.events) else None
+        if isinstance(nxt, ToolResultEvent):
+            out[iid] = nxt
+    return out
+
+
+def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
+    """The tool_result closing each runtime intent says what the journal did (the two
+    decision-to-outcome tables): success iff a read was not denied or the ledger applied;
+    otherwise the error type of the path taken (AdmissionError, IdempotencyConflictError,
+    PolicyDenied, ApprovalRequired, ApprovalRejected, or the core's own error), and a replay
+    is told exactly what the producing invocation was told."""
+    out = []
+    results = _tool_results(t)
+    decisions = _decided(t)
+    ledger_results = {e.command_id: e for e in t.events if isinstance(e, LedgerResultEvent)}
+    owners = _pair_owners(t)
+    producer_of: dict[str, str] = {}
+    for r in t.resolutions():
+        if r.disposition == "legacy":
+            continue
+        tr = results.get(r.intent_id)
+        if tr is None:
+            out.append(
+                Finding(
+                    "caller_was_told_what_happened",
+                    "error",
+                    f"{r.intent_id}: no tool_result",
+                    r.intent_id,
+                )
+            )
+            continue
+        d = decisions.get(r.intent_id)
+        expected_ok: bool
+        expected_error: str | None
+        if r.disposition == "invalid":
+            expected_ok, expected_error = False, "AdmissionError"
+        elif r.disposition == "conflict":
+            expected_ok, expected_error = False, "IdempotencyConflictError"
+        elif r.disposition == "read":
+            denied = d is not None and d.decision == "deny"
+            expected_ok, expected_error = not denied, "PolicyDenied" if denied else None
+        elif r.disposition == "replay":
+            producer = producer_of.get(r.outcome_ref or "")
+            told = results.get(producer or "")
+            if told is None:
+                out.append(
+                    Finding(
+                        "caller_was_told_what_happened",
+                        "error",
+                        f"{r.intent_id}: replay of an outcome no earlier invocation was told about",
+                        r.intent_id,
+                    )
+                )
+                continue
+            expected_ok = told.ok
+            expected_error = None if told.error is None else told.error.type
+        else:  # new, approval
+            assert d is not None
+            if r.outcome_ref is not None and (d.decision != "deny" or not d.runtime_written):
+                producer_of[r.outcome_ref] = r.intent_id
+            if d.decision == "deny":
+                expected_ok = False
+                expected_error = "ApprovalRejected" if d.runtime_written else "PolicyDenied"
+            elif d.decision == "approval_required":
+                expected_ok, expected_error = False, "ApprovalRequired"
+            else:
+                lr = ledger_results.get(owners.get(r.intent_id, ""))
+                if lr is None:
+                    out.append(
+                        Finding(
+                            "caller_was_told_what_happened",
+                            "error",
+                            f"{r.intent_id}: allowed write without a ledger result",
+                            r.intent_id,
+                        )
+                    )
+                    continue
+                expected_ok = lr.ok
+                expected_error = None if lr.error is None else lr.error.type
+        actual_error = None if tr.error is None else tr.error.type
+        if tr.ok != expected_ok or actual_error != expected_error:
+            out.append(
+                Finding(
+                    "caller_was_told_what_happened",
+                    "error",
+                    f"{r.intent_id}: caller was told ok={tr.ok} {actual_error or ''} but the"
+                    f" journal did ok={expected_ok} {expected_error or ''}",
+                    r.intent_id,
+                )
+            )
+    return out
+
+
+def read_result_binds_the_served_value(t: TraceV2) -> list[Finding]:
+    """A read_result's digest is the JCS digest of the value the caller was served in the
+    tool_result, so the served value is bound to the row (agreement of that value with the
+    replayed books is not checked here; the head and cursor checks cover the position)."""
+    from ledgergate.codec import digest
+
+    out = []
+    results = _tool_results(t)
+    for e in t.events:
+        if isinstance(e, ReadResult):
+            tr = results.get(e.intent_id)
+            served = None if tr is None else tr.result
+            if tr is None or digest(served) != e.result_digest:
+                out.append(
+                    Finding(
+                        "read_result_binds_the_served_value",
+                        "error",
+                        f"{e.intent_id}: served value does not match the read's digest",
+                        e.intent_id,
+                    )
+                )
+    return out
+
+
 def legacy_carries_no_policy_evidence(t: TraceV2) -> list[Finding]:
     """Lifted v1 content never carries a policy decision (an invented allow is forbidden)."""
     decided = _decided(t)
@@ -567,6 +699,20 @@ REGISTRY: tuple[Invariant, ...] = (
         read_observed_the_recorded_head.__doc__ or "",
         "docs/spec/journal.md, read protocol",
         read_observed_the_recorded_head,
+        lambda t: any(isinstance(e, ReadResult) for e in t.events),
+    ),
+    Invariant(
+        "caller_was_told_what_happened",
+        caller_was_told_what_happened.__doc__ or "",
+        "docs/spec/journal.md, decision-to-outcome tables",
+        caller_was_told_what_happened,
+        lambda t: any(r.disposition != "legacy" for r in t.resolutions()),
+    ),
+    Invariant(
+        "read_result_binds_the_served_value",
+        read_result_binds_the_served_value.__doc__ or "",
+        "docs/spec/journal.md, read protocol (result_digest)",
+        read_result_binds_the_served_value,
         lambda t: any(isinstance(e, ReadResult) for e in t.events),
     ),
     Invariant(

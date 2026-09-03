@@ -1632,3 +1632,89 @@ class TestNinthReviewFindings:
 
 def _n(ref: str) -> int:
     return int(ref.rsplit("-", 1)[1])
+
+
+class TestTenthReviewFindings:
+    def _statuses(self, doc: dict[str, Any]) -> dict[str, str]:
+        return {r.name: r.status for r in check(TraceV2.model_validate(doc)).results}
+
+    def test_caller_told_applied_on_a_pending_intent_fails(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        assert {r.name: r.status for r in check(t).results}[
+            "caller_was_told_what_happened"
+        ] == "pass"
+        doc = t.model_dump(mode="json")
+        awaiting = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["decision"] == "approval_required"
+        )
+        events = doc["events"]
+        i = next(i for i, e in enumerate(events) if e.get("intent_id") == awaiting["intent_id"])
+        tr = next(e for e in events[i:] if e["type"] == "tool_result")
+        tr.update({"ok": True, "result": {"faked": "yes"}})
+        tr.pop("error", None)
+        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+
+    def test_replay_must_be_told_what_the_producer_was_told(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        replay = next(
+            e
+            for e in events
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        i = events.index(replay)
+        tr = next(e for e in events[i:] if e["type"] == "tool_result")
+        tr.update({"ok": False, "error": {"type": "PolicyDenied", "message": "no"}})
+        tr.pop("result", None)
+        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+
+    def test_a_served_balance_must_match_the_reads_digest(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        assert {r.name: r.status for r in check(t).results}[
+            "read_result_binds_the_served_value"
+        ] == "pass"
+        doc = t.model_dump(mode="json")
+        events = doc["events"]
+        rr = next(e for e in events if e["type"] == "read_result")
+        i = events.index(rr)
+        tr = events[i + 1]
+        assert tr["type"] == "tool_result"
+        tr["result"] = {**tr["result"], "balance": "999999"}
+        assert self._statuses(doc)["read_result_binds_the_served_value"] == "fail"
+
+    def test_a_replay_with_an_artefact_against_a_pending_operation_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "ra.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(_open("big", "c2", 500))  # honest replay, no artefact
+        j.close()
+        doc = derive(path).model_dump(mode="json")
+        replay = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        replay["presentation_ref"] = f"presentation-{_n(replay['intent_id']) + 1}"
+        with pytest.raises(ValidationError, match="is an approval"):
+            TraceV2.model_validate(doc)
+
+    def test_a_lifted_pair_must_carry_the_intents_command(self) -> None:
+        rec = Recorder("t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds())
+        rec.execute(OpenTransaction("o", "t", Money(1, USD)))
+        doc = lift(rec.trace()).model_dump(mode="json")
+        next(e for e in doc["events"] if e["type"] == "ledger_command")["command"]["amount"][
+            "amount"
+        ] = 2
+        with pytest.raises(ValidationError, match="ledger_command differs"):
+            TraceV2.model_validate(doc)

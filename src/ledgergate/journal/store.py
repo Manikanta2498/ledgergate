@@ -500,7 +500,9 @@ class Journal:
         try:
             applied = self._ledger.execute(command, clock=effects, ids=effects)
         except LedgerError as exc:
-            message = self.admitter.redact_text(str(exc))
+            # The core saw the admitted command, so its message carries only tokens and
+            # operator identifiers; it is recorded as is, and a derived trace replays it.
+            message = str(exc)
             outcome_seq = self._outcome(
                 op_seq, "rejected", dec_seq, head, head, error=(type(exc).__name__, message)
             )

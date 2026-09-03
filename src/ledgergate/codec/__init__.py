@@ -11,6 +11,8 @@ them and neither may import the other:
   every digest in the journal is computed over.
 - :mod:`~ledgergate.codec.ijson`: an RFC 7493 I-JSON decoder, the only entry point through
   which untrusted JSON reaches admission.
+- :mod:`~ledgergate.codec.tokens`: keyed tokenization of caller identifiers and fail-closed
+  redaction of free text, shared by the journal's admitter and the trace recorder.
 
 This package imports the standard library and the core, nothing else.
 """
@@ -37,13 +39,25 @@ from ledgergate.codec.jcs import (
     canonical_text,
     digest,
 )
+from ledgergate.codec.tokens import (
+    DOMAIN_PATTERN,
+    MIN_KEY_BYTES,
+    REDACTION_PATTERN,
+    TOKEN_PATTERN,
+    Tokenizer,
+)
 
 __all__ = [
     "CODEC_VERSION",
+    "DOMAIN_PATTERN",
     "MAX_SAFE_INTEGER",
+    "MIN_KEY_BYTES",
+    "REDACTION_PATTERN",
+    "TOKEN_PATTERN",
     "CodecError",
     "IJsonError",
     "JcsError",
+    "Tokenizer",
     "canonical_bytes",
     "canonical_text",
     "decode_command",

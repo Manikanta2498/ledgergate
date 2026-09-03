@@ -4,9 +4,9 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestone M2 in progress.** The deterministic ledger core (M1),
-> the trace schema that makes it framework-agnostic (M2a) and the durable journal (M2b)
-> are implemented and tested. An agent run can be recorded, validated against the published
+> **Status: pre-alpha, milestone M2 complete.** The deterministic ledger core (M1),
+> the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
+> the tokenizing, redacting admitter (M2c) are implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
 > the answer it got the first time. The invariant suite, policy layer, corpus, adapters and
 > the runtime CLI are not built yet; `ledgergate journal dump` inspects a journal. See
@@ -190,6 +190,56 @@ fingerprint and the hash chain are the core's own length-prefixed encoding. The 
 null set (`none`), which allows everything and still writes a complete decision row; real
 policy arrives in M3 behind the same interface.
 
+**Redaction and tokenization (M2c).** Nothing a caller types has to reach disk. With a
+`TokenizingAdmitter` (or a `Recorder(redactor=...)` for traces), every caller identifier
+(idempotency keys, transaction ids, call ids) becomes a keyed HMAC token *before* the
+command is fingerprinted, looked up or written, so a later `settle` with the raw id finds
+the transaction the earlier `open_transaction` stored, and a retry with the raw key replays;
+every free-text field (descriptions, tag values, message content, tool arguments and
+results, account names) becomes a deterministic replacement. Amounts, currencies, sides and
+account references stay in the clear: they are the books. A redacted journal or trace
+replays with no key at all, because every digest was computed over the stored form. The
+identity admitter, which changes nothing, remains available for development.
+
+```python
+from ledgergate.codec import Tokenizer
+from ledgergate.journal import Journal, TokenizingAdmitter
+from ledgergate.ledger import (
+    EPOCH,
+    USD,
+    Account,
+    AccountType,
+    ChartOfAccounts,
+    SequentialIds,
+    SteppingClock,
+)
+
+chart = ChartOfAccounts(
+    [Account("cash", AccountType.ASSET, USD), Account("revenue", AccountType.REVENUE, USD)]
+)
+
+tokenizer = Tokenizer(
+    key_bytes, domain="acme", key_version="2026-q1"
+)  # >= 16 random bytes, kept by the operator
+journal = Journal.create(
+    path2,
+    chart,
+    clock=SteppingClock(EPOCH),
+    ids=SequentialIds(),
+    admitter=TokenizingAdmitter(tokenizer),
+)
+r = journal.handle(
+    {
+        "tool": "open_transaction",
+        "call_id": "c1",
+        "key": "order-42",
+        "arguments": {"transaction_id": "txn-alice", "amount": {"amount": 1999, "currency": "USD"}},
+    }
+)
+assert r.result["transaction"]["id"].startswith("tk1_acme_")  # the raw id never reached the journal
+journal.close()
+```
+
 ## The ledger core
 
 `ledgergate.ledger` is a pure, immutable double-entry ledger. Every write is a command;
@@ -285,8 +335,8 @@ These are enforced by CI gates, not by convention:
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
 | **M2a** | Trace schema v1, recorder, replay | **done** |
 | **M2b** | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use (per journal) approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an outcome cursor. Ships with a pass-through admitter and a null policy so the protocol is complete end to end; trace derivation follows in M3 | **done** |
-| M2c | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | next |
-| M3 | Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; **policy layer** over an explicit, persisted `PolicyContext` carried in every decision event, with validated, single-use (per journal) approvals; invariant registry; scorecard; `ledgergate verify` | |
+| **M2c** | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | **done** |
+| M3 | Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; **policy layer** over an explicit, persisted `PolicyContext` carried in every decision event, with validated, single-use (per journal) approvals; invariant registry; scorecard; `ledgergate verify` | next |
 | M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |

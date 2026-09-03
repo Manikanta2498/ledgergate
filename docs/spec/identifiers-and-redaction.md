@@ -47,11 +47,41 @@ always meaningful), and a fixed `tk1` version prefix: between 49 and 80 characte
 `[A-Za-z0-9_-]`, validated once more after construction. The token domain and key version are in `definition`; rotating the key
 means a new journal, and cross-journal correlation is an explicit operation.
 
-## Scope
+## Scope and mechanism
 
-M2c covers schema v1 documents and the journal's admission `Request`. In a `Request`,
-`arguments` is class-1 content whose allowlist is the command's own field classes: it is
-redacted field by field (amounts, currencies, sides and account references
-in the clear; `description` and tag values redacted; caller identifiers tokenized), which
-are the same classes v1 command documents have. v2's intent and policy fields are designed
-under the same three classes in M3.
+M2c covers schema v1 documents and the journal's admission `Request`, through one
+implementation: `ledgergate.codec.Tokenizer` (key, domain, key version) performs every
+transform, and two thin adapters call it. `ledgergate.journal.TokenizingAdmitter` is the
+journal's `Admitter`: it transforms the `arguments` document field by field before the
+codec decodes it, so the decoded command, its fingerprint, the request digest and every
+row are over the stored form. `ledgergate.trace.Recorder(redactor=tokenizer)` transforms
+each runtime `Command` before it is recorded *or executed*, and each message, tool call and
+tool result before it is appended, so the recorded heads and fingerprints are over the
+stored form and the trace replays exactly with no key. The two adapters are held to one
+test: transforming the JSON document and transforming the runtime command yield the same
+stored command.
+
+In a `Request`, `arguments` is class-1 content whose allowlist is the command's own field
+classes: amounts, currencies, sides and account references in the clear; `description` and
+tag values redacted; caller identifiers tokenized; the `entry_id` of a `reverse` validated
+and kept. A field of the wrong type is left for the codec to refuse structurally. In a v1
+trace, tool `arguments` and `result` are untyped JSON and are redacted fail-closed: every
+string leaf is replaced, structure and non-string leaves are kept. `trace_id`, `call_id`
+and idempotency keys are tokenized; `scenario_id` and the agent descriptor are operator
+configuration and stay as given; metadata values are redacted.
+
+**What is deliberately not redacted.** The core's own error messages (a ledger result's
+`error.message`, the journal's `outcomes.error_message`). The core only ever sees the
+transformed command, so a message can name a token or an operator-defined account id but
+never raw caller content, and replay recomputes and compares the message byte for byte;
+a second transformation would make every recorded rejection diverge on replay.
+
+**Key handling.** The key is at least 16 bytes, supplied by the operator, held only by the
+`Tokenizer`, never written to the journal, a trace or a log; its `repr` shows the domain and
+key version only. The key version is a label the operator binds to a key: a journal records
+it and refuses an admitter with a different label, but a *different key under the same
+label* is the operator's error and is not detectable, since the journal holds no key
+material. Its consequence is bounded: the same raw identifier tokenizes differently, so a
+retry becomes a new operation rather than a silent replay of another's.
+
+v2's intent and policy fields are designed under the same four classes in M3.

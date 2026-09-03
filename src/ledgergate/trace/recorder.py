@@ -20,6 +20,7 @@ from datetime import datetime
 
 from pydantic import JsonValue
 
+from ledgergate.codec import Tokenizer
 from ledgergate.ledger import (
     Applied,
     ChartOfAccounts,
@@ -61,6 +62,7 @@ class Recorder:
     ids: IdGenerator
     scenario_id: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    redactor: Tokenizer | None = None
     ledger: Ledger = field(init=False)
     events: list[EventDoc] = field(default_factory=list)
     _seq: int = field(default=0, init=False)
@@ -99,6 +101,8 @@ class Recorder:
         return self._seq
 
     def message(self, role: str, content: str) -> None:
+        if self.redactor is not None:
+            content = self.redactor.redact(content)
         self.events.append(
             MessageEvent(seq=self._next_seq(), at=self.clock.now(), role=role, content=content)
         )
@@ -111,7 +115,13 @@ class Recorder:
         idempotency_key: str | None = None,
     ) -> None:
         """Record a tool invocation. ``arguments`` must be finite, bounded JSON; anything
-        else is refused here, not at ``dump_trace``."""
+        else is refused here, not at ``dump_trace``. With a redactor, ``call_id`` and the
+        idempotency key are tokenized and every string in ``arguments`` is redacted."""
+        if self.redactor is not None:
+            call_id = self.redactor.tokenize(call_id)
+            arguments = self.redactor.redact_json(arguments)
+            if idempotency_key is not None:
+                idempotency_key = self.redactor.tokenize(idempotency_key)
         self.events.append(
             ToolCallEvent(
                 seq=self._next_seq(),
@@ -128,6 +138,11 @@ class Recorder:
     ) -> None:
         """Record a tool outcome. A failure must say why; a success must not carry an
         error. A timeout is a failure with an error, not a call left without a result."""
+        message = None if error is None else str(error)
+        if self.redactor is not None:
+            call_id = self.redactor.tokenize(call_id)
+            result = self.redactor.redact_json(result)
+            message = None if message is None else self.redactor.redact(message)
         self.events.append(
             ToolResultEvent(
                 seq=self._next_seq(),
@@ -136,8 +151,8 @@ class Recorder:
                 ok=ok,
                 result=result,
                 error=None
-                if error is None
-                else ErrorDoc(type=type(error).__name__, message=str(error)),
+                if error is None or message is None
+                else ErrorDoc(type=type(error).__name__, message=message),
             )
         )
 
@@ -147,8 +162,14 @@ class Recorder:
         """Run ``command`` against the ledger, recording the command and its outcome.
 
         On a :class:`LedgerError` the failure is recorded and the error re-raised; the
-        ledger is unchanged, because the core never half-applies.
+        ledger is unchanged, because the core never half-applies. With a redactor the
+        command is transformed *before* it is recorded or executed, so the recorded
+        fingerprints and heads are over the stored form and the trace replays exactly.
         """
+        if self.redactor is not None:
+            command = self.redactor.command(command)
+            if call_id is not None:
+                call_id = self.redactor.tokenize(call_id)
         # Exponents travel with the trace, so a consumer that does not bundle this
         # currency can still replay it exactly. A conflicting exponent is refused before
         # anything is recorded: the command could not be written down faithfully.
@@ -167,6 +188,9 @@ class Recorder:
         try:
             applied = self.ledger.execute(command, clock=self.clock, ids=self.ids)
         except LedgerError as exc:
+            # Not redacted: the command the core saw was already transformed, so its message
+            # carries only tokens and operator identifiers, and replay recomputes and
+            # compares this exact string.
             self.events.append(
                 LedgerResultEvent(
                     seq=self._next_seq(),
@@ -211,15 +235,22 @@ class Recorder:
     # --------------------------------------------------------------- output
 
     def trace(self) -> Trace:
+        """The document. With a redactor, ``trace_id`` is tokenized, account names are
+        redacted and metadata values are redacted; scenario ids and agent descriptors are
+        operator configuration and stay as given."""
+        rd = self.redactor
+        chart = tuple(AccountDoc.of(a) for a in self.chart.values())
+        if rd is not None:
+            chart = tuple(a.model_copy(update={"name": rd.redact(a.name)}) for a in chart)
         return Trace(
             schema_version=SCHEMA_VERSION,
-            trace_id=self.trace_id,
+            trace_id=self.trace_id if rd is None else rd.tokenize(self.trace_id),
             scenario_id=self.scenario_id,
             agent=self.agent,
             started_at=self._started_at,
             ended_at=self.clock.now(),
             currencies=tuple(CurrencyDoc.of(c) for _, c in sorted(self._currencies.items())),
-            chart=tuple(AccountDoc.of(a) for a in self.chart.values()),
+            chart=chart,
             events=tuple(self.events),
-            metadata=dict(self.metadata),
+            metadata={k: (v if rd is None else rd.redact(v)) for k, v in self.metadata.items()},
         )

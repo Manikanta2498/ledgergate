@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ledgergate.codec import CodecError, decode_command, digest
+from ledgergate.codec import CodecError, Tokenizer, decode_command, digest
 from ledgergate.ledger import (
     Advance,
     ChartOfAccounts,
@@ -104,9 +104,11 @@ class Admitter(Protocol):
     def admit(self, value: Any, scope: AdmissionScope) -> Request: ...
 
     def redact_text(self, text: str) -> str:
-        """Free text the admitter does not see through ``admit``: the core's own error
-        messages (which can echo a caller identifier), standalone message content, account
-        names in the definition, and the failure envelope's bounded payload."""
+        """Free text the admitter does not see through ``admit``: standalone message
+        content, account names in the definition, and the failure envelope's bounded
+        payload. The core's own error messages are *not* redacted: the core only ever sees
+        the admitted command, so they carry tokens and operator identifiers, and a derived
+        trace must replay them byte for byte."""
         ...
 
     def tokenize_identifier(self, value: str) -> str:
@@ -151,7 +153,11 @@ def _read_arguments(tool: str, arguments: dict[str, Any], chart: ChartOfAccounts
 
 
 class IdentityAdmitter:
-    """Validate shape and identifiers; change nothing. Refuses approval artefacts."""
+    """Validate shape and identifiers; change nothing. Refuses approval artefacts.
+
+    Also the structural base of :class:`TokenizingAdmitter`, which overrides only the four
+    transforms; the shape rules, error codes and paths are identical in both.
+    """
 
     token_domain = "none"  # noqa: S105 - a label, not a credential
     token_key_version = "none"  # noqa: S105 - a label, not a credential
@@ -165,6 +171,11 @@ class IdentityAdmitter:
     def digest_input(self, value: Any) -> str:
         return digest(value)
 
+    def _arguments(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """The admitted ``arguments`` for a write tool. Identity here."""
+        del tool
+        return arguments
+
     def admit(self, value: Any, scope: AdmissionScope) -> Request:
         if not isinstance(value, dict):
             raise AdmissionError("not_an_object")
@@ -176,7 +187,7 @@ class IdentityAdmitter:
         tool = _str_field(value, "tool")
         if tool not in TOOLS:
             raise AdmissionError("unknown_tool", "tool")
-        call_id = _identifier(_str_field(value, "call_id"), "call_id")
+        call_id = self.tokenize_identifier(_identifier(_str_field(value, "call_id"), "call_id"))
         arguments = value.get("arguments", {})
         if not isinstance(arguments, dict):
             raise AdmissionError("wrong_type", "arguments")
@@ -189,10 +200,14 @@ class IdentityAdmitter:
             _read_arguments(tool, arguments, scope.chart)
             return Request(tool, arguments, call_id, scope.principal, None)
 
-        key = _identifier(_str_field(value, "key"), "key")
+        key = self.tokenize_identifier(_identifier(_str_field(value, "key"), "key"))
         for reserved in ("kind", "key"):
             if reserved in arguments:
                 raise AdmissionError("unexpected_field", f"arguments.{reserved}")
+        try:
+            arguments = self._arguments(tool, arguments)
+        except InvalidIdentifierError as exc:
+            raise AdmissionError("invalid_identifier", "arguments.transaction_id") from exc
         doc = {"kind": tool, "key": key, **arguments}
         try:
             command = decode_command(doc, scope.registry)
@@ -246,3 +261,31 @@ def _argument_path(where: str) -> str:
     """Codec locations are rooted at ``command(<kind>)``; the request rooted them under
     ``arguments``. One grammar for the envelope."""
     return re.sub(r"^command(\([a-z_]+\))?", "arguments", where)
+
+
+class TokenizingAdmitter(IdentityAdmitter):
+    """M2c: the same shape rules, with every caller identifier tokenized and every free-text
+    field redacted before the command is decoded, fingerprinted, or written anywhere.
+
+    The stored ``arguments`` is the admitted (transformed) document, so the request digest,
+    the fingerprint and every row are over the stored form, and a redacted journal replays
+    exactly. Account references, amounts, currencies and sides are untouched: they are the
+    books. The key never leaves the :class:`~ledgergate.codec.Tokenizer`.
+    """
+
+    def __init__(self, tokenizer: Tokenizer) -> None:
+        self._tokenizer = tokenizer
+        self.token_domain = tokenizer.domain
+        self.token_key_version = tokenizer.key_version
+
+    def redact_text(self, text: str) -> str:
+        return self._tokenizer.redact(text)
+
+    def tokenize_identifier(self, value: str) -> str:
+        return self._tokenizer.tokenize(value)
+
+    def digest_input(self, value: Any) -> str:
+        return self._tokenizer.digest_input(value)
+
+    def _arguments(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._tokenizer.arguments(tool, arguments)

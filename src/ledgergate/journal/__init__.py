@@ -16,6 +16,7 @@ from ledgergate.journal.admission import (
     Admitter,
     IdentityAdmitter,
     Request,
+    TokenizingAdmitter,
 )
 from ledgergate.journal.policy import (
     Decision,
@@ -60,6 +61,7 @@ __all__ = [
     "PolicySet",
     "Request",
     "Response",
+    "TokenizingAdmitter",
     "connect",
     "create_schema",
 ]

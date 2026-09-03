@@ -924,7 +924,7 @@ class TestRedactionSeam:
         message = next(e for e in rows(raw, "events") if e[2] == "message")
         assert json.loads(message[3])["content"] == "[redacted]"
         (out,) = rows(raw, "outcomes")
-        assert out[3] == "rejected" and out[5] == "[redacted]"  # the core's message, redacted
+        assert out[3] == "rejected" and "cust@example.com" in out[5]  # identity admitter: as is
         j.close()
 
     def test_failure_envelope_goes_through_the_seam(

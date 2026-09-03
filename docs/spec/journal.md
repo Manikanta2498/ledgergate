@@ -291,14 +291,17 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
-**One seam, seven calls.** The `Admitter` protocol is the only place caller content is
+**One seam, six calls.** The `Admitter` protocol is the only place caller content is
 transformed, and the journal calls it at exactly these sites: `admit` (the request);
-`redact_text` on the four kinds of free text that bypass `admit` (the core's own error
-messages, which can echo a caller identifier; standalone message content; account names in
-the definition; the failure envelope's bounded payload, which is the whole rejected input
-serialized as an untyped blob); `tokenize_identifier` on the envelope's recovered
-`call_id` (the one identifier a rejected request can still yield); and `digest_input` for
-the envelope's `input_digest`. The admission error's `path` is never caller-controlled: it
+`redact_text` on the three kinds of free text that bypass `admit` (standalone message
+content; account names in the definition; the failure envelope's bounded payload, which is
+the whole rejected input serialized as an untyped blob); `tokenize_identifier` on the
+envelope's recovered `call_id` (the one identifier a rejected request can still yield); and
+`digest_input` for the envelope's `input_digest`. The core's own error messages
+(`outcomes.error_message`, the outbound event's `error.message`) are deliberately *not*
+redacted: the core only ever sees the admitted command, so a message can echo a token or an
+operator-defined account id but never raw caller content, and a trace derived from the
+journal must replay that message byte for byte, which a second transformation would break. The admission error's `path` is never caller-controlled: it
 is a literal field path, and for an unknown member it is `$`, since the member name is the
 caller's and belongs in the redacted payload, not the error. From M2b the identity
 implementation returns its input; M2c changes the implementation, not the call sites. The

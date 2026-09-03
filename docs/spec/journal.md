@@ -62,8 +62,10 @@ could read different `amount`s from the same bytes; plus a post-decode surrogate
 journal row, listed under *Failures the journal cannot record*. M2b has no transport, so
 the JCS serializer itself is the enforcer of last resort for the numeric and string rules:
 it raises on any such violation, and that raise is the same unrecorded-failure class. It
-cannot see duplicate names, which are gone by the time a value exists, so M2b's test
-harness feeds the admitter through the same `object_pairs_hook` the transport will use. The codec itself imposes
+cannot see duplicate names, which are gone by the time a value exists, so the I-JSON
+decoder (`loads` with all the hooks above and the surrogate scan) is itself an M2b
+deliverable in `ledgergate.codec`; M2b's test harness calls it, and M4's transport calls
+the same function later. The codec itself imposes
 no amount bound: its output is a storage form that nothing JCS-digests; command
 *arguments* carry amounts as JSON integers, so the transport's I-JSON contract already
 bounds every amount a runtime command can carry (results, by contrast, carry amounts as
@@ -207,6 +209,11 @@ artefact never touches `approval_consumptions`.
    its allocator row were already written by design); the `UNIQUE` remains as the
    constraint that makes the `SELECT` merely an optimization. Verdict
    `approval_already_used`. Success: verdict `approval_valid`; the approval is consumed.
+   Note for test authors: by invariant 3 every consumption leaves its operation terminal,
+   so an honest re-presentation of a consumed artefact resolves as `replay` (verdict
+   `approval_not_applicable`) or fails check 3 before reaching check 4. This verdict is
+   reachable only when a *distinct* artefact reuses an `approval_id`; it is a defensive
+   constraint, and the test for it constructs exactly that.
 
 The verdict enters the `PolicyContext`. Nothing is consumed on any verdict other than
 `approval_valid`.

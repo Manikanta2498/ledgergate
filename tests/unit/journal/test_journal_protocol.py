@@ -1180,6 +1180,29 @@ class TestOpenRefusesBeforeTouching:
             Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
         assert Path(journal_path).read_bytes() == before
 
+    def test_create_on_a_defined_journal_is_refused_unchanged(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode = DELETE")
+        conn.close()
+        before = Path(journal_path).read_bytes()
+        with pytest.raises(JournalError, match="already has a definition"):
+            Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert Path(journal_path).read_bytes() == before
+
+    def test_each_invocation_has_at_most_one_event_per_direction(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        journal.handle(post("k1"))
+        (inv,) = rows(raw, "invocations")
+        raw.execute("BEGIN")
+        seq = raw.execute("INSERT INTO journal (kind) VALUES ('events')").lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            raw.execute("INSERT INTO events VALUES (?,?,?,?)", (seq, inv[0], "outbound", "{}"))
+        raw.execute("ROLLBACK")
+
     def test_sqlite_internal_tables_do_not_lock_the_operator_out(
         self, journal: Journal, journal_path: str
     ) -> None:

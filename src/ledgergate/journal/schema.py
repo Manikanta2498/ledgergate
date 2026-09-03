@@ -180,6 +180,9 @@ CREATE TABLE IF NOT EXISTS events (
     CHECK ((direction = 'message') = (invocation IS NULL))
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS events_one_per_direction
+    ON events(invocation, direction) WHERE invocation IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS reads (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
     invocation INTEGER NOT NULL UNIQUE REFERENCES invocations(journal_sequence),
@@ -213,12 +216,17 @@ BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
-    """Create every table, index and trigger. Idempotent."""
-    conn.executescript(_DDL)
+    """Create every table, index and trigger, atomically. Idempotent.
+
+    SQLite DDL is transactional, so a crash mid-way leaves the file either empty or
+    complete, never a partial table set that both constructors would then refuse."""
+    script = [_DDL.replace("PRAGMA foreign_keys = ON;", "")]
     for table in FACT_TABLES:
-        conn.executescript(_kind_trigger(table))
-        conn.executescript(_append_only_triggers(table))
-    conn.executescript(_append_only_triggers("journal"))
+        script.append(_kind_trigger(table))
+        script.append(_append_only_triggers(table))
+    script.append(_append_only_triggers("journal"))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript("BEGIN;\n" + "\n".join(script) + "\nCOMMIT;")
 
 
 BUSY_TIMEOUT_SECONDS = 5.0

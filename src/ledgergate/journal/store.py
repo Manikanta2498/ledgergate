@@ -227,6 +227,8 @@ class Journal:
                 raise JournalError(f"cannot create journal at {path}: {exc}") from exc
             if tables and tables != JOURNAL_TABLES:
                 raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
+            if tables and _read_definition_row(path) is not None:
+                raise JournalError("journal already has a definition; use open()")
         try:
             self._conn = connect(path)
         except sqlite3.Error as exc:

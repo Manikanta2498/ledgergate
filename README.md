@@ -195,8 +195,8 @@ policy arrives in M3 behind the same interface.
 (idempotency keys, transaction ids, call ids) becomes a keyed HMAC token *before* the
 command is fingerprinted, looked up or written, so a later `settle` with the raw id finds
 the transaction the earlier `open_transaction` stored, and a retry with the raw key replays;
-every free-text field (descriptions, tag values, message content, tool arguments and
-results, account names) becomes a deterministic replacement. Amounts, currencies, sides and
+every free-text field (descriptions, tags, message content, tool arguments and results,
+account names) becomes a deterministic replacement. Amounts, currencies, sides and
 account references stay in the clear: they are the books. A redacted journal or trace
 replays with no key at all, because every digest was computed over the stored form. The
 identity admitter, which changes nothing, remains available for development.

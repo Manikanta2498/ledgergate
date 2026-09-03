@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS definition (
     policy_set_version TEXT NOT NULL,
     token_domain TEXT NOT NULL,
     token_key_version TEXT NOT NULL,
+    token_check TEXT NOT NULL,
     approval_key TEXT NOT NULL,
     chart TEXT NOT NULL,
     currencies TEXT NOT NULL,

@@ -32,6 +32,7 @@ from ledgergate.ledger import (
     Command,
     Currency,
     InvalidIdentifierError,
+    Ledger,
     LedgerError,
     OpenTransaction,
     Post,
@@ -86,11 +87,13 @@ class Request:
 
 @dataclass(frozen=True, slots=True)
 class AdmissionScope:
-    """What an admitter may consult: the definition's registry and chart, and who asks."""
+    """What an admitter may consult: the definition's registry and chart, who asks, and
+    the current projection (for resolving references to runtime-generated ids)."""
 
     registry: dict[str, Currency]
     chart: ChartOfAccounts
     principal: str
+    ledger: Ledger
 
 
 class Admitter(Protocol):
@@ -100,6 +103,11 @@ class Admitter(Protocol):
 
     token_domain: str
     token_key_version: str
+
+    def key_check(self) -> str:
+        """Identifies the key without revealing it; stored at creation, compared at open.
+        ``none`` for the identity admitter."""
+        ...
 
     def admit(self, value: Any, scope: AdmissionScope) -> Request: ...
 
@@ -162,6 +170,9 @@ class IdentityAdmitter:
     token_domain = "none"  # noqa: S105 - a label, not a credential
     token_key_version = "none"  # noqa: S105 - a label, not a credential
 
+    def key_check(self) -> str:
+        return "none"
+
     def redact_text(self, text: str) -> str:
         return text
 
@@ -222,6 +233,10 @@ class IdentityAdmitter:
         for path, account in _account_references(command):
             if account not in set(scope.chart):
                 raise AdmissionError("unknown_account", path)
+        if isinstance(command, Reverse) and not scope.ledger.has_entry(command.entry_id):
+            # A reference to a runtime-generated id is only free of caller content once
+            # it resolves; until then it is arbitrary text and must not reach a row.
+            raise AdmissionError("unknown_entry", "arguments.entry_id")
         return Request(tool, arguments, call_id, scope.principal, key, None, command)
 
 
@@ -277,6 +292,9 @@ class TokenizingAdmitter(IdentityAdmitter):
         self._tokenizer = tokenizer
         self.token_domain = tokenizer.domain
         self.token_key_version = tokenizer.key_version
+
+    def key_check(self) -> str:
+        return self._tokenizer.key_check()
 
     def redact_text(self, text: str) -> str:
         return self._tokenizer.redact(text)

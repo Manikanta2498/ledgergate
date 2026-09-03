@@ -12,6 +12,7 @@ the protocol's step order is one linearization of it.
 
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 import sqlite3
@@ -113,6 +114,7 @@ class Definition:
     policy_set_version: str = "none"
     token_domain: str = "none"  # noqa: S105 - a domain label, not a credential
     token_key_version: str = "none"  # noqa: S105 - a version label, not a credential
+    token_check: str = "none"  # noqa: S105 - identifies the key; not key material
     approval_key: str = "none"
 
     @property
@@ -256,12 +258,13 @@ class Journal:
             policy_set_version=self.policy.version,
             token_domain=self.admitter.token_domain,
             token_key_version=self.admitter.token_key_version,
+            token_check=self.admitter.key_check(),
         )
         registry = definition.registry
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
                     1,
@@ -271,6 +274,7 @@ class Journal:
                     definition.policy_set_version,
                     definition.token_domain,
                     definition.token_key_version,
+                    definition.token_check,
                     definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
@@ -315,6 +319,11 @@ class Journal:
                 f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
                 f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
             )
+        if not hmac.compare_digest(row[9], self.admitter.key_check()):
+            raise ConfigurationError(
+                "this admitter's key does not reproduce the journal's token check;"
+                " a different key under the same label would fork the identifier space"
+            )
         try:
             self._conn = connect(path, create=False)
         except sqlite3.Error as exc:
@@ -326,7 +335,7 @@ class Journal:
             except (ValueError, KeyError, TypeError, LedgerError) as exc:
                 raise IntegrityError(f"definition does not decode: {exc}") from exc
             self._definition = Definition(
-                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[5]
+                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[9], row[5]
             )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
@@ -372,9 +381,11 @@ class Journal:
             require_ijson(value)
         except IJsonError as exc:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
-        scope = AdmissionScope(self._definition.registry, self._definition.chart, self.principal)
         with self._txn():
             self._ensure_current()  # step 2
+            scope = AdmissionScope(
+                self._definition.registry, self._definition.chart, self.principal, self._ledger
+            )
             try:
                 request = self.admitter.admit(value, scope)  # step 3
             except AdmissionError as exc:
@@ -932,7 +943,7 @@ def _read_definition_row(path: str) -> tuple[Any, ...] | None:
     try:
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-            " token_key_version, approval_key, chart, currencies, schema_version"
+            " token_key_version, approval_key, chart, currencies, schema_version, token_check"
             " FROM definition"
         ).fetchone()
         return None if row is None else tuple(row)

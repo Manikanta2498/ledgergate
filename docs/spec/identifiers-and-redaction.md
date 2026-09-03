@@ -10,10 +10,12 @@ input without being reversible by dictionary.
 
 ## Four classes of field
 
-1. **Free text** (`description`, message `content`, tool `arguments` and `result`, tag
-   values, account `name` in the definition): fail-closed redaction. A field not on the
-   allowlist is redacted. Replacement tokens are deterministic (keyed HMAC), so equal
-   inputs redact equally across runs.
+1. **Free text** (`description`, message `content`, tool `arguments` and `result`, tags
+   (keys *and* values: both are the caller's), account `name` in the definition, metadata
+   values): fail-closed redaction. A field not on the allowlist is redacted. Replacement
+   tokens are deterministic (keyed HMAC), so equal inputs redact equally across runs. The
+   empty string redacts to itself: there is nothing to protect, and the ledger treats `""`
+   as "no description"; this reveals that a field was empty and nothing else.
 2. **Caller-supplied identifiers** (`transaction_id`, idempotency keys, `call_id`,
    `trace_id`, subject identifiers in the `PolicyContext`): tokenized, on **every
    reference**, before the `PolicyContext` is built, before the command is fingerprinted,
@@ -26,7 +28,12 @@ input without being reversible by dictionary.
 4. **References to runtime-generated identifiers** (`entry_id` in a `reverse`): the
    caller repeats an id the ledger issued. Validated by `require_identifier` at admission,
    never tokenized, because tokenizing it would make every reference resolve to nothing.
-   Generated ids carry no caller content by construction. The definition loader warns on values that look
+   A reference is free of caller content only once it *resolves*: until the ledger confirms
+   it issued that id, it is arbitrary caller text. Admission therefore resolves it against
+   the current projection (inside the transaction, after the cursor check), and an unknown
+   one is an admission failure (`unknown_entry`, disposition `invalid`, key not spent), so
+   the raw reference exists only inside the redacted envelope. The recorder refuses such a
+   `reverse` before recording anything. The definition loader warns on values that look
    like emails, phone numbers or card numbers; the operator owns what they name their
    accounts.
 
@@ -78,10 +85,12 @@ a second transformation would make every recorded rejection diverge on replay.
 
 **Key handling.** The key is at least 16 bytes, supplied by the operator, held only by the
 `Tokenizer`, never written to the journal, a trace or a log; its `repr` shows the domain and
-key version only. The key version is a label the operator binds to a key: a journal records
-it and refuses an admitter with a different label, but a *different key under the same
-label* is the operator's error and is not detectable, since the journal holds no key
-material. Its consequence is bounded: the same raw identifier tokenizes differently, so a
-retry becomes a new operation rather than a silent replay of another's.
+key version only. A journal records the token domain, the key version label, and a **key
+check value** `HMAC(key, domain || ":keycheck" || 0x00)`, which identifies the key without
+revealing it (not reversible for a random key of at least 16 bytes). `open` refuses an
+admitter whose key does not reproduce it, because a different key under the same label
+would fork the identifier space silently: the same raw idempotency key would apply twice
+and a `settle` would miss the transaction its `open` stored. The label alone cannot detect
+that; the check value does.
 
 v2's intent and policy fields are designed under the same four classes in M3.

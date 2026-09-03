@@ -31,6 +31,8 @@ from ledgergate.ledger import (
     IdGenerator,
     Ledger,
     LedgerError,
+    Reverse,
+    UnknownEntryError,
 )
 from ledgergate.trace.models import (
     SCHEMA_VERSION,
@@ -71,6 +73,8 @@ class Recorder:
     _currencies: dict[str, Currency] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        if self.redactor is not None:
+            self.redactor.tokenize(self.trace_id)  # fail now, not after a whole run
         self.ledger = Ledger.empty(self.chart)
         self._started_at = self.clock.now()
         # ChartOfAccounts guarantees one exponent per code, so this cannot conflict.
@@ -167,6 +171,10 @@ class Recorder:
         fingerprints and heads are over the stored form and the trace replays exactly.
         """
         if self.redactor is not None:
+            if isinstance(command, Reverse) and not self.ledger.has_entry(command.entry_id):
+                # An unresolved entry reference is arbitrary caller text until the ledger
+                # confirms it issued it; under a redactor it must not be recorded at all.
+                raise UnknownEntryError(command.entry_id)
             command = self.redactor.command(command)
             if call_id is not None:
                 call_id = self.redactor.tokenize(call_id)

@@ -195,7 +195,7 @@ class TestNoRawValueReachesStorage:
 
     def test_definition_account_names_are_redacted(self, tokenizing: Journal) -> None:
         (d,) = table(tokenizing.path, "definition")
-        names = [a["name"] for a in json.loads(d[9])]
+        names = [a["name"] for a in json.loads(d[10])]
         assert all(n == "" or REDACTION_PATTERN.match(n) for n in names)
         assert d[6] == "acme" and d[7] == "v1"
 
@@ -247,12 +247,11 @@ class TestReplayAndKeyBinding:
         with pytest.raises(ConfigurationError, match="tokens"):
             Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(), admitter=other_key)
 
-    def test_a_different_key_with_the_same_version_label_is_a_different_journal(
+    def test_a_different_key_with_the_same_version_label_is_refused_at_open(
         self, tmp_path: Path
     ) -> None:
-        """The label binds the journal; the key is the operator's to keep consistent. A wrong key
-        with the right label tokenizes differently, so the retry is a new operation, never a
-        silent replay of someone else's."""
+        """The journal holds no key material, but it holds a keyed check value, so a wrong
+        key under the right label is detected before it can fork the identifier space."""
         path = str(tmp_path / "k.journal")
         j = Journal.create(
             path,
@@ -264,9 +263,38 @@ class TestReplayAndKeyBinding:
         j.handle(post("order-42", call_id="c1"))
         j.close()
         wrong = TokenizingAdmitter(Tokenizer(bytes(32), domain="acme", key_version="v1"))
-        j2 = Journal.open(
-            path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=5), admitter=wrong
+        with pytest.raises(ConfigurationError, match="token check"):
+            Journal.open(
+                path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=5), admitter=wrong
+            )
+        (d,) = table(path, "definition")
+        assert d[8] == TK.key_check() and len(d[8]) == 43  # not the key: a keyed check value
+
+    def test_unresolved_entry_reference_never_reaches_a_row(self, tokenizing: Journal) -> None:
+        r = tokenizing.handle(
+            {
+                "tool": "reverse",
+                "call_id": "c",
+                "key": "k",
+                "arguments": {"entry_id": "jane.doe@example.com 4111-1111"},
+            }
         )
-        assert j2.handle(post("order-42", call_id="c2")).response == "applied"  # a different token
-        assert len(table(path, "operations")) == 2
-        j2.close()
+        assert r.response == "invalid" and r.error_message == "unknown_entry at arguments.entry_id"
+        assert "jane.doe" not in everything_stored(tokenizing.path)
+        applied = tokenizing.handle(post("k2", call_id="c2"))
+        ok = tokenizing.handle(
+            {
+                "tool": "reverse",
+                "call_id": "c3",
+                "key": "k3",
+                "arguments": {"entry_id": applied.result["entry_id"], "description": "why"},
+            }
+        )
+        assert ok.response == "applied"
+
+    def test_tag_keys_are_redacted_too(self, tokenizing: Journal) -> None:
+        tokenizing.handle(
+            post("k", call_id="c", tags={"card 4111111111111111": "x", "ssn": "123-45-6789"})
+        )
+        stored = everything_stored(tokenizing.path)
+        assert "4111" not in stored and "123-45" not in stored and '"ssn"' not in stored

@@ -67,7 +67,8 @@ class Tokenizer:
         the token once more after construction, so a token is always a valid identifier."""
         require_identifier(raw, "identifier")
         token = f"tk1_{self.domain}_{self._mac(self.domain, raw.encode('utf-8'))}"
-        assert TOKEN_PATTERN.match(token)
+        if not TOKEN_PATTERN.match(token):  # pragma: no cover - by construction
+            raise ValueError("token construction produced an ill-formed token")
         return require_identifier(token, "token")
 
     def redact(self, text: str) -> str:
@@ -76,6 +77,12 @@ class Tokenizer:
         if text == "":
             return ""
         return f"rd1_{self.domain}_{self._mac(self.domain + ':text', text.encode('utf-8'))}"
+
+    def key_check(self) -> str:
+        """A value that identifies the key without revealing it: a journal stores it at
+        creation and refuses at open an admitter whose key does not reproduce it. Not
+        reversible for a random key of at least 16 bytes."""
+        return self._mac(self.domain + ":keycheck", b"")
 
     def digest_input(self, value: Any) -> str:
         """A keyed digest over the canonical form of raw, rejected input: it commits to the
@@ -100,10 +107,12 @@ class Tokenizer:
         return value
 
     def draft(self, draft: EntryDraft) -> EntryDraft:
+        """Description and tags (keys *and* values: both are caller text) redacted; tags
+        re-sorted over the stored form so the fingerprint is over what is stored."""
         return EntryDraft(
             draft.postings,
             self.redact(draft.description),
-            tuple((k, self.redact(v)) for k, v in draft.tags),
+            tuple(sorted((self.redact(k), self.redact(v)) for k, v in draft.tags)),
         )
 
     def command(self, command: Command) -> Command:
@@ -152,5 +161,7 @@ class Tokenizer:
         if isinstance(desc := out.get("description"), str):
             out["description"] = self.redact(desc)
         if isinstance(tags := out.get("tags"), dict):
-            out["tags"] = {k: self.redact(v) if isinstance(v, str) else v for k, v in tags.items()}
+            out["tags"] = {
+                self.redact(k): self.redact(v) if isinstance(v, str) else v for k, v in tags.items()
+            }
         return out

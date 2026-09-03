@@ -140,3 +140,47 @@ class TestRedactedTrace:
         other.execute(OpenTransaction("order-42", "txn-alice", Money(1000, USD)))
         first = next(e for e in recorded().trace().events if isinstance(e, LedgerCommandEvent))
         assert other.trace().events[0].command.key != first.command.key  # type: ignore[union-attr]
+
+
+class TestRecorderClosesTheSameGaps:
+    def test_unresolved_entry_reference_is_refused_before_anything_is_recorded(self) -> None:
+        rec = Recorder(
+            "t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds(), redactor=TK
+        )
+        from ledgergate.ledger import Reverse, UnknownEntryError
+
+        with pytest.raises(UnknownEntryError):
+            rec.execute(Reverse("k", "jane.doe@example.com", "why"))
+        assert rec.events == []
+        assert "jane.doe" not in dump_trace(rec.trace())
+        applied = rec.execute(OpenTransaction("o", "t", Money(1, USD)))
+        assert applied.ledger.sequence == 0
+
+    def test_tag_keys_are_redacted_and_the_trace_still_replays(self) -> None:
+        rec = Recorder(
+            "t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds(), redactor=TK
+        )
+        from ledgergate.ledger import Post
+
+        draft = EntryDraft.of(
+            debit("cash", Money(5, USD)),
+            credit("revenue", Money(5, USD)),
+            **{"card 4111111111111111": "x", "ssn": "123-45-6789"},
+        )
+        rec.execute(Post("k", draft))
+        text = dump_trace(rec.trace())
+        assert "4111" not in text and "123-45" not in text and '"ssn"' not in text
+        assert replay_trace(load_trace(text)).consistent
+
+    def test_invalid_trace_id_fails_at_construction(self) -> None:
+        from ledgergate.ledger import InvalidIdentifierError
+
+        with pytest.raises(InvalidIdentifierError):
+            Recorder(
+                "two\nlines",
+                AgentDoc(name="a"),
+                CHART,
+                SteppingClock(EPOCH),
+                SequentialIds(),
+                redactor=TK,
+            )

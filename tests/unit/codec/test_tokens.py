@@ -170,4 +170,5 @@ class TestCommands:
         out = TK.arguments(
             "post", {"draft": {"description": 5, "tags": {"a": 1}}, "transaction_id": 3}
         )
-        assert out == {"draft": {"description": 5, "tags": {"a": 1}}, "transaction_id": 3}
+        assert out["draft"]["description"] == 5 and out["transaction_id"] == 3
+        assert out["draft"]["tags"] == {TK.redact("a"): 1}  # the key is text; the value is left

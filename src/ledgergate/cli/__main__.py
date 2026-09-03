@@ -222,7 +222,9 @@ def verify_command(args: argparse.Namespace) -> int:
             trace = derive_trace(str(source))
         else:
             trace = load_any(source)
-    except (DerivationError, TraceError, sqlite3.Error, OSError) as exc:
+    except (DerivationError, TraceError, sqlite3.Error, OSError, ValueError, KeyError) as exc:
+        # pydantic's ValidationError is a ValueError: a journal whose rows the grammar cannot
+        # express is reported, not tracebacked
         print(f"cannot verify {source}: {exc}", file=sys.stderr)
         return 2
     card = check(trace)

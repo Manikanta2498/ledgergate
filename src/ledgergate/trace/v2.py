@@ -19,7 +19,7 @@ from collections import defaultdict
 from itertools import pairwise
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, JsonValue, StrictBool, StrictInt, model_validator
+from pydantic import ConfigDict, Field, JsonValue, StrictBool, StrictInt, model_validator
 
 from ledgergate.ledger import CURRENCIES, ChartOfAccounts
 from ledgergate.trace.models import (
@@ -170,6 +170,24 @@ _ORDINAL: dict[str, int] = {
 
 
 class TraceV2(_Strict):
+    """LedgerGate trace, schema v2. Consumers enforce, as this model does: every intent has
+    exactly one invocation_resolution; an intent event exists iff the disposition is not
+    invalid and its kind follows the disposition (read_intent for read, legacy_intent for
+    legacy, command_intent otherwise); a policy_decision exists exactly once for new and
+    approval, never for replay, conflict or legacy, at most once for read; a ledger pair
+    exists iff the decision was allow on new or approval, exactly once for legacy, never
+    otherwise; a read_result exists iff a read was not denied; every runtime intent is
+    bracketed by a tool_call immediately before and a tool_result immediately after with
+    the same call_id; events of one intent appear in ordinal order; seq is dense and
+    strictly increasing; every ledger_command has exactly one ledger_result."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_extra={
+            "$comment": "See the TraceV2 docstring for the grammar consumers enforce."
+        },
+    )
     schema_version: Literal["2"] = SCHEMA_VERSION_2
     trace_id: Identifier
     journal_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")] | None = None
@@ -218,6 +236,8 @@ class TraceV2(_Strict):
                 by_intent[owner].append(e)
         for r in resolutions:
             self._check_intent(r, by_intent[r.intent_id])
+            if r.disposition != "legacy":
+                self._check_boundary(r, by_intent[r.intent_id])
         for intent_id, group in by_intent.items():
             if not any(isinstance(e, InvocationResolution) for e in group):
                 raise ValueError(f"intent {intent_id!r} has events but no resolution")
@@ -274,6 +294,23 @@ class TraceV2(_Strict):
             "ledger_command",
         ]:
             raise ValueError(f"{r.intent_id}: legacy grammar is intent, resolution, command")
+
+    def _check_boundary(self, r: InvocationResolution, group: list[AnyV2Event]) -> None:
+        """A runtime intent is bracketed by its own tool_call and tool_result: the event
+        immediately before its first event is a tool_call, the event immediately after its
+        last is a tool_result, and both carry the intent's call_id."""
+        first, last = group[0], group[-1]
+        before = self.events.index(first) - 1
+        after = self.events.index(last) + 1
+        call = self.events[before] if before >= 0 else None
+        result = self.events[after] if after < len(self.events) else None
+        if not isinstance(call, ToolCallEvent):
+            raise ValueError(f"{r.intent_id}: no tool_call immediately before the intent")
+        if not isinstance(result, ToolResultEvent) or result.call_id != call.call_id:
+            raise ValueError(f"{r.intent_id}: no matching tool_result immediately after")
+        call_id = getattr(first, "call_id", None)
+        if call_id is not None and call_id != call.call_id:
+            raise ValueError(f"{r.intent_id}: intent call_id differs from its tool_call")
 
     def _check_ledger_pairs(self) -> None:
         commands = {e.command_id for e in self.events if isinstance(e, LedgerCommandEvent)}

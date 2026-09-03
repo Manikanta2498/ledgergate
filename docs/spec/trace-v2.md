@@ -40,8 +40,8 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
 - `replay` and `conflict`: no decision, no ledger pair; `invocation_resolution` names the
   operation resolved to and, for `replay`, the exact outcome that answered (so a retry
   that was told `awaiting_approval` says so even if the operation was approved later),
-  whose original decision and pair appear earlier in the same trace (a trace is derived from a whole journal; in a windowed export the reference is
-  marked `external`).
+  whose original decision and pair appear earlier in the same trace (a trace is always
+  derived from a whole journal, under one read snapshot, so every reference resolves).
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
   names the operation's pending tip, an outcome produced by an *earlier* invocation, exactly
@@ -50,10 +50,21 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.
 - `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error). No
-  intent, no operation, no decision. Applies identically to write and read tools.
+  intent, no operation, no decision. Applies identically to write and read tools. The
+  `tool_call`'s `arguments` is the empty object: the input was not admitted, the envelope's
+  redacted payload stays in the journal, and nothing of it is carried into a trace.
 - `read`: `read_intent`, resolution, optional decision. If no decision or the decision is
   `allow`: `read_result` with the journal position observed, head, and result digest. If
-  the decision is `deny`: no `read_result`; the `tool_result` carries the denial.
+  the decision is `deny`: no `read_result`; the `tool_result` carries the denial. A read's
+  decision is never `approval_required`: a read has no operation to approve, and a policy
+  set that returns it for a read is a configuration fault the journal refuses unrecorded.
+
+**Tool boundary.** Every runtime intent (every disposition but `legacy`) is bracketed by
+its own boundary events: the event immediately before its first event is its `tool_call`
+and the event immediately after its last is its `tool_result`, with the same `call_id`.
+`call_id` is not unique across a trace (a caller may retry with the same one); the
+bracketing is what ties a boundary pair to its intent. Lifted v1 content keeps v1's rule
+(one `tool_result` per `tool_call`, after it) and is not bracketed.
 
 Cardinality and order are rules of the schema description, enforced by the models as
 v1's are.
@@ -117,6 +128,7 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
   `call_id` was not recoverable, `invalid-<invocation journal_sequence>`; its `tool` is
   `unknown` when the envelope kept none; its `attempted_digest` is the envelope's
   `input_digest`.
+- a standalone `message` carries the time the journal recorded it (kept in its row).
 - lifted v1 content: `intent_id` is `legacy-<v1 command_id>`, `operation_id` is the v1
   `command_id`, and `attempted_digest` is the command's fingerprint recomputed on lift.
 

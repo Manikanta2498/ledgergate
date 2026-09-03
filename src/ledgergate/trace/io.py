@@ -108,6 +108,8 @@ def load_any(source: str | bytes | Path) -> TraceV2:
         raise TraceError([f"/: not a JSON object: {exc}"]) from None
     if version == "1":
         return lift(load_trace(text))
+    if version != "2":
+        raise TraceError([f"/schema_version: expected '1' or '2', got {version!r}"])
     try:
         return TraceV2.model_validate_json(text)
     except ValidationError as exc:
@@ -117,7 +119,10 @@ def load_any(source: str | bytes | Path) -> TraceV2:
 
 
 def dump_v2(trace: TraceV2) -> str:
-    return json.dumps(trace.model_dump(mode="json", exclude_none=True), indent=2, allow_nan=False)
+    """Canonical text form, as :func:`dump_trace` is for v1: sorted keys, two-space indent,
+    trailing newline, no NaN."""
+    doc = trace.model_dump(mode="json", exclude_none=True)
+    return json.dumps(doc, indent=2, sort_keys=True, allow_nan=False) + "\n"
 
 
 def dump_trace(trace: Trace) -> str:

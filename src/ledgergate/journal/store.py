@@ -458,7 +458,11 @@ class Journal:
                     None,
                     "message",
                     json.dumps(
-                        {"role": role, "content": self.admitter.redact_text(content)},
+                        {
+                            "role": role,
+                            "content": self.admitter.redact_text(content),
+                            "at": _Effects.aware_now(self.clock).isoformat(),
+                        },
                         sort_keys=True,
                     ),
                 ),
@@ -706,6 +710,11 @@ class Journal:
                 else {"presentation": presentation, "verdict": verdict},
             )
             decision = self._guarded(lambda: self.policy.evaluate(context))
+            if decision.decision == "approval_required":
+                raise ConfigurationError(
+                    "a read cannot await approval: the policy set returned approval_required"
+                    " for a read intent, which has no operation to approve"
+                )
             self._decision(inv_seq, None, context, decision, presentation, verdict)
             if decision.decision != "allow":
                 response = Response(

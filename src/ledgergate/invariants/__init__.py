@@ -9,7 +9,11 @@ verdict per invariant: ``pass``, ``fail``, or ``no_evidence`` (the trace does no
 the invariant would need, which is reported as such and never as a pass).
 
 Every invariant here is grounded in a document: the v2 grammar (``docs/spec/trace-v2.md``),
-the journal protocol (``docs/spec/journal.md``) or the ledger core's own rules.
+the journal protocol (``docs/spec/journal.md``) or the ledger core's own rules. Several
+restate rules the :class:`~ledgergate.trace.v2.TraceV2` validator also enforces at load; a
+document violating them fails to load rather than failing here, and the scorecard row then
+records that the loaded trace satisfies them. The registry is the statement of what is
+checked; the validator is one of the mechanisms.
 """
 
 from __future__ import annotations
@@ -92,8 +96,16 @@ class Scorecard:
 # ------------------------------------------------------------------- checks
 
 
-def _has_runtime_content(t: TraceV2) -> bool:
-    return any(r.disposition != "legacy" for r in t.resolutions())
+def _has_disposition(*kinds: str) -> Callable[[TraceV2], bool]:
+    return lambda t: any(r.disposition in kinds for r in t.resolutions())
+
+
+def _has_non_allow_decision(t: TraceV2) -> bool:
+    return any(d.decision != "allow" for d in t.decisions().values())
+
+
+def _has_runtime_decision(t: TraceV2) -> bool:
+    return any(d.runtime_written for d in t.decisions().values())
 
 
 def _has_ledger_pairs(t: TraceV2) -> bool:
@@ -185,10 +197,21 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
 
 
 def context_matches_decision(t: TraceV2) -> list[Finding]:
-    """The persisted context agrees with the decision row about the approval verdict, and on a
-    failed verdict carries no policy-derived subject or aggregates (no policy code ran)."""
+    """The persisted context agrees with the decision row about the approval verdict, names the
+    same policy set, was computed over the digest the resolution attempted, and on a failed
+    verdict carries no policy-derived subject or aggregates (no policy code ran)."""
     out = []
+    attempted = {r.intent_id: r.attempted_digest for r in t.resolutions()}
     for iid, d in _decided(t).items():
+        if d.context.get("command_digest") != attempted.get(iid):
+            out.append(
+                Finding(
+                    "context_matches_decision",
+                    "error",
+                    f"{iid}: context digest differs from the resolution's attempted digest",
+                    iid,
+                )
+            )
         ctx_approval = d.context.get("approval")
         recorded = None if d.approval is None else d.approval.verdict
         ctx_verdict = None if not isinstance(ctx_approval, dict) else ctx_approval.get("verdict")
@@ -285,28 +308,28 @@ REGISTRY: tuple[Invariant, ...] = (
         denied_never_reaches_ledger.__doc__ or "",
         "docs/spec/trace-v2.md, event grammar",
         denied_never_reaches_ledger,
-        _has_runtime_content,
+        _has_non_allow_decision,
     ),
     Invariant(
         "replay_never_reevaluates",
         replay_never_reevaluates.__doc__ or "",
         "docs/spec/trace-v2.md, replay and conflict",
         replay_never_reevaluates,
-        _has_runtime_content,
+        _has_disposition("replay", "conflict"),
     ),
     Invariant(
         "every_write_was_decided",
         every_write_was_decided.__doc__ or "",
         "docs/spec/journal.md, write protocol step 7",
         every_write_was_decided,
-        _has_runtime_content,
+        _has_disposition("new", "approval"),
     ),
     Invariant(
         "runtime_decisions_are_verdicts",
         runtime_decisions_are_verdicts.__doc__ or "",
         "docs/spec/journal.md, approval artefacts",
         runtime_decisions_are_verdicts,
-        _has_runtime_content,
+        _has_runtime_decision,
     ),
     Invariant(
         "context_matches_decision",

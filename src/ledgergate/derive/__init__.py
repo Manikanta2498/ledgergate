@@ -74,7 +74,11 @@ def trace(path: str, *, trace_id: str | None = None) -> TraceV2:
     conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        return _Derivation(conn).run(trace_id)
+        conn.execute("BEGIN")  # one read snapshot for the whole derivation
+        try:
+            return _Derivation(conn).run(trace_id)
+        finally:
+            conn.execute("COMMIT")
     finally:
         conn.close()
 
@@ -101,10 +105,12 @@ class _Derivation:
             "SELECT * FROM events WHERE invocation IS NULL ORDER BY journal_sequence"
         ):
             body = json.loads(ev["body"])
+            at = datetime.fromisoformat(body["at"])
+            last_at = max(last_at, at)
             anchored.append(
                 (
                     (ev["journal_sequence"], 0),
-                    MessageEvent(seq=1, at=last_at, role=body["role"], content=body["content"]),
+                    MessageEvent(seq=1, at=at, role=body["role"], content=body["content"]),
                 )
             )
 

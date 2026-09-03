@@ -227,64 +227,79 @@ class TestDerivation:
 
 
 class TestGrammar:
+    AT = EPOCH.isoformat()
+
     def _base(self, events: list[Any]) -> dict[str, Any]:
         return {
             "trace_id": "t",
-            "started_at": EPOCH.isoformat(),
-            "ended_at": EPOCH.isoformat(),
+            "started_at": self.AT,
+            "ended_at": self.AT,
             "policy_set_version": "none",
             "events": events,
         }
 
-    def _res(self, seq: int, iid: str, disposition: str, **kw: Any) -> dict[str, Any]:
+    def _res(self, iid: str, disposition: str, **kw: Any) -> dict[str, Any]:
         return {
             "type": "invocation_resolution",
-            "seq": seq,
-            "at": EPOCH.isoformat(),
+            "seq": 1,
+            "at": self.AT,
             "intent_id": iid,
             "disposition": disposition,
             "attempted_digest": "0" * 64,
             **kw,
         }
 
+    def _bracketed(self, *inner: dict[str, Any], call_id: str = "c") -> list[dict[str, Any]]:
+        call = {
+            "type": "tool_call",
+            "seq": 1,
+            "at": self.AT,
+            "call_id": call_id,
+            "tool": "x",
+            "arguments": {},
+        }
+        result = {
+            "type": "tool_result",
+            "seq": 1,
+            "at": self.AT,
+            "call_id": call_id,
+            "ok": False,
+            "error": {"type": "X", "message": "m"},
+        }
+        events = [call, *inner, result]
+        return [{**e, "seq": i + 1} for i, e in enumerate(events)]
+
+    def _validate(self, *inner: dict[str, Any]) -> TraceV2:
+        return TraceV2.model_validate(self._base(self._bracketed(*inner)))
+
     def test_invalid_carries_nothing_else(self) -> None:
-        TraceV2.model_validate(self._base([self._res(1, "i", "invalid")]))
+        self._validate(self._res("i", "invalid"))
+        read = {
+            "type": "read_intent",
+            "seq": 1,
+            "at": self.AT,
+            "intent_id": "i",
+            "call_id": "c",
+            "tool": "balance",
+            "arguments": {},
+        }
         with pytest.raises(ValidationError, match="invalid carries no intent"):
-            TraceV2.model_validate(
-                self._base(
-                    [
-                        {
-                            "type": "read_intent",
-                            "seq": 1,
-                            "at": EPOCH.isoformat(),
-                            "intent_id": "i",
-                            "call_id": "c",
-                            "tool": "balance",
-                            "arguments": {},
-                        },
-                        self._res(2, "i", "invalid"),
-                    ]
-                )
-            )
+            self._validate(read, self._res("i", "invalid"))
 
     def test_new_requires_a_decision_and_replay_forbids_one(self) -> None:
         cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
         intent = {
             "type": "command_intent",
             "seq": 1,
-            "at": EPOCH.isoformat(),
+            "at": self.AT,
             "intent_id": "i",
             "call_id": "c",
             "command": cmd,
         }
-        with pytest.raises(ValidationError, match="exactly one policy_decision"):
-            TraceV2.model_validate(
-                self._base([intent, self._res(2, "i", "new", operation_id="op", outcome_ref="o")])
-            )
         decision = {
             "type": "policy_decision",
-            "seq": 3,
-            "at": EPOCH.isoformat(),
+            "seq": 1,
+            "at": self.AT,
             "intent_id": "i",
             "policy_set_version": "none",
             "decision": "deny",
@@ -292,21 +307,13 @@ class TestGrammar:
             "reason": "x",
             "context": {},
         }
+        with pytest.raises(ValidationError, match="exactly one policy_decision"):
+            self._validate(intent, self._res("i", "new", operation_id="op", outcome_ref="o"))
         with pytest.raises(ValidationError, match="never carries a policy_decision"):
-            TraceV2.model_validate(
-                self._base(
-                    [
-                        intent,
-                        self._res(2, "i", "replay", operation_id="op", outcome_ref="o"),
-                        decision,
-                    ]
-                )
+            self._validate(
+                intent, self._res("i", "replay", operation_id="op", outcome_ref="o"), decision
             )
-        TraceV2.model_validate(
-            self._base(
-                [intent, self._res(2, "i", "new", operation_id="op", outcome_ref="o"), decision]
-            )
-        )
+        self._validate(intent, self._res("i", "new", operation_id="op", outcome_ref="o"), decision)
 
     def test_resolution_shape(self) -> None:
         with pytest.raises(ValidationError, match="carries no operation"):
@@ -331,9 +338,7 @@ class TestGrammar:
 
     def test_each_intent_has_exactly_one_resolution(self) -> None:
         with pytest.raises(ValidationError, match="exactly one invocation_resolution"):
-            TraceV2.model_validate(
-                self._base([self._res(1, "i", "invalid"), self._res(2, "i", "invalid")])
-            )
+            self._validate(self._res("i", "invalid"), self._res("i", "invalid"))
 
 
 class TestLift:
@@ -515,3 +520,213 @@ def test_ledger_command_owner_grammar_rejects_orphan_pairs() -> None:
                 ],
             }
         )
+
+
+def _artefact(j: Journal, key: str, **over: Any) -> dict[str, Any]:
+    import sqlite3
+
+    conn = sqlite3.connect(j.path)
+    (fp,) = conn.execute("SELECT fingerprint FROM operations WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    fields: dict[str, Any] = {
+        "journal_id": j.definition.journal_id,
+        "approval_id": f"a-{key}",
+        "approver": "cfo",
+        "fingerprint": fp,
+        "key": key,
+        "issued_at": EPOCH,
+        "expires_at": EPOCH + timedelta(days=1),
+    }
+    fields.update(over)
+    return issue(SIGNER, **fields).to_json()
+
+
+class TestEveryDispositionTheSpecSinglesOut:
+    """Failed-verdict approval, denied new, denied gated read, conflict and replay with an
+    artefact, awaiting then approved, and a message recorded after invocations."""
+
+    def _journal(self, tmp_path: Path) -> str:
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class DenyReads(ThresholdPolicySet):
+            def evaluate(self, context: PolicyContext) -> Decision:
+                if context.digest_kind == "request":
+                    return Decision("deny", f"{self.version}.no_reads", "reads are refused")
+                return super().evaluate(context)
+
+        policy = DenyReads(
+            version="d",
+            deny_above=[Threshold("open_transaction", "USD", 1_000)],
+            approve_above=[Threshold("open_transaction", "USD", 100)],
+            gated_reads=frozenset({"balance"}),
+        )
+        path = str(tmp_path / "all.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=policy,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("huge", "c1", 5_000))  # denied new
+        j.handle(_open("big", "c2", 500))  # awaiting
+        j.handle(_open("big", "c3", 500))  # replay of awaiting (no artefact)
+        expired = _artefact(j, "big", expires_at=EPOCH + timedelta(seconds=1))
+        j.handle(_open("big", "c4", 500, approval=expired))  # approval, failed verdict
+        j.handle(
+            _open("big", "c5", 501, approval=_artefact(j, "big", approval_id="x"))
+        )  # conflict + artefact
+        j.handle(
+            {"tool": "balance", "call_id": "c6", "arguments": {"account": "cash"}}
+        )  # denied read
+        j.handle(
+            _open("big", "c7", 500, approval=_artefact(j, "big", approval_id="good"))
+        )  # applied
+        j.handle(
+            _open("big", "c8", 500, approval=_artefact(j, "big", approval_id="late"))
+        )  # replay + artefact
+        j.record_message("assistant", "done")
+        j.close()
+        return path
+
+    def test_grammar_holds_and_names_the_right_outcomes(self, tmp_path: Path) -> None:
+        t = derive(self._journal(tmp_path))
+        res = t.resolutions()
+        dispositions = [r.disposition for r in res]
+        assert dispositions == [
+            "new",
+            "new",
+            "replay",
+            "approval",
+            "conflict",
+            "read",
+            "approval",
+            "replay",
+        ]
+        decisions = t.decisions()
+        denied_new, awaiting, _replay1, failed, conflict, read, approved, replay2 = res
+        assert (
+            decisions[denied_new.intent_id].decision == "deny"
+            and denied_new.outcome_ref is not None
+        )
+        assert failed.outcome_ref == awaiting.outcome_ref  # the pending tip, produced earlier
+        d = decisions[failed.intent_id]
+        assert d.runtime_written and d.reason == "approval_expired" and d.approval is not None
+        assert d.approval.verdict == "approval_expired" and d.context["subject"] is None
+        assert conflict.presentation_ref is not None and conflict.intent_id not in decisions
+        assert read.intent_id in decisions and decisions[read.intent_id].decision == "deny"
+        assert not any(e.type == "read_result" for e in t.events)
+        assert approved.outcome_ref != awaiting.outcome_ref
+        assert replay2.outcome_ref == approved.outcome_ref and replay2.presentation_ref is not None
+        # the message recorded last carries its own time and sits last
+        assert t.events[-1].type == "message" and t.events[-1].at > t.events[-2].at
+        assert replay_trace(t.ledger_view()).consistent
+        card = check(t)
+        assert card.passed
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "pass"
+
+    def test_no_evidence_is_honest_for_a_reads_only_trace(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "reads.journal")
+        j = Journal.create(path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        j.handle({"tool": "balance", "call_id": "c", "arguments": {"account": "cash"}})
+        j.close()
+        statuses = {r.name: r.status for r in check(derive(path)).results}
+        for name in (
+            "denied_never_reaches_ledger",
+            "replay_never_reevaluates",
+            "every_write_was_decided",
+            "runtime_decisions_are_verdicts",
+            "context_matches_decision",
+            "ledger_pairs_replay",
+            "books_balance_and_chain_verifies",
+            "legacy_carries_no_policy_evidence",
+        ):
+            assert statuses[name] == "no_evidence", name
+
+    def test_a_policy_asking_approval_for_a_read_is_a_configuration_fault(
+        self, tmp_path: Path
+    ) -> None:
+        from ledgergate.journal import ConfigurationError
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class Odd(ThresholdPolicySet):
+            def evaluate(self, context: PolicyContext) -> Decision:
+                return Decision("approval_required", "odd", "asks a read to wait")
+
+        j = Journal.create(
+            str(tmp_path / "odd.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=Odd(version="odd", gated_reads=frozenset({"balance"})),
+        )
+        with pytest.raises(ConfigurationError, match="read cannot await"):
+            j.handle({"tool": "balance", "call_id": "c", "arguments": {"account": "cash"}})
+        j.close()
+
+
+class TestBoundaryGrammar:
+    def test_a_runtime_intent_without_its_tool_call_is_refused(self) -> None:
+        cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
+        base = {
+            "trace_id": "t",
+            "started_at": EPOCH.isoformat(),
+            "ended_at": EPOCH.isoformat(),
+            "policy_set_version": "none",
+        }
+        intent = {
+            "type": "command_intent",
+            "seq": 2,
+            "at": EPOCH.isoformat(),
+            "intent_id": "i",
+            "call_id": "c",
+            "command": cmd,
+        }
+        res = {
+            "type": "invocation_resolution",
+            "seq": 3,
+            "at": EPOCH.isoformat(),
+            "intent_id": "i",
+            "disposition": "conflict",
+            "operation_id": "op",
+            "attempted_digest": "0" * 64,
+        }
+        call = {
+            "type": "tool_call",
+            "seq": 1,
+            "at": EPOCH.isoformat(),
+            "call_id": "c",
+            "tool": "reverse",
+            "arguments": {},
+        }
+        result = {
+            "type": "tool_result",
+            "seq": 4,
+            "at": EPOCH.isoformat(),
+            "call_id": "c",
+            "ok": False,
+            "error": {"type": "X", "message": "m"},
+        }
+        TraceV2.model_validate({**base, "events": [call, intent, res, result]})
+        with pytest.raises(ValidationError, match="no tool_call immediately before"):
+            TraceV2.model_validate({**base, "events": [intent, res, result]})
+        with pytest.raises(ValidationError, match="no matching tool_result"):
+            TraceV2.model_validate(
+                {**base, "events": [call, intent, res, {**result, "call_id": "other"}]}
+            )
+        with pytest.raises(ValidationError, match="differs from its tool_call"):
+            TraceV2.model_validate(
+                {
+                    **base,
+                    "events": [{**call, "call_id": "z"}, intent, res, {**result, "call_id": "z"}],
+                }
+            )
+
+    def test_verify_reports_an_undeviable_source_as_exit_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps({"trace_id": "t", "events": []}))  # no schema_version
+        assert main(["verify", str(bad)]) == 2
+        assert "schema_version" in capsys.readouterr().err

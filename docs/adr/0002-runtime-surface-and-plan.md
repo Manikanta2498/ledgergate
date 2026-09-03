@@ -64,9 +64,10 @@ offline consumer holding the same policy set re-runs the same code on the same i
 without it verifies the recorded evidence and says so.
 
 Approvals are signed artefacts bound to one pending operation and validated before they
-enter the context; single use is a database constraint, not a flag. The reservation
-mechanics, and the ordering that keeps a valid approval from being burned by an unrelated
-denial, are in [spec/journal.md, *Approval artefacts*](../spec/journal.md#approval-artefacts).
+enter the context; single use is a database constraint, not a flag. A validated approval
+is consumed whatever policy then decides, because every decision on a valid presentation
+leaves its operation terminal, so there is nothing left for the artefact to serve. Details
+in [spec/journal.md, *Approval artefacts*](../spec/journal.md#approval-artefacts).
 
 ### 3. The runtime surface is a local MCP server (M4)
 

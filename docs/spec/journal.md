@@ -16,11 +16,21 @@ document says *exactly how*, and is the text an implementation and its tests are
 `replayed` and `conflict` are properties of invocations, never of operations. The ledger
 rebuilds from outcomes; the trace derives from invocations and events.
 
-## Global order
+## Sequences
 
-Every row in every table carries a `journal_sequence` drawn from one monotonic counter.
-It is the projection cursor and the only ordering source. Per-table sequences do not
-exist. Trace event order is derived from it (see [trace-v2](trace-v2.md)).
+Three distinct things, kept distinct because conflating them was a review finding:
+
+- **`journal_sequence`**: every row in every table carries one, from a single monotonic
+  counter. It orders every durable fact. Per-table sequences do not exist.
+- **Projection cursor**: the `journal_sequence` of the latest **outcome** row folded into
+  the projection. Only outcomes change the ledger; invocations, events, decisions,
+  approvals and reads advance `journal_sequence` without touching it. Freshness is
+  therefore "is my cursor equal to `MAX(outcomes.journal_sequence)`", not to the global
+  maximum, which is always ahead of any projection.
+- **Trace order**: derived, not stored; defined in [trace-v2](trace-v2.md). It anchors
+  every event of an invocation to that invocation's `journal_sequence`, because the
+  foreign keys force the invocation row to be written *before* the inbound event that
+  conceptually precedes it.
 
 ## Tables
 
@@ -45,8 +55,11 @@ All strictly append-only. No row is ever updated or deleted.
 3. An approval is consumed at most once, enforced by `approval_consumptions.approval UNIQUE`,
    and only by a decision of `allow`.
 4. A `tool_call` row never exists without the data for its `tool_result`.
-5. The projection cursor equals the journal's max `journal_sequence` whenever a command is
-   evaluated against it.
+5. Whenever a command is evaluated against the projection, the projection's cursor
+   equals `MAX(outcomes.journal_sequence)` as of the start of the transaction. Rows this
+   transaction writes before the core runs (invocation, events, decision) are not
+   outcomes and do not move it; the outcome this transaction appends becomes the new
+   cursor on commit.
 6. Every row is written after every row it references (immediate foreign keys); the
    protocols' step order is the only legal one.
 
@@ -76,6 +89,17 @@ passed; an invalid, expired or mis-scoped artefact never touches `approval_consu
 
 The verdict enters the `PolicyContext`. Nothing is consumed on any verdict other than
 `approval_valid`.
+
+**Decision-to-outcome for a new operation** (first evaluation, disposition `new`):
+
+| Policy decision | First outcome | `tool_result` |
+| :--- | :--- | :--- |
+| `allow` | `applied` or `rejected`, from the core | per the core's result |
+| `deny` | `denied` (terminal) | `ok=false`, `PolicyDenied`, rule and reason |
+| `approval_required` | `awaiting_approval` (pending) | `ok=false`, `ApprovalRequired`, the rule that asked |
+
+This closes invariant 2: every new operation receives its first outcome in the
+transaction that created it, whatever policy said.
 
 **Decision-to-outcome for an operation whose current outcome is `awaiting_approval`.**
 This is the one state where a later invocation can change an operation, so the mapping is
@@ -107,6 +131,26 @@ the decision must survive:
 The context therefore always states the true consumption state, and the `UNIQUE` cannot
 fail after policy has run because the reservation was taken before it.
 
+## What M2b ships, and what it stubs
+
+The protocol below names admission (tokenization and redaction), policy, and trace
+derivation. Those are M2c and M3 deliverables. M2b implements the protocol *shape*
+completely and plugs in the simplest conforming component at each seam, so that later
+milestones replace an implementation, never the protocol:
+
+- **Admission** is an interface (`Admitter`). M2b ships the identity admitter: identifiers
+  are validated by `require_identifier` and passed through, free text is passed through.
+  M2c replaces it with the tokenizing, redacting one. Token domain and key version in the
+  definition are `none` under the identity admitter and the definition says so.
+- **Policy** is an interface. M2b ships the null policy set, version `none`, which returns
+  `allow` for every context and still writes a `decisions` row, so every operation has a
+  decision and the outcome tables above hold from day one. Approval artefacts are not
+  presented under the null policy (nothing asks for one); the `approvals` tables exist
+  and are tested empty.
+- **Trace derivation** is M3, with schema v2. M2b exposes the journal for inspection
+  (`ledgergate journal dump`) but derives no trace; the M2a replayer is not run against
+  a journal in M2b. The roadmap says so.
+
 ## Write protocol
 
 One invocation, one SQLite transaction, `BEGIN IMMEDIATE`. SQLite serializes write
@@ -115,10 +159,12 @@ written in an order that satisfies the immediate foreign keys below: an invocati
 anything that references it, an operation before the invocation that references it.
 
 1. Take the write lock.
-2. **Cursor.** If the projection's cursor is not the journal's max `journal_sequence`,
-   rebuild from `definition` and all outcome rows in order. The entry-chain head is checked
-   against the rebuilt projection as an integrity test; it is not the cursor, because
-   lifecycle commands leave it unchanged.
+2. **Cursor.** If the projection's cursor is not `MAX(outcomes.journal_sequence)`,
+   rebuild from `definition` and all outcome rows in order. An `awaiting_approval` or
+   `denied` outcome is folded as a no-op on the books but advances the cursor, so a
+   process cannot miss it. The entry-chain head is checked against the rebuilt projection
+   as an integrity test; it is not the cursor, because lifecycle commands leave it
+   unchanged.
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
    identifier invalid after tokenization): write `invocations` (`invalid`, no operation,
@@ -144,8 +190,9 @@ anything that references it, an operation before the invocation that references 
 7. **Decide.** Build the `PolicyContext`, reading aggregates from `outcomes` and
    `decisions` in this transaction. Evaluate. Settle any approval reservation first
    (release on `allow`, roll back the savepoint otherwise; see *Approval artefacts*), then
-   write `decisions`. If not `allow`: append outcome (`denied` or `awaiting_approval` per
-   the decision-to-outcome table); outbound `events`; commit; return.
+   write `decisions`. If not `allow`: append outcome per the applicable
+   decision-to-outcome table (new operation, or pending operation); outbound `events`;
+   commit; return.
 8. **Execute.** Run the command through the pure core.
 9. Append outcome (`applied` or `rejected`, with effects and heads). Outbound `events`.
    Commit.
@@ -205,6 +252,16 @@ row, outbound event `ok=false`/`PolicyDenied`, disposition stays `read`; go to 8
 
 Unaudited reads of the projection by the process itself are snapshot reads and write
 nothing.
+
+## Trace derivation (M3)
+
+`trace(journal) -> Trace` is deterministic and emits schema v2 only. Ordering is
+*invocation-anchored*: every event derived from one invocation, from whatever table its
+data comes, is placed at `(invocation.journal_sequence, ordinal)` with the fixed ordinal
+order in [trace-v2](trace-v2.md), so the `tool_call` precedes the `command_intent` even
+though its row was written after the invocation row. Standalone message events sit at
+their own row's sequence. Identifiers, the definition-derived top level, and
+whole-journal scope are specified in trace-v2. Not built in M2b.
 
 ## Concurrency
 

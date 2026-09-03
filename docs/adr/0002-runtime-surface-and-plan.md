@@ -59,8 +59,9 @@ A policy is a deterministic, versioned function of an explicit, serializable
 clock, historical aggregates read inside the admitting transaction (so two concurrent
 refunds cannot both see "under the cap"), a validated approval if one is presented, and
 the policy set version. The full context is persisted with every decision, owned by the
-invocation that evaluated it. Offline evaluation over a trace and online evaluation at the
-boundary run the same code on the same inputs.
+invocation that evaluated it, and carried verbatim in the v2 `policy_decision` event, so an
+offline consumer holding the same policy set re-runs the same code on the same inputs; one
+without it verifies the recorded evidence and says so.
 
 Approvals are signed artefacts bound to one pending operation and validated before they
 enter the context; single use is a database constraint, not a flag. The reservation
@@ -82,7 +83,8 @@ then.
 ### 4. Trace schema v2 is built around intents and dispositions (M3)
 
 Schema v1 is frozen. v2's unit is an *intent* with a *disposition* (`new`, `replay`,
-`conflict`, `approval`, `read`, `invalid`, `legacy`). A `policy_decision` appears only when
+`conflict`, `approval`, `read`, `invalid`; plus `legacy` for lifted v1 content, which has
+its own grammar because v1 tool events and ledger pairs are not one-to-one). A `policy_decision` appears only when
 policy actually ran; a replay never re-evaluates policy and the trace says so. A denied
 intent ends at its decision and never reaches the ledger. The runtime derives v2 from the
 journal and never derives v1; v1 documents are lifted into the v2 model with disposition
@@ -124,9 +126,9 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 | Milestone | Contents |
 | :--- | :--- |
-| M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, approval validation and reservation, deterministic v2 derivation |
-| M2c | Redaction and tokenization at admission per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md) |
-| M3 | Trace schema v2 per [spec/trace-v2.md](../spec/trace-v2.md); `PolicyContext`; policy layer; invariant registry; scorecard; `ledgergate verify` |
+| M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
+| M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
+| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); `PolicyContext` and real policy sets replacing the null policy; invariant registry; scorecard; `ledgergate verify` |
 | M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call |
 | M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
 | M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |

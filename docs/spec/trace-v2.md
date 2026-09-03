@@ -40,20 +40,48 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
 - `replay` and `conflict`: no decision, no ledger pair; `invocation_resolution` names the
   operation resolved to and, for `replay`, the exact outcome that answered (so a retry
   that was told `awaiting_approval` says so even if the operation was approved later),
-  whose original decision and pair appear earlier in the same trace (a trace is derived from a whole journal; in a windowed export the reference is
-  marked `external`).
+  whose original decision and pair appear earlier in the same trace (a trace is always
+  derived from a whole journal, under one read snapshot, so every reference resolves, and
+  the model enforces it: a `new` creates a fresh operation and a fresh outcome; a `replay`,
+  `conflict` or `approval` names an operation an earlier `new` created; a `replay` or a
+  failed-verdict `approval` names the outcome that was that operation's current one at the
+  time; an `approval`, whatever its verdict, is against an operation whose current outcome is
+  pending; a produced outcome is produced exactly once, in allocation order; a `replay` never
+  carries a presentation against a pending operation, since that is an `approval`). The model also
+  ties every command intent to what it is about: the fingerprint of its `command` is its
+  `attempted_digest`, equals the operation's for `new`, `replay` and `approval` and differs
+  for `conflict`, and equals the command its `ledger_command` carries, whose `command_id`
+  is the operation and whose `call_id` is the intent's; and in a runtime trace every
+  `tool_call` and `tool_result` brackets an intent. The registry additionally requires each
+  presentation and each consumption to be referenced by at most one decision, an `approval`
+  the policy set decided to have consumed a valid artefact, any other disposition's verdict to
+  be `approval_not_applicable`, and a consumption to be recorded after its presentation.
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
-  names the operation's pending tip, an outcome produced by an *earlier* invocation, exactly
-  as a `replay` does; the `policy_decision` carries the `runtime.approval_rejected` rule and
+  names the operation's pending tip, the outcome that was *current* at the time (the latest
+  one produced before this resolution, and one whose decision was `approval_required`),
+  exactly as a `replay` names the current outcome; the `policy_decision` carries the `runtime.approval_rejected` rule and
   the verdict.
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.
 - `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error). No
-  intent, no operation, no decision. Applies identically to write and read tools.
+  intent, no operation, no decision. Applies identically to write and read tools. The
+  `tool_call`'s `arguments` is the empty object: the input was not admitted, the envelope's
+  redacted payload stays in the journal, and nothing of it is carried into a trace.
 - `read`: `read_intent`, resolution, optional decision. If no decision or the decision is
   `allow`: `read_result` with the journal position observed, head, and result digest. If
-  the decision is `deny`: no `read_result`; the `tool_result` carries the denial.
+  the decision is `deny`: no `read_result`; the `tool_result` carries the denial. A read's
+  decision is never `approval_required`: a read has no operation to approve, and a policy
+  set that returns it for a read is a configuration fault the journal refuses unrecorded.
+
+**Tool boundary.** Every runtime intent (every disposition but `legacy`) is bracketed by
+its own boundary events: the event immediately before its first event is its `tool_call`
+and the event immediately after its last is its `tool_result`, with the same `call_id`, and
+nothing else is interleaved within the intent's events (a standalone message sits at its
+own row's sequence, never inside an invocation's ordinals).
+`call_id` is not unique across a trace (a caller may retry with the same one); the
+bracketing is what ties a boundary pair to its intent. Lifted v1 content keeps v1's rule
+(one `tool_result` per `tool_call`, after it) and is not bracketed.
 
 Cardinality and order are rules of the schema description, enforced by the models as
 v1's are.
@@ -69,7 +97,7 @@ carries the inputs, not a summary of them:
 | `policy_set_version` | which rules ran (`none` for the M2b null policy) |
 | `decision` | `allow`, `deny`, `approval_required` |
 | `matched_rule`, `reason` | the rule that decided, and why. A `runtime.` prefix (`runtime.approval_rejected`) means the runtime wrote the decision without invoking the policy set, and a consumer must not attempt to recompute it from policy code |
-| `context` | the canonical serialized `PolicyContext`: principal, subject (nullable), command digest and `digest_kind`, evaluation time, and every historical aggregate value the rules read |
+| `context` | the canonical serialized `PolicyContext`, verbatim: principal, subject (nullable), command digest and `digest_kind`, evaluation time, `policy_set_version`, the command's kind, amount and currency (decimal string; nullable), every historical aggregate value the rules read, and the approval `{presentation, verdict}` if one was presented |
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
@@ -82,7 +110,12 @@ internally consistent, and must say which of the two it did.
 v1 tool events and ledger pairs are not one-to-one: one `tool_call` may be followed by
 several ledger commands, or by none. Lifting each ledger pair into a full runtime
 invocation would require inventing `tool_call`/`tool_result` events that never happened.
-Lifted content therefore uses its own grammar and never synthesizes boundary events:
+Lifted content therefore uses its own grammar and never synthesizes boundary events. A
+document is *derived* iff it carries a `journal_id`, and then has no `legacy` resolution and
+every boundary event brackets an intent; otherwise it is *lifted*, carries only `legacy`
+resolutions (possibly none: a v1 document may hold tool events or messages alone) and is not
+bracketed. The partition is by producer, not by content, so a runtime document's grammar can
+never be switched off by lifted rows:
 
 ```
 legacy_intent              intent_id, command, optional call_id from the v1 ledger_command
@@ -107,17 +140,78 @@ ledger pair replays as before.
 
 Derived identifiers are decimal, positive, prefixed, and must pass `require_identifier`:
 
-- `intent_id`: `intent-<invocation journal_sequence>`
-- `command_id`: `command-<operation journal_sequence>`
-- `call_id`: taken from the `events` row (tokenized).
+- `intent_id`: `intent-<invocation journal_sequence>`; in a derived document the model enforces
+  this grammar, that intent numbers strictly increase along the trace, and that every row an
+  invocation wrote (its produced outcome, its presentation, its consumption) has a sequence
+  strictly between the invocation's and the next invocation's, and a `new`'s operation, the
+  first row of its transaction, a sequence between the previous invocation's and its own,
+  which is what the journal's single sequence and serialized transactions guarantee; so the
+  numbers the read and consumption checks compare are witnessed, not chosen
+- `command_id`: `command-<operation journal_sequence>` (model-enforced grammar in a derived
+  document)
+- `outcome_ref`: `outcome-<outcome journal_sequence>` (on `invocation_resolution`); the model
+  enforces this grammar and, for produced outcomes, allocation order (each produced outcome's
+  number exceeds the previous one's)
+- `presentation_ref`: `presentation-<approvals journal_sequence>` (on `invocation_resolution`
+  and `policy_decision.approval`; required on an `approval` disposition, which is defined by a
+  presented artefact); model-enforced grammar
+- `consumption_ref`: `consumption-<approval_consumptions journal_sequence>`; model-enforced
+  grammar, present exactly when the verdict is `approval_valid` (a registry row checks it,
+  and that every failed verdict was decided by the runtime)
+- `call_id`: taken from the `events` row (tokenized). For an `invalid` invocation whose
+  `call_id` was not recoverable, `invalid-<invocation journal_sequence>`; its `tool` is
+  `unknown` when the envelope kept none; its `attempted_digest` is the envelope's
+  `input_digest`.
+- a standalone `message` carries the time the journal recorded it (kept in its row).
+- lifted v1 content: `intent_id` is `legacy-<v1 seq of the ledger_command>` (bounded by
+  position, since a v1 `command_id` may already use the whole identifier length),
+  `operation_id` is the v1 `command_id`, and `attempted_digest` is the command's fingerprint
+  recomputed on lift (and re-checked by the model on load, as for every command intent).
 
 `seq` is the dense enumeration of emitted events in anchored order: `(invocation
 journal_sequence, ordinal)` for runtime content, `(v1 seq, ordinal)` for lifted content,
 as defined in their grammars above. Top-level `chart` and `currencies` come from `definition`.
 
+## Ledger pairs and intents
+
+`ledger_command` and `ledger_result` keep v1's shape and carry no `intent_id`. A
+`ledger_command` belongs to the intent whose events immediately precede it in anchored
+order (its own invocation's, by construction of the ordinals); its `ledger_result` belongs
+to the same intent by `command_id`, however far away it sits (lifted v1 results may be
+separated from their commands by other v1 events). Replay of a v2 document is the v1
+replayer over the ledger pairs alone (`TraceV2.ledger_view()`); nothing else in v2 replays.
+
+## Invariants and verification
+
+`ledgergate verify <trace-or-journal>` derives (from a journal) or loads (a v1 document is
+lifted) a v2 trace and runs the invariant registry (`ledgergate.invariants.REGISTRY`) over
+it. Each invariant is a pure function of the trace grounded in a named document, and reports
+`pass`, `fail`, or `no_evidence`: a trace that does not carry what an invariant would need
+(a lifted v1 trace for the policy invariants, a chartless trace for replay) is reported as
+such and never as a pass. Several registry rows restate rules the v2 model also enforces at
+load; a document violating them fails to load rather than failing a row, and the scorecard
+then records that the loaded document satisfies them. The registry is the statement of what
+is checked; the validator is one of its mechanisms. Two rows check reads: every `read_result`
+head equals the most recent recorded `ledger_result` head (or genesis) and its cursor equals
+the largest outcome any earlier resolution referenced, since every outcome is named by the
+resolution that produced it and that resolution precedes any later read, so a stale or
+premature projection fails; and its `result_digest` is the JCS digest of the value the
+caller was served in the `tool_result`, so the served value is bound to the row (agreement
+of that value with the replayed books is not checked). A further row checks that what the
+caller was told is what the journal did, per the decision-to-outcome tables: success iff a
+read was not denied or the ledger applied, otherwise the error type of the path taken and,
+on a decided path, the decision's rule and reason as the message; an applied write's served
+head, sequence and entry equal to the ledger result's and a rejected write's served error
+equal to the ledger result's; and a replay told exactly what the producing invocation
+was told (the same result with `replayed` set, or the same error verbatim).
+The scorecard is the combined result and is itself tri-state: `fail` if any invariant
+failed, `pass` only if none failed *and at least one ran*, otherwise `no_evidence`. The
+process exits 0 for `pass`, 1 for `fail`, 3 for `no_evidence`, 2 when the source could not
+be read; a trace that carries nothing any invariant quantifies over is reported, never
+passed.
+
 ## Status
 
-The v2 schema, models, lift, derivation and replayer are **M3** deliverables. M2b builds
-the journal without deriving traces from it; this document is the contract M3 is built to,
-and nothing in it exists in code yet. The runtime will read v1 and v2, derive v2 from the
-journal, and never derive v1.
+The v2 schema (`schema/trace/v2.json`, generated from the models and checked against them
+under test), models, lift, derivation, invariant registry and `ledgergate verify` ship in
+M3. The runtime reads v1 and v2, derives v2 from the journal, and never derives v1.

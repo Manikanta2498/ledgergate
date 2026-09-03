@@ -1,0 +1,1475 @@
+{
+  "$comment": "See the TraceV2 docstring for the grammar consumers enforce.",
+  "$defs": {
+    "AccountDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "allow_negative": {
+          "default": true,
+          "title": "Allow Negative",
+          "type": "boolean"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "asset",
+            "liability",
+            "equity",
+            "revenue",
+            "expense"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account_id",
+        "kind",
+        "currency"
+      ],
+      "title": "AccountDoc",
+      "type": "object"
+    },
+    "AdvanceDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntryDraftDoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "event": {
+          "enum": [
+            "authorize",
+            "settle",
+            "dispute",
+            "resolve_dispute",
+            "cancel",
+            "fail"
+          ],
+          "title": "Event",
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "advance",
+          "default": "advance",
+          "title": "Kind",
+          "type": "string"
+        },
+        "transaction_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Transaction Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "transaction_id",
+        "event"
+      ],
+      "title": "AdvanceDoc",
+      "type": "object"
+    },
+    "AgentDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "framework": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Framework"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AgentDoc",
+      "type": "object"
+    },
+    "ApprovalRef": {
+      "additionalProperties": false,
+      "properties": {
+        "presentation_ref": {
+          "pattern": "^presentation-[1-9][0-9]*$",
+          "title": "Presentation Ref",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "approval_valid",
+            "approval_already_used",
+            "approval_not_applicable",
+            "approval_invalid",
+            "approval_expired",
+            "approval_scope_mismatch"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "presentation_ref",
+        "verdict"
+      ],
+      "title": "ApprovalRef",
+      "type": "object"
+    },
+    "CommandIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "call_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "command": {
+          "discriminator": {
+            "mapping": {
+              "advance": "#/$defs/AdvanceDoc",
+              "open_transaction": "#/$defs/OpenTransactionDoc",
+              "post": "#/$defs/PostDoc",
+              "refund": "#/$defs/RefundDoc",
+              "reverse": "#/$defs/ReverseDoc"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PostDoc"
+            },
+            {
+              "$ref": "#/$defs/ReverseDoc"
+            },
+            {
+              "$ref": "#/$defs/OpenTransactionDoc"
+            },
+            {
+              "$ref": "#/$defs/AdvanceDoc"
+            },
+            {
+              "$ref": "#/$defs/RefundDoc"
+            }
+          ],
+          "title": "Command"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "command_intent",
+          "default": "command_intent",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "intent_id",
+        "call_id",
+        "command"
+      ],
+      "title": "CommandIntent",
+      "type": "object"
+    },
+    "CurrencyDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "exponent": {
+          "maximum": 6,
+          "minimum": 0,
+          "title": "Exponent",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "exponent"
+      ],
+      "title": "CurrencyDoc",
+      "type": "object"
+    },
+    "EntryDraftDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Description",
+          "type": "string"
+        },
+        "postings": {
+          "items": {
+            "$ref": "#/$defs/PostingDoc"
+          },
+          "maxItems": 1000,
+          "minItems": 2,
+          "title": "Postings",
+          "type": "array"
+        },
+        "tags": {
+          "additionalProperties": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "maxProperties": 100,
+          "title": "Tags",
+          "type": "object"
+        }
+      },
+      "required": [
+        "postings"
+      ],
+      "title": "EntryDraftDoc",
+      "type": "object"
+    },
+    "ErrorDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "maxLength": 1024,
+          "title": "Message",
+          "type": "string"
+        },
+        "type": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ],
+      "title": "ErrorDoc",
+      "type": "object"
+    },
+    "InvocationResolution": {
+      "additionalProperties": false,
+      "description": "Exactly one per invocation: what the runtime did with it.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "attempted_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Attempted Digest",
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "new",
+            "replay",
+            "conflict",
+            "approval",
+            "read",
+            "invalid",
+            "legacy"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operation Id"
+        },
+        "outcome_ref": {
+          "anyOf": [
+            {
+              "pattern": "^outcome-[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome Ref"
+        },
+        "presentation_ref": {
+          "anyOf": [
+            {
+              "pattern": "^presentation-[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Presentation Ref"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "invocation_resolution",
+          "default": "invocation_resolution",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "intent_id",
+        "disposition",
+        "attempted_digest"
+      ],
+      "title": "InvocationResolution",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "LedgerCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Id"
+        },
+        "command": {
+          "discriminator": {
+            "mapping": {
+              "advance": "#/$defs/AdvanceDoc",
+              "open_transaction": "#/$defs/OpenTransactionDoc",
+              "post": "#/$defs/PostDoc",
+              "refund": "#/$defs/RefundDoc",
+              "reverse": "#/$defs/ReverseDoc"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PostDoc"
+            },
+            {
+              "$ref": "#/$defs/ReverseDoc"
+            },
+            {
+              "$ref": "#/$defs/OpenTransactionDoc"
+            },
+            {
+              "$ref": "#/$defs/AdvanceDoc"
+            },
+            {
+              "$ref": "#/$defs/RefundDoc"
+            }
+          ],
+          "title": "Command"
+        },
+        "command_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "ledger_command",
+          "default": "ledger_command",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "command_id",
+        "command"
+      ],
+      "title": "LedgerCommandEvent",
+      "type": "object"
+    },
+    "LedgerResultEvent": {
+      "additionalProperties": false,
+      "description": "Shape depends on ``ok``; see the schema's ``ledger_result_body`` description.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "command_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "entry_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entry Id"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorDoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "head": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Head"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "posted_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Posted At"
+        },
+        "replayed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replayed"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "sequence": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sequence"
+        },
+        "type": {
+          "const": "ledger_result",
+          "default": "ledger_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "command_id",
+        "ok"
+      ],
+      "title": "LedgerResultEvent",
+      "type": "object"
+    },
+    "LegacyIntent": {
+      "additionalProperties": false,
+      "description": "A v1 ledger command lifted on read. Carries no policy evidence, by design.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Id"
+        },
+        "command": {
+          "discriminator": {
+            "mapping": {
+              "advance": "#/$defs/AdvanceDoc",
+              "open_transaction": "#/$defs/OpenTransactionDoc",
+              "post": "#/$defs/PostDoc",
+              "refund": "#/$defs/RefundDoc",
+              "reverse": "#/$defs/ReverseDoc"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PostDoc"
+            },
+            {
+              "$ref": "#/$defs/ReverseDoc"
+            },
+            {
+              "$ref": "#/$defs/OpenTransactionDoc"
+            },
+            {
+              "$ref": "#/$defs/AdvanceDoc"
+            },
+            {
+              "$ref": "#/$defs/RefundDoc"
+            }
+          ],
+          "title": "Command"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "legacy_intent",
+          "default": "legacy_intent",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "intent_id",
+        "command"
+      ],
+      "title": "LegacyIntent",
+      "type": "object"
+    },
+    "MessageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 65536,
+          "title": "Content",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "message",
+          "default": "message",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "role",
+        "content"
+      ],
+      "title": "MessageEvent",
+      "type": "object"
+    },
+    "MoneyDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "title": "Amount",
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "title": "MoneyDoc",
+      "type": "object"
+    },
+    "OpenTransactionDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/MoneyDoc"
+        },
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "open_transaction",
+          "default": "open_transaction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "transaction_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Transaction Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "transaction_id",
+        "amount"
+      ],
+      "title": "OpenTransactionDoc",
+      "type": "object"
+    },
+    "PolicyDecision": {
+      "additionalProperties": false,
+      "description": "Carries the inputs (the whole serialized ``PolicyContext``), not a summary.",
+      "properties": {
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "consumption_ref": {
+          "anyOf": [
+            {
+              "pattern": "^consumption-[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consumption Ref"
+        },
+        "context": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Context",
+          "type": "object"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "deny",
+            "approval_required"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "matched_rule": {
+          "maxLength": 1024,
+          "title": "Matched Rule",
+          "type": "string"
+        },
+        "policy_set_version": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Policy Set Version",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 1024,
+          "title": "Reason",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "policy_decision",
+          "default": "policy_decision",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "intent_id",
+        "policy_set_version",
+        "decision",
+        "matched_rule",
+        "reason",
+        "context"
+      ],
+      "title": "PolicyDecision",
+      "type": "object"
+    },
+    "PostDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/EntryDraftDoc"
+        },
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "post",
+          "default": "post",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "draft"
+      ],
+      "title": "PostDoc",
+      "type": "object"
+    },
+    "PostingDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Account",
+          "type": "string"
+        },
+        "money": {
+          "$ref": "#/$defs/MoneyDoc"
+        },
+        "side": {
+          "enum": [
+            "debit",
+            "credit"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "side",
+        "money"
+      ],
+      "title": "PostingDoc",
+      "type": "object"
+    },
+    "ReadIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Arguments",
+          "type": "object"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "call_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "tool": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Tool",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_intent",
+          "default": "read_intent",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "intent_id",
+        "call_id",
+        "tool",
+        "arguments"
+      ],
+      "title": "ReadIntent",
+      "type": "object"
+    },
+    "ReadResult": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "cursor": {
+          "minimum": 0,
+          "title": "Cursor",
+          "type": "integer"
+        },
+        "head": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Head",
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "result_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Result Digest",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "read_result",
+          "default": "read_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "intent_id",
+        "cursor",
+        "head",
+        "result_digest"
+      ],
+      "title": "ReadResult",
+      "type": "object"
+    },
+    "RefundDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntryDraftDoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "refund",
+          "default": "refund",
+          "title": "Kind",
+          "type": "string"
+        },
+        "money": {
+          "$ref": "#/$defs/MoneyDoc"
+        },
+        "transaction_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Transaction Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "transaction_id",
+        "money"
+      ],
+      "title": "RefundDoc",
+      "type": "object"
+    },
+    "ReverseDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Description",
+          "type": "string"
+        },
+        "entry_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "reverse",
+          "default": "reverse",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "entry_id"
+      ],
+      "title": "ReverseDoc",
+      "type": "object"
+    },
+    "ToolCallEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Arguments",
+          "type": "object"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "call_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "tool": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Tool",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "call_id",
+        "tool",
+        "arguments"
+      ],
+      "title": "ToolCallEvent",
+      "type": "object"
+    },
+    "ToolResultEvent": {
+      "additionalProperties": false,
+      "description": "Shape depends on ``ok``, like ``ledger_result``: a failure says why, a success\ndoes not carry an error.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "call_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorDoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "call_id",
+        "ok"
+      ],
+      "title": "ToolResultEvent",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/Manikanta2498/ledgergate/schema/trace/v2.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "LedgerGate trace, schema v2. Consumers enforce, as this model does: every intent has\nexactly one invocation_resolution; an intent event exists iff the disposition is not\ninvalid and its kind follows the disposition (read_intent for read, legacy_intent for\nlegacy, command_intent otherwise); a policy_decision exists exactly once for new and\napproval, never for replay, conflict or legacy, at most once for read; a ledger pair\nexists iff the decision was allow on new or approval, exactly once for legacy, never\notherwise; a read_result exists iff a read was not denied; every runtime intent is\nbracketed by a tool_call immediately before and a tool_result immediately after with\nthe same call_id; events of one intent appear in ordinal order; seq is dense and\nstrictly increasing; every ledger_command has exactly one ledger_result and command_id\nis unique; every operation and outcome reference resolves to one recorded earlier, a\nreplay or failed approval names the operation's outcome current at the time, an\napproval is against a pending operation and a replay with a presentation never is, a\nproduced outcome is produced once, in allocation order; a command intent's fingerprint\nis its attempted_digest, matches the operation's for new, replay and approval and\ndiffers for conflict, and equals its\nledger_command's, whose command_id is the operation and whose call_id is the intent's;\nin a derived document every boundary event brackets an intent; a document is derived iff\nit carries a journal_id, and then has no legacy resolution, or lifted, and then has no\njournal_id and only legacy resolutions; derived\nreferences (outcome, presentation, consumption) follow their fixed grammars; in a\nderived document intent and operation ids follow theirs, intent numbers strictly\nincrease, an intent's events are contiguous, and every row an invocation wrote has a\nsequence strictly between its own and the next invocation's.",
+  "properties": {
+    "agent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentDoc"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "chart": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/AccountDoc"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Chart"
+    },
+    "currencies": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/CurrencyDoc"
+          },
+          "maxItems": 1000,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Currencies"
+    },
+    "ended_at": {
+      "format": "date-time",
+      "title": "Ended At",
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "command_intent": "#/$defs/CommandIntent",
+            "invocation_resolution": "#/$defs/InvocationResolution",
+            "ledger_command": "#/$defs/LedgerCommandEvent",
+            "ledger_result": "#/$defs/LedgerResultEvent",
+            "legacy_intent": "#/$defs/LegacyIntent",
+            "message": "#/$defs/MessageEvent",
+            "policy_decision": "#/$defs/PolicyDecision",
+            "read_intent": "#/$defs/ReadIntent",
+            "read_result": "#/$defs/ReadResult",
+            "tool_call": "#/$defs/ToolCallEvent",
+            "tool_result": "#/$defs/ToolResultEvent"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/MessageEvent"
+          },
+          {
+            "$ref": "#/$defs/ToolCallEvent"
+          },
+          {
+            "$ref": "#/$defs/ToolResultEvent"
+          },
+          {
+            "$ref": "#/$defs/CommandIntent"
+          },
+          {
+            "$ref": "#/$defs/ReadIntent"
+          },
+          {
+            "$ref": "#/$defs/LegacyIntent"
+          },
+          {
+            "$ref": "#/$defs/InvocationResolution"
+          },
+          {
+            "$ref": "#/$defs/PolicyDecision"
+          },
+          {
+            "$ref": "#/$defs/LedgerCommandEvent"
+          },
+          {
+            "$ref": "#/$defs/LedgerResultEvent"
+          },
+          {
+            "$ref": "#/$defs/ReadResult"
+          }
+        ]
+      },
+      "maxItems": 200000,
+      "title": "Events",
+      "type": "array"
+    },
+    "journal_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Journal Id"
+    },
+    "metadata": {
+      "additionalProperties": {
+        "maxLength": 1024,
+        "type": "string"
+      },
+      "maxProperties": 100,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "policy_set_version": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+      "title": "Policy Set Version",
+      "type": "string"
+    },
+    "scenario_id": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scenario Id"
+    },
+    "schema_version": {
+      "const": "2",
+      "default": "2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "trace_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+      "title": "Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "started_at",
+    "ended_at",
+    "policy_set_version",
+    "events"
+  ],
+  "title": "TraceV2",
+  "type": "object"
+}

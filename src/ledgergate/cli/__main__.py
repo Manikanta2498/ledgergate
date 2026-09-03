@@ -29,11 +29,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     for name, help_text in (
         ("run", "run an agent against the corpus and score it"),
-        ("verify", "verify an existing trace against the corpus"),
         ("record", "record a cassette from a live agent run"),
         ("report", "render a result.json into markdown, junit or sarif"),
     ):
         sub.add_parser(name, help=help_text)
+
+    verify = sub.add_parser(
+        "verify",
+        help="check a trace (v1 or v2 JSON) or a journal file against every invariant",
+    )
+    verify.add_argument("source", help="path to a trace document or a journal file")
+    verify.add_argument("--json", action="store_true", help="print the scorecard as JSON")
+    verify.add_argument(
+        "--emit-trace",
+        type=Path,
+        default=None,
+        help="also write the v2 trace that was checked (derived from a journal, or lifted)",
+    )
+    verify.set_defaults(handler=verify_command)
 
     journal = sub.add_parser("journal", help="inspect a journal file")
     journal_sub = journal.add_subparsers(dest="journal_command", metavar="{dump,pending}")
@@ -189,6 +202,55 @@ def journal_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def verify_command(args: argparse.Namespace) -> int:
+    """Exit 0 when at least one invariant ran and none failed, 1 when any failed, 2 when the
+    source cannot be read, 3 when nothing could be checked (``no_evidence``: a trace that
+    carries nothing any invariant quantifies over is never a pass)."""
+    from ledgergate.derive import DerivationError
+    from ledgergate.derive import trace as derive_trace
+    from ledgergate.invariants import check
+    from ledgergate.trace import TraceError, dump_v2, load_any
+
+    source = Path(args.source)
+    try:
+        with source.open("rb") as fh:
+            header = fh.read(16)
+    except OSError as exc:
+        print(f"cannot read {source}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        if header.startswith(b"SQLite format 3"):
+            trace = derive_trace(str(source))
+        else:
+            trace = load_any(source)
+    except (DerivationError, TraceError, sqlite3.Error, OSError, ValueError, KeyError) as exc:
+        # pydantic's ValidationError is a ValueError: a journal whose rows the grammar cannot
+        # express is reported, not tracebacked
+        print(f"cannot verify {source}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        card = check(trace)
+    except Exception as exc:  # an invariant that raises is a bug in the registry, not a verdict
+        print(
+            f"cannot verify {source}: invariant raised {type(exc).__name__}: {exc}", file=sys.stderr
+        )
+        return 2
+    if args.emit_trace is not None:
+        args.emit_trace.write_text(dump_v2(trace), encoding="utf-8")
+    if args.json:
+        print(json.dumps(card.as_json(), indent=2, sort_keys=True))
+    else:
+        for r in card.results:
+            print(f"{r.status:<12} {r.name}")
+            for f in r.findings:
+                where = f" [{f.intent_id}]" if f.intent_id else ""
+                print(f"             {f.severity}{where}: {f.message}")
+        print(
+            f"{card.status.upper()}: {card.intents} intents, {card.ledger_commands} ledger commands"
+        )
+    return {"pass": 0, "fail": 1, "no_evidence": 3}[card.status]
+
+
 def journal_dump(args: argparse.Namespace) -> int:
     """Rows in ``journal_sequence`` order, one JSON object per line, read-only."""
     try:
@@ -227,7 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.parse_args(["journal", "--help"])
         return 0
 
-    print(f"'{args.command}' is not implemented yet (milestone M3).", file=sys.stderr)
+    print(f"'{args.command}' is not implemented yet (milestones M5 and M6).", file=sys.stderr)
     return 2
 
 

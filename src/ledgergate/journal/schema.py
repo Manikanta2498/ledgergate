@@ -18,9 +18,8 @@ from pathlib import Path
 
 # ruff: noqa: S608 - table names are interpolated from FACT_TABLES, a module constant, never input
 
-SCHEMA_VERSION = (
-    3  # 2: definition.token_check; 3: definition.policy_config, approvals identity fields nullable
-)
+# 2: token_check; 3: policy_config, nullable approval identity; 4: message rows carry `at`
+SCHEMA_VERSION = 4
 
 FACT_TABLES = (
     "definition",
@@ -131,7 +130,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS decisions (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
-    invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence),
+    invocation INTEGER NOT NULL UNIQUE REFERENCES invocations(journal_sequence),
     operation INTEGER REFERENCES operations(journal_sequence),
     context TEXT NOT NULL,
     policy_set_version TEXT NOT NULL,

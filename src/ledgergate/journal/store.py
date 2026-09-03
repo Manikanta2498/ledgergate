@@ -458,7 +458,11 @@ class Journal:
                     None,
                     "message",
                     json.dumps(
-                        {"role": role, "content": self.admitter.redact_text(content)},
+                        {
+                            "role": role,
+                            "content": self.admitter.redact_text(content),
+                            "at": _Effects.aware_now(self.clock).isoformat(),
+                        },
                         sort_keys=True,
                     ),
                 ),
@@ -577,6 +581,7 @@ class Journal:
             decision = Decision("deny", "runtime.approval_rejected", verdict)
         else:
             decision = self._guarded(lambda: self.policy.evaluate(context))
+            self._refuse_runtime_namespace(decision)
             if decision.decision == "approval_required" and verdict == "approval_valid":
                 raise ConfigurationError(
                     "policy set asked for approval after a valid approval was consumed;"
@@ -706,6 +711,12 @@ class Journal:
                 else {"presentation": presentation, "verdict": verdict},
             )
             decision = self._guarded(lambda: self.policy.evaluate(context))
+            self._refuse_runtime_namespace(decision)
+            if decision.decision == "approval_required":
+                raise ConfigurationError(
+                    "a read cannot await approval: the policy set returned approval_required"
+                    " for a read intent, which has no operation to approve"
+                )
             self._decision(inv_seq, None, context, decision, presentation, verdict)
             if decision.decision != "allow":
                 response = Response(
@@ -927,6 +938,15 @@ class Journal:
             ),
         )
         return seq
+
+    def _refuse_runtime_namespace(self, decision: Decision) -> None:
+        """``runtime.`` rules are written by the runtime alone; a set that names one is
+        misconfigured, and the fault is unrecorded like every other configuration fault."""
+        if decision.matched_rule.startswith("runtime."):
+            raise ConfigurationError(
+                f"policy set {self.policy.version!r} returned rule {decision.matched_rule!r};"
+                " the runtime. namespace is reserved for the runtime's own decisions"
+            )
 
     def _guarded(self, call: Callable[[], T]) -> T:
         """A policy set is a pure function of its context; raising is a bug in the set, an

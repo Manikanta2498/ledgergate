@@ -23,6 +23,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
 from ledgergate.trace.models import Trace
+from ledgergate.trace.v2 import TraceV2, lift
 
 SCHEMA_RELATIVE = Path("schema") / "trace" / "v1.json"
 
@@ -94,6 +95,34 @@ def load_trace(source: str | bytes | Path) -> Trace:
         raise TraceError(
             [f"/{'/'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()]
         ) from None
+
+
+def load_any(source: str | bytes | Path) -> TraceV2:
+    """Load a v1 or v2 document as v2: a v1 document is lifted under the legacy grammar."""
+    text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
+    if isinstance(text, bytes):
+        text = text.decode("utf-8")
+    try:
+        version = json.loads(text).get("schema_version")
+    except (ValueError, AttributeError) as exc:
+        raise TraceError([f"/: not a JSON object: {exc}"]) from None
+    if version == "1":
+        return lift(load_trace(text))
+    if version != "2":
+        raise TraceError([f"/schema_version: expected '1' or '2', got {version!r}"])
+    try:
+        return TraceV2.model_validate_json(text)
+    except ValidationError as exc:
+        raise TraceError(
+            [f"/{'/'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()]
+        ) from None
+
+
+def dump_v2(trace: TraceV2) -> str:
+    """Canonical text form, as :func:`dump_trace` is for v1: sorted keys, two-space indent,
+    trailing newline, no NaN."""
+    doc = trace.model_dump(mode="json", exclude_none=True)
+    return json.dumps(doc, indent=2, sort_keys=True, allow_nan=False) + "\n"
 
 
 def dump_trace(trace: Trace) -> str:

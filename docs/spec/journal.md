@@ -127,10 +127,10 @@ All strictly append-only. No row is ever updated or deleted.
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message (present iff `rejected`; a `denied` or `awaiting_approval` outcome's explanation is its decision's rule and reason), `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the outcome row this invocation's response was rendered from, or, for a failed approval verdict, the pending tip the operation was left at), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
-| `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row iff the verdict is `approval_valid` (a `CHECK`), and triggers require every consumption to reference a presentation whose checks passed, with the same `approval_id` and `invocation`, and every decision to reference the presentation its own invocation made (and none when it made none); `consumption` is `UNIQUE` across decisions. |
+| `decisions` | `invocation` (`UNIQUE`: one evaluation per invocation), `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row iff the verdict is `approval_valid` (a `CHECK`), and triggers require every consumption to reference a presentation whose checks passed, with the same `approval_id` and `invocation`, and every decision to reference the presentation its own invocation made (and none when it made none); `consumption` is `UNIQUE` across decisions. |
 | `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the `journal_id` *as presented* (so a foreign one is recoverable from the row), the logical `approval_id` from the artefact, the approver label (signed, not authenticated until M8), bound `fingerprint`, bound tokenized `key`, the display fields subject (the command's stored `transaction_id` if it has one, a fixed rule of `ledgergate approve` distinct from `PolicyContext.subject`, which the policy set defines), amount and currency (recorded, not compared), a `verified` flag, and the rule, enforced by `CHECK`, that `approval_id`, approver, `key` and the display fields are stored only when the signature verified, since until then they are the presenter's words and not the approver's ([identifiers-and-redaction](identifiers-and-redaction.md), *Approval artefact fields*), `issued_at`, `expires_at`, signature, and the **check result** of the pure checks 1 to 3 (`checks_passed`, `approval_invalid`, `approval_expired`, `approval_scope_mismatch`, or `approval_not_applicable`). The *final verdict*, which also depends on check 4 (consumption), lives on the `decisions` row that considered this presentation; a row written before a check cannot carry that check's result. Presenting the same artefact twice appends two rows. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse: the row is written during validation, before the decision exists. |
-| `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own transaction, allocator row included, and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
+| `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own transaction, allocator row included, and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message (role, redacted content, and the time it was recorded). The shape of every row body is part of the schema contract: a body change is a `schema_version` bump, so a build never reads a body it cannot parse; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
 | `reads` | For read tools: the `journal_sequence` and head the projection was at when served, and the result digest. |
 
 ## Invariants
@@ -278,7 +278,7 @@ the audit fact.
 | :--- | :--- | :--- |
 | `allow` | `applied` or `rejected`, from the core | per the core's result |
 | `deny` | `denied` (terminal) | `ok=false`, `PolicyDenied`, rule and reason |
-| `approval_required` | `awaiting_approval` (pending) | `ok=false`, `ApprovalRequired`, the rule that asked |
+| `approval_required` | `awaiting_approval` (pending) | `ok=false`, `ApprovalRequired`, message `matched_rule: reason` |
 
 This closes invariant 2: every new operation receives its first outcome in the
 transaction that created it, whatever policy said.
@@ -289,7 +289,7 @@ fixed here rather than left to policy authors:
 
 | Approval verdict | Policy decision | Outcome appended | Operation afterwards | `tool_result` |
 | :--- | :--- | :--- | :--- | :--- |
-| any failed verdict (not consumed) | `deny` written by the runtime, `matched_rule = runtime.approval_rejected`, reason = the verdict; the policy set is not invoked | **none appended** | still pending at its existing `awaiting_approval` tip; the response row names that tip; a later correct approval can complete it. Appending nothing is what makes a plain retry replay what the operation's *own* request was told (`ApprovalRequired`), never a verdict on an artefact it did not present | `ok=false`, `ApprovalRejected`, the verdict |
+| any failed verdict (not consumed) | `deny` written by the runtime, `matched_rule = runtime.approval_rejected`, reason = the verdict; the policy set is not invoked | **none appended** | still pending at its existing `awaiting_approval` tip; the response row names that tip; a later correct approval can complete it. Appending nothing is what makes a plain retry replay what the operation's *own* request was told (`ApprovalRequired`), never a verdict on an artefact it did not present | `ok=false`, `ApprovalRejected`, message `runtime.approval_rejected: <verdict>` (every policy-path error message is `matched_rule: reason`) |
 | `approval_valid` (consumed) | `deny` (some *other* rule refused) | **`denied`** | terminal | `ok=false`, `PolicyDenied`, rule and reason |
 | `approval_valid` (consumed) | `approval_required` | fatal configuration error at runtime: transaction rolled back, nothing recorded, operator alerted (see *Failures the journal cannot record*); the operation stays `awaiting_approval` and the artefact stays unconsumed | unchanged | MCP error |
 | `approval_valid` (consumed) | `allow` | `applied` or `rejected` from the core | terminal | per the core's result |
@@ -462,7 +462,7 @@ fault of this process's injected effects (an id generator that repeats an id the
 already holds or produces an invalid one, a clock that returns a naive datetime; these are
 not verdicts on the command and must never spend its key), a transport-level I-JSON
 violation (a number outside the JCS-safe range, a non-finite
-double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval, or a
+double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the
@@ -529,7 +529,7 @@ nothing.
 
 ## Trace derivation (M3)
 
-`trace(journal) -> Trace` is deterministic and emits schema v2 only. Ordering is
+`trace(journal) -> TraceV2` is deterministic and emits schema v2 only. Ordering is
 *invocation-anchored*: every event derived from one invocation, from whatever table its
 data comes, is placed at `(invocation.journal_sequence, ordinal)` with the fixed ordinal
 order in [trace-v2](trace-v2.md), so the `tool_call` precedes the `command_intent` even
@@ -537,8 +537,8 @@ though its row was written after the invocation row. `invocation_resolution` nam
 exact outcome from `invocation_responses`, never "the operation's current outcome", so a
 replay that answered `awaiting_approval` still says so after the operation was later
 approved. Standalone message events (rows with a null `invocation`) sit at their own row's sequence. Identifiers, the
-definition-derived top level, and whole-journal scope are specified in trace-v2. Not built
-in M2b.
+definition-derived top level, and whole-journal scope are specified in trace-v2. Built in
+M3 as `ledgergate.derive.trace`, a read-only, key-free derivation.
 
 ## Concurrency
 

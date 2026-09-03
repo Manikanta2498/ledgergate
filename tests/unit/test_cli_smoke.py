@@ -24,14 +24,19 @@ def test_no_command_prints_help_and_succeeds(capsys: pytest.CaptureFixture[str])
 
 
 def test_unimplemented_command_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["verify"]) == 2
+    assert main(["run"]) == 2
     assert "not implemented yet" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("command", ["run", "verify", "record", "report"])
+@pytest.mark.parametrize("command", ["run", "record", "report"])
 def test_every_documented_subcommand_parses(command: str) -> None:
     args = build_parser().parse_args([command])
     assert args.command == command
+
+
+def test_verify_parses_with_a_source() -> None:
+    args = build_parser().parse_args(["verify", "trace.json", "--json"])
+    assert args.command == "verify" and args.json and args.source == "trace.json"
 
 
 def test_journal_dump_prints_every_row_in_order(

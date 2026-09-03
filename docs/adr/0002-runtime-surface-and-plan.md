@@ -80,7 +80,7 @@ non-optional layer whose module does not exist; M2b writes it as an optional lay
 final in shape and passes on day one.
 
 `journal` imports `sqlite3`; the core still may not; `ledgergate.derive` (M3) is the
-`trace(journal) -> Trace` derivation and depends on both siblings. This supersedes the
+`trace(journal) -> TraceV2` derivation and depends on both siblings. This supersedes the
 layer line in ADR-0001, which predates `trace`.
 
 ### 2. Authority is a pure layer with explicit inputs (M3)
@@ -170,8 +170,9 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 ## Consequences
 
-- One durable truth, strictly append-only. Traces are a function of it; the v2 replayer
-  checks a journal against its own projection.
+- One durable truth, strictly append-only. Traces are a function of it; `verify` replays
+  a derived trace's ledger pairs and checks every recorded read against the head and cursor
+  the books were at.
 - A journal is bound to one ledger definition. Reconfiguring means a new journal; migration
   is an explicit, replayed operation.
 - Policies are versioned from day one: the version is in every decision row and every v2

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from tests.unit.journal.support import CHART, balance, count, open_txn, post, rows
@@ -238,7 +239,7 @@ class TestInvalidAdmission:  # family 2
             (
                 {"tool": "post", "call_id": "c", "key": "k", "arguments": {}, "bogus": 1},
                 "unknown_field",
-                "bogus",
+                "$",
             ),
             (
                 {"tool": "balance", "call_id": "c", "key": "k", "arguments": {}},
@@ -582,11 +583,19 @@ class TestDefinition:
                 journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=Other()
             )
 
-    def test_open_without_definition_fails(self, tmp_path: object) -> None:
-        with pytest.raises(JournalError, match="no definition"):
-            Journal.open(
-                f"{tmp_path}/empty.journal", clock=SteppingClock(EPOCH), ids=SequentialIds()
-            )
+    def test_open_never_manufactures_a_journal(self, tmp_path: object) -> None:
+        missing = f"{tmp_path}/empty.journal"
+        with pytest.raises(JournalError, match="cannot open"):
+            Journal.open(missing, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert not Path(missing).exists()
+        empty = f"{tmp_path}/schema-only.journal"
+        sqlite3.connect(empty).close()  # a file that is a database but not a journal
+        with pytest.raises(JournalError, match=r"not a journal|no definition"):
+            Journal.open(empty, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        not_db = f"{tmp_path}/text.journal"
+        Path(not_db).write_text("hello")
+        with pytest.raises(JournalError, match=r"not a database|not a journal"):
+            Journal.open(not_db, clock=SteppingClock(EPOCH), ids=SequentialIds())
 
 
 class TestDecisionToOutcome:
@@ -943,11 +952,19 @@ class TestRedactionSeam:
                 "arguments": {"card": "4111"},
             }
         )
-        (inv,) = rows(raw, "invocations")
-        assert inv[8] == "tok_16"
+        j.handle({"tool": "post", "call_id": "c2", "key": "k", "arguments": {}, "SSN 123-45": 1})
+        first, _second = rows(raw, "invocations")
+        assert first[8] == "tok_16"
         envelope = json.loads(rows(raw, "events")[0][3])
         assert envelope["call_id"] == "tok_16" and envelope["payload"] == "[redacted]"
         assert "4111" not in json.dumps(envelope)
+        # an unknown member name is the caller's: it appears in no row
+        everything = " ".join(json.dumps(r, default=str) for r in rows(raw, "events"))
+        assert "SSN" not in everything and "123-45" not in everything
+        assert json.loads(rows(raw, "events")[2][3])["error"] == {
+            "code": "unknown_field",
+            "path": "$",
+        }
         j.close()
 
     def test_open_refuses_an_admitter_with_a_different_token_key(

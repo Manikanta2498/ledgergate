@@ -287,15 +287,17 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
-**Three redaction entry points, one seam.** The admitter sees `arguments` through
-`admit`. Three kinds of free text bypass `admit`: the core's own error messages
+**Four redaction entry points, one seam.** The admitter sees `arguments` through
+`admit`. Four kinds of free text bypass `admit`: the core's own error messages
 (`outcomes.error_message`, the outbound event's `error.message`), which can echo a
 caller-supplied identifier; the `content` of standalone message events; and account
 names in the definition; and the failure envelope's bounded payload, which is the whole
 rejected input serialized as an untyped blob. The `Admitter` protocol therefore also has
 `redact_text`, called at exactly those four sites, and `tokenize_identifier`, called on the
-envelope's recovered `call_id` (the one identifier a rejected request can still yield). From
-M2b the identity implementation returns its input. M2c changes the implementation, not the call sites. The admitter's
+envelope's recovered `call_id` (the one identifier a rejected request can still yield). The
+admission error's `path` is never caller-controlled: it is a literal field path, and for an
+unknown member it is `$`, since the member name is the caller's and belongs in the redacted
+payload, not the error. From M2b the identity implementation returns its input. M2c changes the implementation, not the call sites. The admitter's
 `token_domain` and `token_key_version` are written into the definition at creation and
 compared at open, so a journal is never read with a different token key.
 
@@ -424,7 +426,7 @@ another presentation row is appended, nothing is consumed). A retry of a committ
 is a fresh read. None of these apply anything twice. Every path from step 4 onward that created an operation appends an
 outcome in the same transaction (invariant 2).
 
-**Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
+**Failures the journal cannot record.** `SQLITE_BUSY` past the connection's busy timeout (five seconds), a constraint
 violation other than the approval consumption `UNIQUE`, an integrity failure at step 2, a
 fault of this process's injected effects (an id generator that repeats an id the ledger
 already holds or produces an invalid one, a clock that returns a naive datetime; these are

@@ -153,8 +153,11 @@ class IdentityAdmitter:
     def admit(self, value: Any, scope: AdmissionScope) -> Request:
         if not isinstance(value, dict):
             raise AdmissionError("not_an_object")
-        if extra := set(value) - {"tool", "arguments", "call_id", "key", "approval"}:
-            raise AdmissionError("unknown_field", sorted(extra)[0])
+        if set(value) - {"tool", "arguments", "call_id", "key", "approval"}:
+            # The offending member name is caller-controlled and unbounded; it is not
+            # repeated in the path. It is recoverable from the envelope payload, which
+            # passes through the redactor and the byte bound.
+            raise AdmissionError("unknown_field", "$")
         tool = _str_field(value, "tool")
         if tool not in TOOLS:
             raise AdmissionError("unknown_tool", "tool")

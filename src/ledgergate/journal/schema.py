@@ -13,6 +13,7 @@ any fact table, ever.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 # ruff: noqa: S608 - table names are interpolated from FACT_TABLES, a module constant, never input
 
@@ -219,10 +220,26 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_append_only_triggers("journal"))
 
 
-def connect(path: str) -> sqlite3.Connection:
-    """Open the journal file with the pragmas the protocol depends on."""
-    conn = sqlite3.connect(path, isolation_level=None)  # explicit BEGIN IMMEDIATE below
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA synchronous = FULL")
+BUSY_TIMEOUT_SECONDS = 5.0
+"""How long a write waits for the lock before the attempt is an unrecorded failure."""
+
+
+def connect(path: str, *, create: bool = True) -> sqlite3.Connection:
+    """Open the journal file with the pragmas the protocol depends on.
+
+    With ``create=False`` a missing file is an error rather than a new empty database, so
+    ``open()`` never manufactures a journal by accident.
+    """
+    if create:
+        conn = sqlite3.connect(path, isolation_level=None, timeout=BUSY_TIMEOUT_SECONDS)
+    else:
+        uri = Path(path).resolve().as_uri() + "?mode=rw"
+        conn = sqlite3.connect(uri, uri=True, isolation_level=None, timeout=BUSY_TIMEOUT_SECONDS)
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA synchronous = FULL")
+    except sqlite3.Error:
+        conn.close()  # a file that is not a database fails here, lazily
+        raise
     return conn

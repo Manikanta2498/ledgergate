@@ -256,13 +256,21 @@ class Journal:
         policy: PolicySet | None = None,
     ) -> Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
-        self._conn = connect(path)
-        create_schema(self._conn)
-        row = self._conn.execute(
-            "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-            " token_key_version, approval_key, chart, currencies, schema_version FROM definition"
-        ).fetchone()
         try:
+            self._conn = connect(path, create=False)
+        except sqlite3.Error as exc:
+            raise JournalError(f"cannot open journal at {path}: {exc}") from exc
+        try:
+            # Read the definition before touching the file: a journal from another schema
+            # version must be refused, not upgraded in place.
+            try:
+                row = self._conn.execute(
+                    "SELECT journal_id, codec_version, policy_set_version, token_domain,"
+                    " token_key_version, approval_key, chart, currencies, schema_version"
+                    " FROM definition"
+                ).fetchone()
+            except sqlite3.Error as exc:
+                raise JournalError(f"not a journal: {exc}") from exc
             if row is None:
                 raise JournalError("no definition; use create()")
             if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
@@ -292,7 +300,7 @@ class Journal:
                 self._rebuild()
             finally:
                 self._conn.execute("COMMIT")
-        except JournalError:
+        except (JournalError, sqlite3.Error):
             self._conn.close()
             raise
         return self

@@ -235,7 +235,7 @@ pass         read_observed_the_recorded_head
 pass         caller_was_told_what_happened
 pass         read_result_binds_the_served_value
 no_evidence  legacy_carries_no_policy_evidence
-PASS: 8 intents, 3 ledger commands
+PASS: 7 intents, 3 ledger commands
 ```
 
 **Redaction and tokenization (M2c).** No caller identifier or free text has to reach disk.

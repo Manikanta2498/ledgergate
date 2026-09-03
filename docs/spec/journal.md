@@ -278,7 +278,7 @@ the audit fact.
 | :--- | :--- | :--- |
 | `allow` | `applied` or `rejected`, from the core | per the core's result |
 | `deny` | `denied` (terminal) | `ok=false`, `PolicyDenied`, rule and reason |
-| `approval_required` | `awaiting_approval` (pending) | `ok=false`, `ApprovalRequired`, the rule that asked |
+| `approval_required` | `awaiting_approval` (pending) | `ok=false`, `ApprovalRequired`, message `matched_rule: reason` |
 
 This closes invariant 2: every new operation receives its first outcome in the
 transaction that created it, whatever policy said.
@@ -289,7 +289,7 @@ fixed here rather than left to policy authors:
 
 | Approval verdict | Policy decision | Outcome appended | Operation afterwards | `tool_result` |
 | :--- | :--- | :--- | :--- | :--- |
-| any failed verdict (not consumed) | `deny` written by the runtime, `matched_rule = runtime.approval_rejected`, reason = the verdict; the policy set is not invoked | **none appended** | still pending at its existing `awaiting_approval` tip; the response row names that tip; a later correct approval can complete it. Appending nothing is what makes a plain retry replay what the operation's *own* request was told (`ApprovalRequired`), never a verdict on an artefact it did not present | `ok=false`, `ApprovalRejected`, the verdict |
+| any failed verdict (not consumed) | `deny` written by the runtime, `matched_rule = runtime.approval_rejected`, reason = the verdict; the policy set is not invoked | **none appended** | still pending at its existing `awaiting_approval` tip; the response row names that tip; a later correct approval can complete it. Appending nothing is what makes a plain retry replay what the operation's *own* request was told (`ApprovalRequired`), never a verdict on an artefact it did not present | `ok=false`, `ApprovalRejected`, message `runtime.approval_rejected: <verdict>` (every policy-path error message is `matched_rule: reason`) |
 | `approval_valid` (consumed) | `deny` (some *other* rule refused) | **`denied`** | terminal | `ok=false`, `PolicyDenied`, rule and reason |
 | `approval_valid` (consumed) | `approval_required` | fatal configuration error at runtime: transaction rolled back, nothing recorded, operator alerted (see *Failures the journal cannot record*); the operation stays `awaiting_approval` and the artefact stays unconsumed | unchanged | MCP error |
 | `approval_valid` (consumed) | `allow` | `applied` or `rejected` from the core | terminal | per the core's result |

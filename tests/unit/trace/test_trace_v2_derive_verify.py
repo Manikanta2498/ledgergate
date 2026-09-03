@@ -480,7 +480,7 @@ class TestVerifyCli:
         assert "PASS:" in text
         assert main(["verify", str(out), "--json"]) == 0
         card = json.loads(capsys.readouterr().out)
-        assert card["passed"] is True and card["intents"] == 8
+        assert card["passed"] is True and card["intents"] == 7  # the invalid call is no intent
 
     def test_verify_fails_on_tampered_trace_and_exits_2_on_garbage(
         self, journal_path: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1767,3 +1767,31 @@ class TestEleventhReviewFindings:
         assert tr["type"] == "tool_result" and tr["result"]["head"] == lr["head"]
         tr["result"]["head"] = "e" * 64
         assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+
+
+class TestTwelfthReviewFindings:
+    def test_denied_read_message_must_carry_rule_and_reason(self, tmp_path: Path) -> None:
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class DenyReads(ThresholdPolicySet):
+            def evaluate(self, context: PolicyContext) -> Decision:
+                if context.digest_kind == "request":
+                    return Decision("deny", f"{self.version}.no_reads", "reads are refused")
+                return super().evaluate(context)
+
+        path = str(tmp_path / "dr.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=DenyReads(version="d", gated_reads=frozenset({"balance"})),
+        )
+        j.handle({"tool": "balance", "call_id": "c", "arguments": {"account": "cash"}})
+        j.close()
+        doc = derive(path).model_dump(mode="json")
+        tr = next(e for e in doc["events"] if e["type"] == "tool_result")
+        assert tr["error"]["message"] == "d.no_reads: reads are refused"
+        tr["error"]["message"] = "other.rule: swapped"
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["caller_was_told_what_happened"] == "fail"

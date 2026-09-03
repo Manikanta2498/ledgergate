@@ -66,6 +66,7 @@ class InvariantResult:
 class Scorecard:
     results: tuple[InvariantResult, ...]
     intents: int
+    """Admitted invocations: an ``invalid`` invocation yields a resolution but no intent."""
     ledger_commands: int
 
     @property
@@ -541,6 +542,19 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
         elif r.disposition == "read":
             denied = d is not None and d.decision == "deny"
             expected_ok, expected_error = not denied, "PolicyDenied" if denied else None
+            if denied:
+                assert d is not None
+                message = None if tr.error is None else tr.error.message
+                if message != f"{d.matched_rule}: {d.reason}":
+                    out.append(
+                        Finding(
+                            "caller_was_told_what_happened",
+                            "error",
+                            f"{r.intent_id}: denial message does not carry the decision's rule"
+                            " and reason",
+                            r.intent_id,
+                        )
+                    )
         elif r.disposition == "replay":
             producer = producer_of.get(r.outcome_ref or "")
             told = results.get(producer or "")
@@ -561,7 +575,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
             exact = (
                 tr.result == {**told.result, "replayed": True}
                 if told.ok and isinstance(told.result, dict)
-                else tr.error == told.error
+                else (tr.ok == told.ok and tr.result == told.result and tr.error == told.error)
             )
             if not exact:
                 out.append(
@@ -785,7 +799,7 @@ def check(trace: TraceV2, registry: Sequence[Invariant] = REGISTRY) -> Scorecard
         results.append(InvariantResult(inv.name, status, findings))
     return Scorecard(
         tuple(results),
-        intents=len(trace.resolutions()),
+        intents=sum(r.disposition != "invalid" for r in trace.resolutions()),
         ledger_commands=sum(isinstance(e, LedgerResultEvent) for e in trace.events),
     )
 

@@ -34,20 +34,29 @@ you whether debits equal credits. That is an assertion, not an opinion.
 Deterministic invariants over a versioned execution trace.
 
 ```
-agent run ──▶ trace (schema v1) ──▶ invariants ──▶ result.json ──▶ md | junit | sarif
+                  offline: prove it before deploy
+agent run ──▶ trace (schema v1) ──▶ invariants + policy ──▶ result.json ──▶ md | junit | sarif
                     ▲
-       adapters: anthropic | openai | langgraph
+       adapters: OpenTelemetry GenAI | openai | anthropic | langgraph
+
+                  online: enforce it in production
+MCP client ──▶ ledgergate serve ──▶ policy ──▶ ledger ──▶ trace (same schema)
 ```
 
 The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON Schema
 2020-12 document, not our harness. Any agent that emits the schema can be checked,
 whatever framework it uses.
 
-**What exists today is the left half of this pipeline:** the ledger core, the trace
-schema, a recorder that produces traces from a ledger session, and a replayer that
-re-executes a trace's commands and reports every divergence from what it recorded. The
-invariant registry, corpus and CLI land in M3, the adapters in M4. The gates that keep all
-of it honest run in CI on every pull request and every push to `main`.
+The same ledger, policy and trace serve both paths. Offline, a recorded run is checked
+before an agent ships. Online, the MCP server is the agent's money-moving tool, and every
+call is checked at the boundary and recorded in the same format, so production traces
+feed straight back into the offline checks.
+
+**What exists today:** the ledger core, the trace schema, a recorder that produces traces
+from a ledger session, and a replayer that re-executes a trace's commands and reports
+every divergence from what it recorded. Invariants and policy land in M3, the MCP runtime
+in M4. The gates that keep all of it honest run in CI on every pull request and every push
+to `main`.
 
 ## The trace schema
 
@@ -199,11 +208,17 @@ These are enforced by CI gates, not by convention:
 | :--- | :--- | :--- |
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
-| M2 | Trace schema v1 (**done**), SQLite idempotency, fail-closed redaction | in progress |
-| M3 | Invariant registry, corpus, CLI, first scorecard | |
-| M4 | Agent runner, adapters, recorded cassettes | |
-| M5 | Full corpus, SARIF/JUnit, security workflows, mutation gate | |
-| M6 | Release, drift table, conformance levels | |
+| **M2a** | Trace schema v1, recorder, replay | **done** |
+| M2b | Durable command log (SQLite, WAL, `UNIQUE` key); ledger rebuilds by replay; idempotency survives restart | next |
+| M2c | Fail-closed redaction: allowlist, deterministic tokens, redacted traces still replay | |
+| M3 | Invariant registry over traces; **policy layer** (limits, approval thresholds, velocity caps); scorecard; `ledgergate verify` | |
+| M4 | **`ledgergate serve`: MCP runtime.** The ledger as tools any MCP client can call, with idempotency required, policy enforced at the call boundary, every call traced | |
+| M5 | OpenTelemetry GenAI adapter (primary); thin framework wrappers; recorded cassettes | |
+| M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |
+| M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
+
+The reasoning behind this order, and what was deliberately left out, is in
+[ADR-0002](docs/adr/0002-runtime-surface-and-plan.md).
 
 ## Development
 

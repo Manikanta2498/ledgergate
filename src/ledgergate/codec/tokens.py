@@ -76,7 +76,10 @@ class Tokenizer:
         is nothing to protect and the ledger treats "" as "no description"."""
         if text == "":
             return ""
-        return f"rd1_{self.domain}_{self._mac(self.domain + ':text', text.encode('utf-8'))}"
+        token = f"rd1_{self.domain}_{self._mac(self.domain + ':text', text.encode('utf-8'))}"
+        if not REDACTION_PATTERN.match(token):  # pragma: no cover - by construction
+            raise ValueError("redaction construction produced an ill-formed token")
+        return token
 
     def key_check(self) -> str:
         """A value that identifies the key without revealing it: a journal stores it at
@@ -108,6 +111,8 @@ class Tokenizer:
         if isinstance(value, int):
             return self.redact(str(value))  # any integer the v1 schema accepts, JCS range or not
         if isinstance(value, float):
+            if value != value or value in (float("inf"), float("-inf")):
+                raise ValueError("tool payloads must be finite; NaN and infinities are refused")
             return self.redact(canonical_text(value))
         if isinstance(value, Mapping):
             return {self.redact(str(k)): self.redact_json(v) for k, v in value.items()}
@@ -170,8 +175,13 @@ class Tokenizer:
         if isinstance(desc := out.get("description"), str):
             out["description"] = self.redact(desc)
         if isinstance(tags := out.get("tags"), dict):
+            # A key the core would refuse (empty, untrimmed) is left as is so the codec
+            # refuses it structurally, exactly as the identity admitter does.
             out["tags"] = {
-                self.redact(k): self.redact(v) if isinstance(v, str) else v for k, v in tags.items()
+                (self.redact(k) if k and k == k.strip() else k): (
+                    self.redact(v) if isinstance(v, str) else v
+                )
+                for k, v in tags.items()
             }
         return out
 

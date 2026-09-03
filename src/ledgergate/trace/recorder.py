@@ -246,11 +246,20 @@ class Recorder:
         return applied
 
     def run(self, commands: Sequence[Command]) -> Ledger:
-        """Execute a batch, tolerating ledger errors so the trace records all of them."""
+        """Execute a batch, tolerating ledger errors so the trace records all of them.
+
+        Only a *recorded* failure is tolerated. Under a redactor, a command refused before
+        anything was appended (an unresolved account or entry reference, an invalid
+        identifier) left no record, and swallowing it would make a trace certify itself
+        consistent about an attempt it never saw; that refusal propagates.
+        """
         for command in commands:
+            before = len(self.events)
             try:
                 self.execute(command)
             except LedgerError:
+                if len(self.events) == before:
+                    raise
                 continue
         return self.ledger
 

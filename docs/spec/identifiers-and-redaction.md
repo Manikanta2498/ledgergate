@@ -35,7 +35,9 @@ input without being reversible by dictionary.
    the current projection (inside the transaction, after the cursor check), and an unknown
    one is an admission failure (`unknown_entry`, disposition `invalid`, key not spent), so
    the raw reference exists only inside the redacted envelope. The recorder refuses such a
-   `reverse` before recording anything.
+   `reverse` before recording anything, and that refusal propagates to the caller (including
+   through `Recorder.run`, which tolerates only *recorded* failures): a refused attempt is
+   never silently absent from a trace that then certifies itself consistent.
 
 Amounts, currencies, sides and account references remain in the clear; they are the books.
 An account reference is operator-defined only once it *resolves* against the chart; before
@@ -61,7 +63,7 @@ means a new journal, and cross-journal correlation is an explicit operation.
 A free-text replacement has the parallel form `rd1_<domain>_<base64url(HMAC-SHA256(key,
 domain || ":text" || 0x00 || text))>`; the `:text` purpose suffix (a domain cannot contain
 `:`) separates it from the identifier space, so a value used as both an identifier and a
-description yields two unrelated outputs. Both forms are validated against their grammar
+description yields two unrelated outputs. Both forms are checked against their grammar
 after construction. The keyed input digest is lower-case hex
 `HMAC-SHA256(key, domain || 0x00 || "input" || 0x00 || JCS(input))`, and the key check
 value is `base64url(HMAC-SHA256(key, domain || ":keycheck" || 0x00))` without padding.
@@ -84,7 +86,9 @@ stored command.
 In a `Request`, `arguments` is class-1 content whose allowlist is the command's own field
 classes: amounts, currencies, sides and account references in the clear; `description` and
 tag values redacted; caller identifiers tokenized; the `entry_id` of a `reverse` validated
-and kept. A field of the wrong type is left for the codec to refuse structurally. In a v1
+and kept. A field of the wrong type, or a tag key the core would refuse (empty or untrimmed), is left
+for the codec to refuse structurally, so the two admitters share every shape rule. A
+non-finite number in an untyped tool payload is refused before recording on both paths. In a v1
 trace, tool `arguments` and `result` are untyped JSON and are redacted fail-closed: every
 string, whether an object key or a leaf, and every number is replaced by a redaction token
 (a card number is a number as often as a string); booleans, null and structure are kept.

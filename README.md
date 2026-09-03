@@ -200,8 +200,8 @@ command is fingerprinted, looked up or written, so a later `settle` with the raw
 the transaction the earlier `open_transaction` stored, and a retry with the raw key replays;
 every free-text field (descriptions, tags, message content, tool arguments and results,
 account names) becomes a deterministic replacement. Amounts, currencies, sides and
-account references stay in the clear: they are the books. Every digest was computed over
-the stored form, so the replay of a trace needs no key and the fold that rebuilds a journal
+account references stay in the clear: they are the books. Every digest of admitted content
+was computed over the stored form, so the replay of a trace needs no key and the fold that rebuilds a journal
 consults none; opening a journal always requires the key that created it, and a different
 key under the same label is detected and refused. The identity admitter, which changes
 nothing, remains available for development.

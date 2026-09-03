@@ -250,3 +250,41 @@ class TestRecorderResolvesReferencesLikeAdmission:
         )
         (key,) = rec.trace().metadata
         assert REDACTION_PATTERN.match(key)
+
+
+class TestRunToleratesOnlyRecordedFailures:
+    def test_pre_record_refusal_propagates_through_run(self) -> None:
+        from ledgergate.ledger import Post, UnknownAccountError
+
+        rec = Recorder(
+            "t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds(), redactor=TK
+        )
+        bad = Post(
+            "k",
+            EntryDraft.of(
+                debit("nope@example.com", Money(5, USD)), credit("revenue", Money(5, USD))
+            ),
+        )
+        with pytest.raises(UnknownAccountError):
+            rec.run([bad])
+        assert rec.events == []
+
+    def test_recorded_failures_are_still_tolerated(self) -> None:
+        rec = Recorder(
+            "t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds(), redactor=TK
+        )
+        rec.run([Refund("r", "txn-ghost", Money(1, USD)), OpenTransaction("o", "t", Money(1, USD))])
+        assert len(rec.events) == 4  # the rejected refund is recorded, then the open
+
+    def test_untrimmed_tag_key_is_refused_by_both_admitters(self) -> None:
+        assert TK.arguments("post", {"draft": {"tags": {" a": "x"}}}) == {
+            "draft": {"tags": {" a": TK.redact("x")}}
+        }
+
+    def test_non_finite_tool_payload_is_refused_before_recording(self) -> None:
+        rec = Recorder(
+            "t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds(), redactor=TK
+        )
+        with pytest.raises(ValueError, match="finite"):
+            rec.tool_call("c", "t", {"x": float("nan")})
+        assert rec.events == []

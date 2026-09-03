@@ -2,9 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-09-03
-- Amended: 2026-09-03 (three times), after review found first that the guarantees lacked
+- Amended: 2026-09-03 (four times), after review found first that the guarantees lacked
   mechanisms, then that the mechanisms lacked invariants, then that one mutable row
-  undermined the cursor built to protect it. Amendments are marked.
+  undermined the cursor built to protect it, then that the protocol never said where the
+  operation row is inserted and that approvals were consumed before being validated.
+  Amendments are marked.
 
 ## Context
 
@@ -45,13 +47,12 @@ and nothing else, and the README says so.
 
 ## Decision 1: the ledger persists as a strictly append-only journal (M2b)
 
-*(Amended three times. The third review found that the single mutable transition kept in
-revision 2, `awaiting_approval` to a terminal outcome, does not advance any sequence, so
-the projection cursor introduced in that same revision would report a stale process as
-current. Nothing is mutable now. It also found that boundary tool events were outside the
-transaction and that replays and conflicts could not satisfy "one policy decision per
-intent". All three are fixed by the same move: every fact is a row, every row has one
-global position, and every row a response depends on is committed before the response.)*
+*(Amended four times. The fourth review found: the write protocol never inserted the
+`operations` row that every other row references; the read protocol tried to write
+inside a deferred read transaction, which SQLite cannot promise; approvals were consumed
+before being validated or bound to anything; the attempted command of a conflict was not
+stored; and the token format was unspecified while the ledger enforces a 256-character,
+single-line identifier. All fixed below.)*
 
 **Authority.** The journal is the single authoritative artefact. The in-memory ledger is
 a projection rebuilt from it. Traces are a *pure function* of the journal, never written
@@ -65,31 +66,43 @@ it. `replayed` and `conflict` are properties of invocations. The ledger rebuilds
 outcomes; the trace derives from invocations and events.
 
 **One global order.** Every row in every table below carries a `journal_sequence` drawn
-from a single monotonic counter. That is the projection cursor, the trace order, and the
-only ordering source. Per-table sequences do not exist.
+from a single monotonic counter. That is the projection cursor and the only ordering
+source. Trace event order is derived from it (see Trace derivation). Per-table sequences
+do not exist.
 
 | Table | Holds |
 | :--- | :--- |
-| `definition` | Written once: chart, currency registry, codec version, policy set version, identifier token domain and key version. A journal is bound to one definition; changing it means a new journal. |
-| `operations` | `key` (`UNIQUE`), `fingerprint`, canonical `command`. Immutable identity only. |
+| `definition` | Written once: chart, currency registry, codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
+| `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, canonical `command`. Immutable identity only. |
 | `outcomes` | `operation` reference, `previous_outcome`, `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision` reference. Append-only; the current outcome of an operation is its latest row. |
-| `invocations` | `operation` reference (null for reads), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`), `call_id`. |
+| `invocations` | `operation` reference (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `call_id`. |
 | `decisions` | `invocation` reference, `operation` reference, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, `approval` reference. Owned by the invocation, so an operation that needed approval has two. |
-| `approvals` | An approval artefact as presented: approver, scope, expiry, digest. |
+| `approvals` | An approval artefact as presented and *as validated*: `approval_id`, approver principal, bound operation `fingerprint`, bound `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and the validation verdict. |
 | `approval_consumptions` | `approval` (`UNIQUE`), the `decision` that consumed it. The `UNIQUE` is what makes an approval single-use; a decision merely *claiming* consumption would not. |
-| `events` | Boundary events: inbound `tool_call` and message content, and the data needed to derive the outbound `tool_result` exactly, keyed to their invocation. |
-| `reads` | For read tools: the `journal_sequence` and head the projection was at when the read was served, and the result digest. |
+| `events` | Boundary events: the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`) or message, and the outbound `tool_result` data (ok, result or error) from which the response is rendered, keyed to their invocation. |
+| `reads` | For read tools: the `journal_sequence` and head the projection was at when served, and the result digest. |
 
 **Outcome transitions.** `awaiting_approval` is the only non-terminal outcome. A later
-invocation of the same key and fingerprint that presents an approval writes a new
-decision, consumes the approval (or fails on the `UNIQUE`), and appends a new outcome row
-for the same operation. Nothing is rewritten; the operation's history is its outcome rows
-in journal order. The approval is part of the `PolicyContext`, not of the fingerprint, so
-the retry matches.
+invocation of the same key and fingerprint that presents a *valid, bound* approval writes a
+new decision, consumes the approval (or fails on the `UNIQUE`), and appends a new outcome
+row for the same operation. Nothing is rewritten; the operation's history is its outcome
+rows in journal order. The approval is part of the `PolicyContext`, not of the fingerprint,
+so the retry matches.
 
-**Transaction protocol, write tools.** One invocation, one SQLite transaction,
-`BEGIN IMMEDIATE`. SQLite serializes write transactions; exactly one is active at a time,
-whatever the process count.
+**Approval artefacts.** An approval is issued out of band (in M4, by the operator via
+`ledgergate approve`, signed with a key whose verification counterpart is in
+`definition`). It binds to exactly one pending operation: its `fingerprint`, tokenized
+`key`, subject, amount and currency. Validation happens *before* the approval is placed in
+the `PolicyContext` and before anything is consumed: signature verifies against the
+definition's key; `expires_at` is after the injected evaluation time; every bound field
+equals the pending operation's. A failed validation is a decision of `deny` with the
+reason (`approval_invalid`, `approval_expired`, `approval_scope_mismatch`) and **nothing is
+consumed**. Only an approval that validated and whose policy evaluation returned `allow`
+is consumed, inside the same transaction.
+
+**Write protocol.** One invocation, one SQLite transaction, `BEGIN IMMEDIATE`. SQLite
+serializes write transactions; exactly one is active at a time, whatever the process
+count.
 
 1. Take the write lock.
 2. Confirm the projection's cursor equals the journal's max `journal_sequence`; if not,
@@ -97,49 +110,78 @@ whatever the process count.
    advances the max like any other row, so a stale process cannot pass this step. The
    entry-chain head is checked against the rebuilt projection as an integrity test; it is
    not the cursor, because lifecycle commands leave it unchanged.
-3. Write the inbound `events` row (the `tool_call` as received).
-4. Look up `key`.
-   - Absent: write `invocations` (`new`), continue to step 5.
+3. Admit the request: tokenize every caller identifier (Decision 5), redact free text,
+   decode the command. If admission fails (unknown tool, malformed arguments, identifier
+   that fails validation after tokenization), write the inbound `events` row, an
+   `invocations` row with disposition `invalid`, and the outbound `events` row carrying
+   the error; commit; return. No operation exists for an invalid call, and the trace
+   shows the call and its failure.
+4. Write the inbound `events` row (the admitted `tool_call`).
+5. Look up the tokenized `key` in `operations`.
+   - Absent: **insert the `operations` row** (`key`, `fingerprint`, canonical `command`),
+     then the `invocations` row (`new`, referencing it). Continue to step 6.
    - Present, fingerprint matches, latest outcome terminal: write `invocations`
      (`replay`), write the outbound `events` row derived from the stored outcome, commit,
-     return. **No decision row**: no policy evaluation happened, and the trace says so
-     (Decision 4).
+     return. **No decision row**: no policy evaluation happened.
    - Present, fingerprint matches, latest outcome `awaiting_approval`, approval presented:
-     write `invocations` (`approval`), continue to step 5.
-   - Present, fingerprint differs: write `invocations` (`conflict`), outbound `events`,
-     commit, return. No decision row.
-5. Build the `PolicyContext`, reading aggregates from `outcomes` and `decisions` inside
-   this transaction. Consume the approval if one is presented: insert into
-   `approval_consumptions`; a `UNIQUE` violation is a denial with reason
-   `approval_already_used`. Write the `decisions` row. If the decision is not `allow`,
-   append an outcome (`denied` or `awaiting_approval`), write the outbound event, commit,
-   return.
-6. Run the command through the pure core. Deterministic and cheap.
-7. Append the outcome (`applied` or `rejected`, with effects and heads). Write the
+     validate the approval as above; write `invocations` (`approval`); continue to step 6
+     with the validated (or failed) approval in the context.
+   - Present, fingerprint matches, latest outcome `awaiting_approval`, no approval:
+     `replay` of the `awaiting_approval` outcome.
+   - Present, fingerprint differs: write `invocations` (`conflict`, with the attempted
+     fingerprint and command), outbound `events`, commit, return. No decision row.
+6. Build the `PolicyContext`, reading aggregates from `outcomes` and `decisions` inside
+   this transaction. Evaluate. Write the `decisions` row. If the decision is `allow` and
+   an approval was presented, insert into `approval_consumptions`; a `UNIQUE` violation
+   converts the decision to `deny` with reason `approval_already_used` (the decision row
+   is written with that final verdict). If the decision is not `allow`, append an outcome
+   (`denied` or `awaiting_approval`), write the outbound event, commit, return.
+7. Run the command through the pure core. Deterministic and cheap.
+8. Append the outcome (`applied` or `rejected`, with effects and heads). Write the
    outbound `events` row with the data the response will be rendered from. Commit.
-8. Only now render and return the response.
+9. Only now render and return the response.
 
-A crash before commit leaves nothing: no key, no decision, no consumed approval, no
-events. A retry runs afresh. A crash after commit but before step 8 leaves a complete
-invocation including its outbound event; the retry hits step 4 as a `replay`. At no point
-does a key exist without its outcome, an approval get consumed twice, or a `tool_call`
-exist without the data for its `tool_result`.
+A crash before commit leaves nothing: no operation, no key, no decision, no consumed
+approval, no events. A retry runs afresh. A crash after commit but before step 9 leaves a
+complete invocation including its outbound event; the retry hits step 5 as a `replay`. At
+no point does an operation exist without an outcome, an approval get consumed twice, or a
+`tool_call` exist in the journal without the data for its `tool_result`.
 
-**Transaction protocol, read tools** (`balance`, `trial_balance`). Reads are not
-operations and never enter the rebuild. One invocation, one deferred read transaction
-under WAL, which gives a consistent snapshot: write `events` (inbound), `invocations`
-(`read`), a `decisions` row if the read is policy-gated, then serve from a projection
-confirmed at the snapshot's max `journal_sequence`, and write `reads` with that sequence,
-the head, and the result digest, plus the outbound event. A read's trace records which
-journal position it observed, so a reviewer can tell a stale answer from a wrong one.
+**Failures the journal cannot record.** If the transaction itself cannot complete
+(`SQLITE_BUSY` past the retry budget, a constraint violation other than the approval
+`UNIQUE`, an integrity failure in step 2, or an exception from the core that is not a
+`LedgerError`, which is a bug), the transaction is rolled back, nothing is written, and
+the caller receives an MCP error. This is the one class of call that leaves no journal
+row, and it is stated rather than hidden: the journal was unavailable, so it could not be
+the record.
 
-**Trace derivation.** `trace(journal) -> Trace` is deterministic: rows in
-`journal_sequence` order, event identity `(journal_sequence, kind)`. There is no consumer
-offset because there is no queue. The M2a replayer, run on the derived trace, checks the
-journal against its own projection.
+**Read protocol** (`balance`, `trial_balance`). Reads are not operations and never enter
+the rebuild, but an *audited* read is recorded, and recording is a write. It therefore
+runs under `BEGIN IMMEDIATE` like everything else and accepts serialization with writers;
+balance queries are cheap and the alternative (a deferred transaction that later upgrades
+to write) can fail with `SQLITE_BUSY` after the snapshot is taken, leaving a result that
+no longer matches any recordable state. Steps: lock; confirm cursor (step 2); admit (step
+3); write inbound `events` and `invocations` (`read`); write a `decisions` row if the read
+is policy-gated; serve from the projection; write `reads` with the cursor, head and result
+digest, and the outbound `events` row; commit; respond. Unaudited reads of the projection
+by the process itself are ordinary snapshot reads and write nothing.
 
-**Concurrency.** Any number of readers under WAL; write transactions serialized by
-SQLite. Multiple writer processes are correct under step 2 and not optimized.
+**Trace derivation.** `trace(journal) -> Trace` is deterministic and emits **schema v2
+only** (Decision 4). Rows are visited in `journal_sequence` order; each row yields zero or
+more v2 events in a fixed intra-row ordinal; `seq` is the dense enumeration of emitted
+events in `(journal_sequence, ordinal)` order. Identifiers are taken from the journal:
+`call_id` from `events`, `intent_id` as the invocation's `journal_sequence`, `command_id`
+as the operation's `journal_sequence`, all rendered as identifiers. The top-level `chart`
+and `currencies` come from `definition`. A trace is derived from a **whole journal**;
+windowed export is a later concern and, when it exists, a reference to an operation
+outside the window is permitted and marked as external rather than fabricated. The v2
+replayer (M3) checks a journal against its own projection. The v1 replayer is not
+involved: v1 is the offline ingest format, and v1 documents are lifted into the v2 model
+on read (Decision 4).
+
+**Concurrency.** Any number of unaudited readers under WAL; every journal write,
+including audited reads, is a serialized `BEGIN IMMEDIATE` transaction. Multiple writer
+processes are correct under step 2 and not optimized.
 
 ## Decision 2: authority is a pure layer with explicit inputs (M3)
 
@@ -217,7 +259,8 @@ intent has a **disposition** saying what the runtime did with it.
 tool_call
   command_intent          intent_id, command, context digest       exactly one per write invocation
   invocation_resolution   intent_id, disposition, operation ref    exactly one per intent
-                          disposition: new | replay | conflict | approval
+                          disposition: new | replay | conflict | approval | invalid
+                          attempted command digest (so a conflict shows what was tried)
   [policy_decision]       intent_id, decision, rule, version       iff disposition in {new, approval}
   [ledger_command         intent_id                                iff a policy_decision == allow
    ledger_result]         command_id                               iff ledger_command
@@ -232,15 +275,19 @@ tool_result
 
 Cardinality and order are rules of the schema description, enforced by the models as v1's
 are. A `replay` or `conflict` intent has no decision and no ledger pair; it references the
-operation it resolved to, whose original decision and pair appear earlier in the same
-trace. A `deny` or `approval_required` intent ends at its decision and replays by policy
+operation it resolved to by that operation's identifier. Because a trace is derived from a
+whole journal, the original decision and pair appear earlier in the same trace; in a
+windowed export the reference is marked external. An `invalid` intent has neither
+operation nor decision and ends at its `tool_result` error. A `deny` or `approval_required` intent ends at its decision and replays by policy
 alone. An `allow` intent continues into the v1-style pair and replays by both policy and
 ledger. An `approval` intent carries the approval reference in its decision and, if
 allowed, its own ledger pair.
 
-A v1 document maps into v2 by giving each `ledger_command` an intent with disposition
-`new` and a decision of `allow` under policy version `none`; that is how the v1 replayer's
-guarantees carry over. The runtime reads v1 and v2 and writes v2.
+A v1 document is lifted into the v2 model on read by giving each `ledger_command` an
+intent with disposition `new` and a decision of `allow` under policy version `none`. The
+runtime reads v1 and v2, derives v2 from the journal, and never derives v1: the journal
+has more structure than v1 can carry, and inventing a lossy projection would create a
+second thing to keep consistent.
 
 ## Decision 5: redaction at admission; caller identifiers are tokenized (M2c)
 
@@ -262,7 +309,14 @@ anything**, so every digest is computed over the stored form and a trace replays
    before the ledger looks anything up, before any row is written. `open_transaction`
    stores the token of a `transaction_id`; a later `settle` with the same raw id tokenizes
    to the same value and finds it. A retry with the raw key tokenizes to the same key and
-   hits the same operation. Replay operates only on stored tokens and needs no key. The
+   hits the same operation. Replay operates only on stored tokens and needs no key.
+
+   The token format is fixed so it always satisfies the ledger's own identifier rule
+   (non-empty, single line, at most 256 characters): the raw value is first validated by
+   `require_identifier`, then the token is `tk1_<domain>_<base64url(HMAC-SHA256(key,
+   domain || raw))>` with no padding, 43 characters of digest, a domain of at most 32
+   `[a-z0-9-]` characters, and a fixed `tk1` version prefix. The result is at most 80
+   characters of `[A-Za-z0-9_-]` and is validated once more after construction. The
    token domain and key version are in `definition`; rotating the key means a new
    journal, and cross-journal correlation is an explicit operation, not an accident.
 3. **Operator-defined identifiers** (`account_id`, tool names): configuration, written by
@@ -304,7 +358,7 @@ The suite's claim is that these are stopped; the red-team corpus is the evidence
 
 | Milestone | Contents |
 | :--- | :--- |
-| M2b | Append-only journal: definition, operations, outcomes, invocations, decisions, approvals, consumptions, events, reads; one global sequence; write and read protocols; deterministic trace derivation |
+| M2b | Append-only journal: definition, operations, outcomes, invocations, decisions, approvals, consumptions, events, reads; one global sequence; write and audited-read protocols; approval validation before consumption; deterministic v2 derivation |
 | M2c | Redaction and identifier tokenization at admission; token domain in the definition; redacted traces replay |
 | M3 | Trace schema v2 around intents and dispositions; `PolicyContext` persisted per evaluating invocation; single-use approvals; policy layer with in-transaction velocity state; invariant registry; scorecard; `ledgergate verify` |
 | M4 | `ledgergate serve`: stdio MCP, single local principal, log protocol on every call |
@@ -316,8 +370,9 @@ The suite's claim is that these are stopped; the red-team corpus is the evidence
 ## Consequences
 
 - The journal is the one durable truth and is strictly append-only; there is no row
-  anywhere that is ever updated. Traces are a deterministic function of it. The M2a
-  replayer, run on the derived trace, checks a journal against its own projection.
+  anywhere that is ever updated. Traces (schema v2) are a deterministic function of it.
+  The v2 replayer, run on the derived trace, checks a journal against its own projection;
+  the v1 replayer keeps checking offline v1 documents, lifted into the v2 model.
 - Operations and invocations are distinct, so a retry is visible in the trace as a retry
   and invisible to the ledger as an effect, which is exactly the property the README
   leads with.

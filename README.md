@@ -39,8 +39,8 @@ agent run ──▶ trace (schema v1) ──▶ invariants + policy ──▶ re
                     ▲
        adapters: OpenTelemetry GenAI | openai | anthropic | langgraph
 
-                  online: enforce it in production
-MCP client ──▶ ledgergate serve ──▶ policy ──▶ ledger ──▶ trace (same schema)
+                  online: enforce it at the call boundary
+MCP client ──▶ ledgergate serve (stdio) ──▶ policy ──▶ command log ──▶ ledger + trace
 ```
 
 The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON Schema
@@ -48,9 +48,11 @@ The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON S
 whatever framework it uses.
 
 The same ledger, policy and trace serve both paths. Offline, a recorded run is checked
-before an agent ships. Online, the MCP server is the agent's money-moving tool, and every
-call is checked at the boundary and recorded in the same format, so production traces
-feed straight back into the offline checks.
+before an agent ships. Online, the MCP server is the agent's ledger of record and
+authorization gate: every call is checked at the boundary, written to a durable command
+log before it returns, and derived into the same trace format, so runtime traces feed
+straight back into the offline checks. LedgerGate keeps the books and decides what is
+admissible; it does not itself move money on external rails (see ADR-0002).
 
 **What exists today:** the ledger core, the trace schema, a recorder that produces traces
 from a ledger session, and a replayer that re-executes a trace's commands and reports
@@ -209,13 +211,14 @@ These are enforced by CI gates, not by convention:
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
 | **M2a** | Trace schema v1, recorder, replay | **done** |
-| M2b | Durable command log (SQLite, WAL, `UNIQUE` key); ledger rebuilds by replay; idempotency survives restart | next |
-| M2c | Fail-closed redaction: allowlist, deterministic tokens, redacted traces still replay | |
-| M3 | Invariant registry over traces; **policy layer** (limits, approval thresholds, velocity caps); scorecard; `ledgergate verify` | |
-| M4 | **`ledgergate serve`: MCP runtime.** The ledger as tools any MCP client can call, with idempotency required, policy enforced at the call boundary, every call traced | |
-| M5 | OpenTelemetry GenAI adapter (primary); thin framework wrappers; recorded cassettes | |
+| M2b | Durable command log: one command, one transaction; key looked up, command run, effects and outcome committed, *then* returned. Ledger is a projection of the log; traces are derived from it | next |
+| M2c | Fail-closed redaction *at admission*: free text is redacted before the ledger hashes it, so redacted traces replay exactly | |
+| M3 | Trace schema v2 with `policy_decision`; **policy layer** over an explicit `PolicyContext` (limits, approval thresholds, velocity caps with in-transaction state); invariant registry; scorecard; `ledgergate verify` | |
+| M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
+| M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
+| M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
 
 The reasoning behind this order, and what was deliberately left out, is in
 [ADR-0002](docs/adr/0002-runtime-surface-and-plan.md).

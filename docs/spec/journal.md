@@ -143,10 +143,15 @@ milestones replace an implementation, never the protocol:
   M2c replaces it with the tokenizing, redacting one. Token domain and key version in the
   definition are `none` under the identity admitter and the definition says so.
 - **Policy** is an interface. M2b ships the null policy set, version `none`, which returns
-  `allow` for every context and still writes a `decisions` row, so every operation has a
-  decision and the outcome tables above hold from day one. Approval artefacts are not
-  presented under the null policy (nothing asks for one); the `approvals` tables exist
-  and are tested empty.
+  `allow` for every context and still writes a complete `decisions` row, so every
+  operation has a decision and the outcome tables above hold from day one. Its row is
+  fully specified so it serializes into the v2 `policy_decision` payload without
+  sentinels being invented later: `policy_set_version = "none"`, `decision = "allow"`,
+  `matched_rule = "none.allow_all"`, `reason = "null policy set: no rules configured"`,
+  and a `PolicyContext` with principal `local`, the admitted subject, the command digest,
+  the evaluation time from the injected clock, an empty aggregates map, and no approval.
+  Approval artefacts are not presented under the null policy (nothing asks for one); the
+  `approvals` tables exist and are tested empty.
 - **Trace derivation** is M3, with schema v2. M2b exposes the journal for inspection
   (`ledgergate journal dump`) but derives no trace; the M2a replayer is not run against
   a journal in M2b. The roadmap says so.

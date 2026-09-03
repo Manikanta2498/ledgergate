@@ -81,8 +81,14 @@ ledger_command
 ledger_result
 ```
 
-v1 `tool_call`/`tool_result` pairs and `message` events pass through unchanged as boundary
-events at their own `seq`. A `legacy_intent` has no `policy_decision`: v1 carries no
+**Ordering of lifted content.** A v1 document's own `seq` is the anchor, since it is
+already strictly increasing. Each v1 `ledger_command` at v1 sequence *s* yields
+`legacy_intent` (0), `invocation_resolution` (1), `ledger_command` (2) at `(s, ordinal)`,
+and its paired v1 `ledger_result` at v1 sequence *r* yields `ledger_result` at `(r, 0)`.
+v1 `tool_call`, `tool_result` and `message` events pass through unchanged at
+`(their v1 seq, 0)`. The v2 `seq` is the dense enumeration over that order, so a lifted
+trace is deterministic for any interleaving of v1 tool, message and ledger events, and no
+event moves relative to another. A `legacy_intent` has no `policy_decision`: v1 carries no
 policy evidence, and an invented `allow` would be exactly the synthesized decision this
 design forbids. Policy checks over `legacy` report "no evidence", not "allowed". The
 ledger pair replays as before.
@@ -95,8 +101,9 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
 - `command_id`: `command-<operation journal_sequence>`
 - `call_id`: taken from the `events` row (tokenized).
 
-`seq` is the dense enumeration of emitted events in `(journal_sequence, intra-row
-ordinal)` order. Top-level `chart` and `currencies` come from `definition`.
+`seq` is the dense enumeration of emitted events in anchored order: `(invocation
+journal_sequence, ordinal)` for runtime content, `(v1 seq, ordinal)` for lifted content,
+as defined in their grammars above. Top-level `chart` and `currencies` come from `definition`.
 
 ## Status
 

@@ -231,8 +231,13 @@ class Journal:
                 raise JournalError(f"cannot create journal at {path}: {exc}") from exc
             if tables and tables != JOURNAL_TABLES:
                 raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
-            if tables and _read_definition_row(path) is not None:
-                raise JournalError("journal already has a definition; use open()")
+            if tables:
+                try:
+                    defined = _read_definition_row(path) is not None
+                except sqlite3.Error as exc:
+                    raise JournalError(f"cannot create journal at {path}: {exc}") from exc
+                if defined:
+                    raise JournalError("journal already has a definition; use open()")
         try:
             self._conn = connect(path)
         except sqlite3.Error as exc:
@@ -308,15 +313,14 @@ class Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
         try:
             probe(path)  # read-only: a foreign file is refused before any pragma touches it
-            row = _read_definition_row(path)  # also read-only
+            row = _read_definition_row(path)  # also read-only; refuses another schema version
         except (sqlite3.Error, ValueError) as exc:
             raise JournalError(f"cannot open journal at {path}: {exc}") from exc
         if row is None:
             raise JournalError(f"cannot open journal at {path}: no definition; use create()")
-        if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
+        if row[1] != CODEC_VERSION:
             raise ConfigurationError(
-                f"journal is schema {row[8]}/codec {row[1]!r};"
-                f" this process is schema {SCHEMA_VERSION}/codec {CODEC_VERSION!r}"
+                f"journal is codec {row[1]!r}; this process is codec {CODEC_VERSION!r}"
             )
         if row[2] != self.policy.version:
             raise ConfigurationError(
@@ -947,9 +951,18 @@ def _decode_chart(doc: list[dict[str, Any]], currencies: Mapping[str, Currency])
 
 def _read_definition_row(path: str) -> tuple[Any, ...] | None:
     """The definition row over a read-only connection, so version checks happen before any
-    pragma is applied to the file."""
+    pragma is applied to the file. ``schema_version`` is read first and alone, so a journal
+    from another schema version is refused by the version comparison, not by whichever
+    column the newer layout happens to lack."""
     conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     try:
+        version = conn.execute("SELECT schema_version FROM definition").fetchone()
+        if version is None:
+            return None
+        if version[0] != SCHEMA_VERSION:
+            raise ConfigurationError(
+                f"journal is schema {version[0]}; this process is schema {SCHEMA_VERSION}"
+            )
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
             " token_key_version, approval_key, chart, currencies, schema_version, token_check"

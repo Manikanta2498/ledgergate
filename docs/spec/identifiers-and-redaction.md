@@ -35,11 +35,13 @@ input without being reversible by dictionary.
    the current projection (inside the transaction, after the cursor check), and an unknown
    one is an admission failure (`unknown_entry`, disposition `invalid`, key not spent), so
    the raw reference exists only inside the redacted envelope. The recorder refuses such a
-   `reverse` before recording anything. The definition loader warns on values that look
-   like emails, phone numbers or card numbers; the operator owns what they name their
-   accounts.
+   `reverse` before recording anything.
 
 Amounts, currencies, sides and account references remain in the clear; they are the books.
+An account reference is operator-defined only once it *resolves* against the chart; before
+that it is caller text, so both paths (journal admission and the recorder) check every
+posting's account against the chart before the core sees the command, and an unknown one is
+refused with nothing recorded.
 
 ## Token format
 
@@ -60,12 +62,15 @@ A free-text replacement has the parallel form `rd1_<domain>_<base64url(HMAC-SHA2
 domain || ":text" || 0x00 || text))>`; the `:text` purpose suffix (a domain cannot contain
 `:`) separates it from the identifier space, so a value used as both an identifier and a
 description yields two unrelated outputs. Both forms are validated against their grammar
-after construction.
+after construction. The keyed input digest is lower-case hex
+`HMAC-SHA256(key, domain || 0x00 || "input" || 0x00 || JCS(input))`, and the key check
+value is `base64url(HMAC-SHA256(key, domain || ":keycheck" || 0x00))` without padding.
 
 ## Scope and mechanism
 
-M2c covers schema v1 documents and the journal's admission `Request`, through one
-implementation: `ledgergate.codec.Tokenizer` (key, domain, key version) performs every
+M2c covers the journal's admission `Request` and schema v1 documents *as the recorder
+produces them* (an externally produced v1 trace cannot be redacted after the fact and still
+replay, since its heads were computed over the raw form), through one implementation: `ledgergate.codec.Tokenizer` (key, domain, key version) performs every
 transform, and two thin adapters call it. `ledgergate.journal.TokenizingAdmitter` is the
 journal's `Admitter`: it transforms the `arguments` document field by field before the
 codec decodes it, so the decoded command, its fingerprint, the request digest and every
@@ -85,13 +90,16 @@ string, whether an object key or a leaf, and every number is replaced by a redac
 (a card number is a number as often as a string); booleans, null and structure are kept.
 Nothing replays a tool payload, so nothing depends on the original values. `trace_id`, `call_id`
 and idempotency keys are tokenized; `scenario_id` and the agent descriptor are operator
-configuration and stay as given; metadata values are redacted.
+configuration and stay as given; metadata keys and values are redacted. A tool name is
+operator configuration only if the operator declared it (`Recorder(tools=...)`): under a
+redactor, an undeclared tool name is redacted, since a hallucinated name is caller text.
 
 **What is deliberately not redacted.** The core's own error messages (a ledger result's
-`error.message`, the journal's `outcomes.error_message`). The core only ever sees the
-transformed command, so a message can name a token or an operator-defined account id but
-never raw caller content, and replay recomputes and compares the message byte for byte;
-a second transformation would make every recorded rejection diverge on replay.
+`error.message`, the journal's `outcomes.error_message`). On both paths the core only ever
+sees the transformed command, with every account and entry reference already resolved, so a
+message can name a token, a chart account or a ledger-issued entry id but never raw caller
+content, and replay recomputes and compares the message byte for byte; a second
+transformation would make every recorded rejection diverge on replay.
 
 **Key handling.** The key is at least 16 bytes, supplied by the operator, held only by the
 `Tokenizer`, never written to the journal, a trace or a log; its `repr` shows the domain and

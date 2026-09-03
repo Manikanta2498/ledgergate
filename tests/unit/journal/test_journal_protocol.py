@@ -1214,3 +1214,19 @@ class TestOpenRefusesBeforeTouching:
         j = Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=2))
         assert j.handle(post("k1", call_id="again")).response == "replayed"
         j.close()
+
+
+class TestSchemaVersionRefusal:
+    def test_a_journal_from_another_schema_version_is_refused_by_the_version_check(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET schema_version = 1")
+        conn.execute("ALTER TABLE definition DROP COLUMN token_check")  # the v1 layout
+        conn.close()
+        with pytest.raises(ConfigurationError, match="journal is schema 1"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        with pytest.raises(JournalError):  # create() on it is also a clean refusal
+            Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())

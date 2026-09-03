@@ -182,10 +182,12 @@ unrecorded-failure class in the spec (input that is not I-JSON, a fault of the p
 clock or id generator, the database being unavailable, an integrity failure), where the
 transaction rolls back and the caller gets an error instead of a row. No row is ever
 updated or deleted (the database refuses, not the code). A rejected command spends its key: the
-rejection *is* the recorded result, and a retry replays it. Every journal digest
-(`request_digest`, `input_digest`, `result_digest`) is SHA-256 over RFC 8785 canonical JSON;
-result amounts are decimal strings and argument amounts are the I-JSON integers the caller
-sent, so a JavaScript client and this runtime agree byte for byte. The operation
+rejection *is* the recorded result, and a retry replays it. `request_digest` and
+`result_digest` are SHA-256 over RFC 8785 canonical JSON; result amounts are decimal strings
+and argument amounts are the I-JSON integers the caller sent, so a JavaScript client and
+this runtime agree byte for byte. `input_digest`, the one digest of *rejected* input, is
+keyed under the token key when a tokenizing admitter is in use (see
+[`docs/spec/identifiers-and-redaction.md`](docs/spec/identifiers-and-redaction.md)). The operation
 fingerprint and the hash chain are the core's own length-prefixed encoding. The shipped policy set is the
 null set (`none`), which allows everything and still writes a complete decision row; real
 policy arrives in M3 behind the same interface.
@@ -199,9 +201,9 @@ the transaction the earlier `open_transaction` stored, and a retry with the raw 
 every free-text field (descriptions, tags, message content, tool arguments and results,
 account names) becomes a deterministic replacement. Amounts, currencies, sides and
 account references stay in the clear: they are the books. Every digest was computed over
-the stored form, so the fold that rebuilds a journal and the replay of a trace need no key;
-opening a journal *for admission* requires the key that created it, and a different key
-under the same label is detected and refused. The identity admitter, which changes
+the stored form, so the replay of a trace needs no key and the fold that rebuilds a journal
+consults none; opening a journal always requires the key that created it, and a different
+key under the same label is detected and refused. The identity admitter, which changes
 nothing, remains available for development.
 
 ```python

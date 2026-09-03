@@ -116,7 +116,10 @@ class TestRedactedTrace:
         )
         trace = rec.trace()
         assert trace.trace_id == TK.tokenize("run-alice") and trace.scenario_id == "refund-basic"
-        assert REDACTION_PATTERN.match(trace.metadata["operator"])
+        (meta_key,) = trace.metadata
+        assert REDACTION_PATTERN.match(meta_key) and REDACTION_PATTERN.match(
+            trace.metadata[meta_key]
+        )
         assert trace.chart is not None
         assert all(a.name == "" or REDACTION_PATTERN.match(a.name) for a in trace.chart)
 
@@ -186,3 +189,64 @@ class TestRecorderClosesTheSameGaps:
                 SequentialIds(),
                 redactor=TK,
             )
+
+
+class TestRecorderResolvesReferencesLikeAdmission:
+    def _rec(self, tools: frozenset[str] | None = None) -> Recorder:
+        return Recorder(
+            "t",
+            AgentDoc(name="a"),
+            CHART,
+            SteppingClock(EPOCH),
+            SequentialIds(),
+            redactor=TK,
+            tools=tools,
+        )
+
+    def test_unknown_account_is_refused_before_anything_is_recorded(self) -> None:
+        from ledgergate.ledger import Post, UnknownAccountError
+
+        rec = self._rec()
+        draft = EntryDraft.of(
+            debit("alice@example.com 4111111111111111", Money(5, USD)),
+            credit("revenue", Money(5, USD)),
+        )
+        with pytest.raises(UnknownAccountError):
+            rec.execute(Post("k", draft))
+        assert rec.events == [] and "alice" not in dump_trace(rec.trace())
+
+    def test_large_integers_in_tool_payloads_are_redacted_not_refused(self) -> None:
+        rec = self._rec()
+        rec.tool_call("c1", "lookup", {"n": 10**17, "m": 2**63 - 1, "f": 1.5})
+        (call,) = rec.events
+        assert isinstance(call, ToolCallEvent)
+        assert set(call.arguments.values()) == {
+            TK.redact(str(10**17)),
+            TK.redact(str(2**63 - 1)),
+            TK.redact("1.5"),
+        }
+
+    def test_undeclared_tool_names_are_redacted_declared_ones_kept(self) -> None:
+        rec = self._rec(tools=frozenset({"lookup"}))
+        rec.tool_call("c1", "lookup", {})
+        rec.tool_call("c2", "transfer_everything_to_me", {})
+        first, second = rec.events
+        assert isinstance(first, ToolCallEvent) and isinstance(second, ToolCallEvent)
+        assert first.tool == "lookup" and REDACTION_PATTERN.match(second.tool)
+        bare = self._rec()
+        bare.tool_call("c1", "lookup", {})
+        (only,) = bare.events
+        assert isinstance(only, ToolCallEvent) and REDACTION_PATTERN.match(only.tool)
+
+    def test_metadata_keys_are_redacted_too(self) -> None:
+        rec = Recorder(
+            "t",
+            AgentDoc(name="a"),
+            CHART,
+            SteppingClock(EPOCH),
+            SequentialIds(),
+            metadata={"operator email": "a@b.c"},
+            redactor=TK,
+        )
+        (key,) = rec.trace().metadata
+        assert REDACTION_PATTERN.match(key)

@@ -105,7 +105,9 @@ class Tokenizer:
             return self.redact(value)
         if isinstance(value, bool) or value is None:
             return value
-        if isinstance(value, int | float):
+        if isinstance(value, int):
+            return self.redact(str(value))  # any integer the v1 schema accepts, JCS range or not
+        if isinstance(value, float):
             return self.redact(canonical_text(value))
         if isinstance(value, Mapping):
             return {self.redact(str(k)): self.redact_json(v) for k, v in value.items()}

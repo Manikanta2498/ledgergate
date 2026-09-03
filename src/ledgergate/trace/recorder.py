@@ -22,16 +22,21 @@ from pydantic import JsonValue
 
 from ledgergate.codec import Tokenizer
 from ledgergate.ledger import (
+    Advance,
     Applied,
     ChartOfAccounts,
     Clock,
     Command,
     ConflictingCurrencyError,
     Currency,
+    EntryDraft,
     IdGenerator,
     Ledger,
     LedgerError,
+    Post,
+    Refund,
     Reverse,
+    UnknownAccountError,
     UnknownEntryError,
 )
 from ledgergate.trace.models import (
@@ -65,6 +70,7 @@ class Recorder:
     scenario_id: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     redactor: Tokenizer | None = None
+    tools: frozenset[str] | None = None
     ledger: Ledger = field(init=False)
     events: list[EventDoc] = field(default_factory=list)
     _seq: int = field(default=0, init=False)
@@ -126,6 +132,10 @@ class Recorder:
             arguments = self.redactor.redact_json(arguments)
             if idempotency_key is not None:
                 idempotency_key = self.redactor.tokenize(idempotency_key)
+            if self.tools is None or tool not in self.tools:
+                # A tool name is operator configuration only if the operator declared it;
+                # anything else (a hallucinated name) is caller text.
+                tool = self.redactor.redact(tool)
         self.events.append(
             ToolCallEvent(
                 seq=self._next_seq(),
@@ -171,10 +181,14 @@ class Recorder:
         fingerprints and heads are over the stored form and the trace replays exactly.
         """
         if self.redactor is not None:
+            # A reference is free of caller content only once it resolves. Under a redactor
+            # an unresolved entry or account reference must not be recorded at all; the
+            # journal's admission makes the same two checks before the core runs.
             if isinstance(command, Reverse) and not self.ledger.has_entry(command.entry_id):
-                # An unresolved entry reference is arbitrary caller text until the ledger
-                # confirms it issued it; under a redactor it must not be recorded at all.
                 raise UnknownEntryError(command.entry_id)
+            for account in _accounts_referenced(command):
+                if account not in set(self.chart):
+                    raise UnknownAccountError(account)
             command = self.redactor.command(command)
             if call_id is not None:
                 call_id = self.redactor.tokenize(call_id)
@@ -260,5 +274,17 @@ class Recorder:
             currencies=tuple(CurrencyDoc.of(c) for _, c in sorted(self._currencies.items())),
             chart=chart,
             events=tuple(self.events),
-            metadata={k: (v if rd is None else rd.redact(v)) for k, v in self.metadata.items()},
+            metadata=dict(self.metadata)
+            if rd is None
+            else {rd.redact(k): rd.redact(v) for k, v in self.metadata.items()},
         )
+
+
+def _accounts_referenced(command: Command) -> list[str]:
+    drafts: list[EntryDraft] = []
+    match command:
+        case Post(_, draft):
+            drafts.append(draft)
+        case Advance(_, _, _, entry) | Refund(_, _, _, entry) if entry is not None:
+            drafts.append(entry)
+    return [p.account_id for d in drafts for p in d.postings]

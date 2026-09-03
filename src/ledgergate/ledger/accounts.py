@@ -15,7 +15,11 @@ from enum import Enum
 from types import MappingProxyType
 from typing import TypeVar
 
-from ledgergate.ledger.errors import DuplicateAccountError, UnknownAccountError
+from ledgergate.ledger.errors import (
+    ConflictingCurrencyError,
+    DuplicateAccountError,
+    UnknownAccountError,
+)
 from ledgergate.ledger.identifiers import require_identifier
 from ledgergate.ledger.money import Currency
 
@@ -86,9 +90,15 @@ class ChartOfAccounts(Mapping[str, Account]):
 
     def __init__(self, accounts: Iterable[Account]) -> None:
         index: dict[str, Account] = {}
+        exponents: dict[str, int] = {}
         for account in accounts:
             if account.account_id in index:
                 raise DuplicateAccountError(account.account_id)
+            # Two Currency objects with the same code and different exponents would make
+            # "1000 CAD" mean two different amounts inside one ledger.
+            code, exponent = account.currency.code, account.currency.exponent
+            if exponents.setdefault(code, exponent) != exponent:
+                raise ConflictingCurrencyError(code, (exponents[code], exponent))
             index[account.account_id] = account
         self._accounts: Mapping[str, Account] = freeze(index)
 
@@ -106,6 +116,10 @@ class ChartOfAccounts(Mapping[str, Account]):
 
     def __repr__(self) -> str:
         return f"ChartOfAccounts({list(self._accounts)!r})"
+
+    def currencies(self) -> dict[str, Currency]:
+        """Every currency in the chart, by code. Consistent by construction."""
+        return {a.currency.code: a.currency for a in self._accounts.values()}
 
     def of_type(self, kind: AccountType) -> tuple[Account, ...]:
         return tuple(a for a in self._accounts.values() if a.kind is kind)

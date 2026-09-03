@@ -4,10 +4,11 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestone M1.** The deterministic ledger core is implemented and
-> tested: balanced double-entry postings, idempotent commands, a payment state machine,
-> a hash-chained audit trail and hash-identical replay. The agent-facing pieces (trace
-> schema, corpus, adapters, CLI) are not built yet. See [Roadmap](#roadmap).
+> **Status: pre-alpha, milestone M2 in progress.** The deterministic ledger core (M1)
+> and the trace schema that makes it framework-agnostic are implemented and tested. An
+> agent run can be recorded as a trace, validated against the published schema, and
+> replayed against the core to prove the recorded outcomes are the real ones. The
+> invariant suite, corpus, adapters and CLI are not built yet. See [Roadmap](#roadmap).
 
 ---
 
@@ -38,14 +39,72 @@ agent run ──▶ trace (schema v1) ──▶ invariants ──▶ result.json
        adapters: anthropic | openai | langgraph
 ```
 
-The interop contract will be `schema/trace/v1.json`, a JSON Schema 2020-12 document, not
-our harness. Once it exists, any agent that emits the schema can run the corpus, whatever
-framework it uses.
+The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON Schema
+2020-12 document, not our harness. Any agent that emits the schema can be checked,
+whatever framework it uses.
 
-**Only the ledger underneath this pipeline exists today.** The trace schema lands in M2,
-the corpus and CLI in M3, the adapters in M4. What is real now is the ledger core below,
-and the gates that keep it honest, which run in CI on every pull request and every push
-to `main`.
+**What exists today is the left half of this pipeline:** the ledger core, the trace
+schema, a recorder that produces traces from a ledger session, and a replayer that
+re-executes a trace's commands and reports every divergence from what it recorded. The
+invariant registry, corpus and CLI land in M3, the adapters in M4. The gates that keep all
+of it honest run in CI on every pull request and every push to `main`.
+
+## The trace schema
+
+A trace is the normalized record of one agent run: what the agent said and called, which
+ledger commands the system derived from that, and what the ledger answered. It is the
+boundary between "your agent" and "our checks".
+
+```python
+import json
+
+from ledgergate.ledger import *
+from ledgergate.trace import *
+
+chart = ChartOfAccounts(
+    [Account("cash", AccountType.ASSET, USD), Account("revenue", AccountType.REVENUE, USD)]
+)
+rec = Recorder(
+    "run-1",
+    AgentDoc(name="refund-bot", model="gpt-x"),
+    chart,
+    SteppingClock(EPOCH),
+    SequentialIds(),
+)
+
+sale = EntryDraft.of(debit("cash", Money(1999, USD)), credit("revenue", Money(1999, USD)))
+rec.tool_call("c1", "refund_order", {"order": "42"}, idempotency_key="refund-42")
+rec.execute(OpenTransaction("open-42", "order-42", Money(1999, USD)), call_id="c1")
+rec.execute(Advance("auth-42", "order-42", TransactionEvent.AUTHORIZE))
+rec.execute(Advance("settle-42", "order-42", TransactionEvent.SETTLE, sale))
+rec.execute(Refund("refund-42", "order-42", Money(1999, USD), sale.reversed()))
+rec.execute(Refund("refund-42", "order-42", Money(1999, USD), sale.reversed()))  # the retry
+rec.tool_result("c1", ok=True, result={"status": "refunded"})  # exactly one result per call
+
+text = dump_trace(rec.trace())  # canonical JSON: sorted keys, byte-stable
+validate_document(json.loads(text))  # against schema/trace/v1.json
+report = replay_trace(load_trace(text))  # re-run every command through the core
+assert report.consistent  # recorded heads, sequences and replays all recompute
+```
+
+Edit one recorded `head`, or claim the retry was not a replay, and `report.divergences`
+names the command and the field. That replay is the mechanism the M3 invariants are
+built on.
+
+A trace records what was *attempted*, not only what succeeded: a zero-amount refund is
+representable, the ledger's rejection of it is recorded as the result, and replay confirms
+the rejection. Every result has a fixed shape for its outcome (success carries `replayed`,
+`head`, `sequence` and the consumed effects; failure carries `error`, `head`, `sequence`),
+so a sparse result cannot pass as consistent. Currencies travel with their minor-unit
+exponents, so a trace using a currency this runtime does not bundle still replays exactly.
+
+The schema and the runtime models are held to each other by contract tests on both valid
+and invalid documents. The rules JSON Schema cannot express are listed in the schema's own
+description and enforced by the models: `seq` strictly increases; every ledger command
+and every tool call has exactly one result after it, with none orphaned; ids are unique;
+every currency code resolves; tool payloads are bounded in depth and size. One further
+asymmetry is pinned: the runtime refuses a whole float like `5.0` where the schema's
+`integer` must admit it, because the JSON data model has one number type.
 
 ## The ledger core
 
@@ -113,6 +172,7 @@ What is in the box:
 | FX | Balanced four-line conversion through clearing accounts, so cross-currency moves cannot leak |
 | Effects | `Clock`, `IdGenerator`, `FxRateSource` Protocols with deterministic reference implementations |
 | Replay | `replay(chart, commands, clock=..., ids=...)` reproduces an equal ledger: same entries, same digests, same head hash |
+| Trace | `ledgergate.trace`: typed models mirroring the schema, `Recorder` to capture a session, canonical `dump_trace`, `validate_document` against the published schema, `replay_trace` that re-executes and diffs |
 
 Tested by 250+ tests: unit tests per module, Hypothesis property tests (books always
 balance, chain always verifies, replay is deterministic, every retry is a no-op), and a
@@ -139,7 +199,7 @@ These are enforced by CI gates, not by convention:
 | :--- | :--- | :--- |
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
-| M2 | Trace schema v1, SQLite idempotency, fail-closed redaction | next |
+| M2 | Trace schema v1 (**done**), SQLite idempotency, fail-closed redaction | in progress |
 | M3 | Invariant registry, corpus, CLI, first scorecard | |
 | M4 | Agent runner, adapters, recorded cassettes | |
 | M5 | Full corpus, SARIF/JUnit, security workflows, mutation gate | |
@@ -166,8 +226,7 @@ CI additionally scans the **full Git history** for secrets, not just the working
 Source-available, split deliberately:
 
 - `corpus/` and `schema/` are **Apache-2.0**. Adopt, redistribute and cite them freely,
-  including in production. Both hold only their license file today; the schema lands in
-  M2 and the corpus in M3.
+  including in production. The trace schema is published; the corpus lands in M3.
 - The runtime under `src/ledgergate/` is **BUSL-1.1**. Read it, modify it, run it in
   development, CI and evaluation. Production use requires a commercial license. Converts
   to Apache-2.0 on 2030-08-31.

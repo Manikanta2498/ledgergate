@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Any
 
@@ -29,6 +30,7 @@ from ledgergate.ledger import (
     IdempotencyConflictError,
     IllegalTransitionError,
     InsufficientFundsError,
+    InvalidAmountError,
     InvalidIdentifierError,
     Ledger,
     Money,
@@ -130,6 +132,35 @@ class TestPosting:
             ledger.entry("e-999")
         with pytest.raises(UnknownEntryError):
             ledger.reversal_of("e-999")
+
+
+class TestTimestamps:
+    def test_posted_at_is_normalized_to_utc(self, ledger: Ledger, ids: SequentialIds) -> None:
+        """The digest covers posted_at.isoformat(); one instant must hash one way."""
+        est = timezone(timedelta(hours=-5))
+        clock = FixedClock(datetime(2025, 12, 31, 19, tzinfo=est))
+        entry = ledger.post(sale(), key="k", clock=clock, ids=ids).entry
+        assert entry is not None
+        assert entry.posted_at == datetime(2026, 1, 1, tzinfo=UTC)
+        assert entry.posted_at.tzinfo is UTC
+
+    def test_same_instant_in_two_zones_yields_the_same_head(self, ledger: Ledger) -> None:
+        utc = FixedClock(datetime(2026, 1, 1, tzinfo=UTC))
+        est = FixedClock(datetime(2025, 12, 31, 19, tzinfo=timezone(timedelta(hours=-5))))
+        a = ledger.post(sale(), key="k", clock=utc, ids=SequentialIds()).ledger
+        b = ledger.post(sale(), key="k", clock=est, ids=SequentialIds()).ledger
+        assert a.head == b.head and a == b
+
+    def test_naive_clock_is_refused(self, ledger: Ledger, ids: SequentialIds) -> None:
+        """A naive datetime's astimezone() reads the system zone: a hidden wall clock."""
+
+        class Naive:
+            def now(self) -> datetime:
+                return datetime(2026, 1, 1)  # noqa: DTZ001 -- the naive case is the point
+
+        with pytest.raises(InvalidAmountError, match="timezone-aware"):
+            ledger.post(sale(), key="k", clock=Naive(), ids=ids)
+        assert ledger.sequence == 0
 
 
 class TestNegativeBalances:

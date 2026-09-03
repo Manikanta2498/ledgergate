@@ -85,8 +85,8 @@ layer line in ADR-0001, which predates `trace`.
 ### 2. Authority is a pure layer with explicit inputs (M3)
 
 A policy is a deterministic, versioned function of an explicit, serializable
-`PolicyContext`: principal, subject, command digest, evaluation time from the injected
-clock, historical aggregates read inside the admitting transaction (so two concurrent
+`PolicyContext`: principal, subject (nullable), command digest with its kind, evaluation
+time from the injected clock, historical aggregates read inside the admitting transaction (so two concurrent
 refunds cannot both see "under the cap"), a validated approval if one is presented, and
 the policy set version. The full context is persisted with every decision, owned by the
 invocation that evaluated it, and carried verbatim in the v2 `policy_decision` event, so an
@@ -160,7 +160,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 | :--- | :--- |
 | M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
 | M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
-| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); `PolicyContext` and real policy sets replacing the null policy; invariant registry; scorecard; `ledgergate verify` |
+| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, replacing the null policy; invariant registry; scorecard; `ledgergate verify` |
 | M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call |
 | M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
 | M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |

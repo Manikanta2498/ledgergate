@@ -65,7 +65,7 @@ carries the inputs, not a summary of them:
 | `policy_set_version` | which rules ran (`none` for the M2b null policy) |
 | `decision` | `allow`, `deny`, `approval_required` |
 | `matched_rule`, `reason` | the rule that decided, and why. A `runtime.` prefix (`runtime.approval_rejected`) means the runtime wrote the decision without invoking the policy set, and a consumer must not attempt to recompute it from policy code |
-| `context` | the canonical serialized `PolicyContext`: principal, subject, command digest, evaluation time, and every historical aggregate value the rules read |
+| `context` | the canonical serialized `PolicyContext`: principal, subject (nullable), command digest and `digest_kind`, evaluation time, and every historical aggregate value the rules read |
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 

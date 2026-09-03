@@ -54,17 +54,24 @@ every string is a sequence of Unicode scalar values (no unpaired surrogates). Th
 enforces this at decode (`json.loads` with `parse_int`, `parse_float` **and
 `parse_constant`** hooks; `parse_float` rejects anything that is not finite after
 conversion (`1e400` overflows to infinity without ever reaching `parse_constant`), and
-`parse_constant` rejects the `NaN`/`Infinity` literals unconditionally; plus a
-post-decode surrogate scan) *before* admission; a violation is a transport error with no
+`parse_constant` rejects the `NaN`/`Infinity` literals unconditionally; an
+`object_pairs_hook` that raises on a repeated member name, because RFC 7493 forbids
+duplicates and Python otherwise keeps the last value silently, so a client and the server
+could read different `amount`s from the same bytes; plus a post-decode surrogate scan)
+*before* admission; a violation is a transport error with no
 journal row, listed under *Failures the journal cannot record*. M2b has no transport, so
-the JCS serializer itself is the enforcer of last resort: it raises on any contract
-violation, and that raise is the same unrecorded-failure class. The codec itself imposes
-no amount bound: its output is a storage form that nothing JCS-digests, the transport's
-I-JSON contract already bounds every amount a runtime command can carry, and the frozen v1
-trace path (`dump_trace`, `json.dumps`) must keep accepting any integer the schema accepts.
+the JCS serializer itself is the enforcer of last resort for the numeric and string rules:
+it raises on any such violation, and that raise is the same unrecorded-failure class. It
+cannot see duplicate names, which are gone by the time a value exists, so M2b's test
+harness feeds the admitter through the same `object_pairs_hook` the transport will use. The codec itself imposes
+no amount bound: its output is a storage form that nothing JCS-digests; command
+*arguments* carry amounts as JSON integers, so the transport's I-JSON contract already
+bounds every amount a runtime command can carry (results, by contrast, carry amounts as
+decimal strings, next paragraph); and the frozen v1 trace path (`dump_trace`,
+`json.dumps`) must keep accepting any integer the schema accepts.
 The artefact's `amount` display field, which *is* JCS-signed, is a decimal string like
 every other digested amount (next paragraph). The JCS serializer lives in
-`ledgergate.codec`, the one layer both `journal` and M3's `approve`/`derive` may import.
+`ledgergate.codec`, the lowest layer above the core that everything needing it may import.
 
 **Digests over values the core produces.** Balances, trial balances and policy aggregates
 are *sums* of bounded amounts and are not themselves bounded (`Money.amount` is an
@@ -115,7 +122,7 @@ All strictly append-only. No row is ever updated or deleted.
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
 | `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row if check 4 succeeded. |
-| `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the `journal_id` *as presented* (so a foreign one is recoverable from the row), the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and the **check result** of the pure checks 1 to 3 (`checks_passed`, `approval_invalid`, `approval_expired`, `approval_scope_mismatch`, or `approval_not_applicable`). The *final verdict*, which also depends on check 4 (consumption), lives on the `decisions` row that considered this presentation; a row written before a check cannot carry that check's result. Presenting the same artefact twice appends two rows. |
+| `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the `journal_id` *as presented* (so a foreign one is recoverable from the row), the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, the nullable display fields subject, amount and currency (recorded, not compared), `issued_at`, `expires_at`, signature, and the **check result** of the pure checks 1 to 3 (`checks_passed`, `approval_invalid`, `approval_expired`, `approval_scope_mismatch`, or `approval_not_applicable`). The *final verdict*, which also depends on check 4 (consumption), lives on the `decisions` row that considered this presentation; a row written before a check cannot carry that check's result. Presenting the same artefact twice appends two rows. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse: the row is written during validation, before the decision exists. |
 | `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own transaction, allocator row included, and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
 | `reads` | For read tools: the `journal_sequence` and head the projection was at when served, and the result digest. |
@@ -290,8 +297,12 @@ milestones replace an implementation, never the protocol:
   fully specified so it serializes into the v2 `policy_decision` payload without
   sentinels being invented later: `policy_set_version = "none"`, `decision = "allow"`,
   `matched_rule = "none.allow_all"`, `reason = "null policy set: no rules configured"`,
-  and a `PolicyContext` with principal `local`, the admitted subject, the command digest,
-  the evaluation time from the injected clock, an empty aggregates map, and no approval.
+  and a `PolicyContext` with principal `local`, `subject = null`, the command digest and
+  `digest_kind`, the evaluation time from the injected clock, an empty aggregates map, and
+  no approval. `subject` is nullable in the context by definition: the core has no notion
+  of a subject, and a policy set (M3) declares how `subject` is derived from the command
+  for each intent kind. Under the null set there is no declaration, so the value is `null`,
+  which is a defined value, not a sentinel invented later.
   The artefact wire format and `ledgergate approve` are M3 deliverables, so under M2b's
   identity admitter a `Request` with a non-null `approval` field **fails admission** with
   code `approval_unsupported` (disposition `invalid`). The `approvals` and
@@ -389,8 +400,8 @@ outcome in the same transaction (invariant 2).
 
 **Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
 violation other than the approval consumption `UNIQUE`, an integrity failure at step 2, a
-transport-level I-JSON violation (a number outside the JCS-safe range never reaches
-admission), a policy set returning `approval_required` against a consumed approval, or a
+transport-level I-JSON violation (a number outside the JCS-safe range, a non-finite
+double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval, or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the

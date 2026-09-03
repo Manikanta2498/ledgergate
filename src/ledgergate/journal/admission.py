@@ -26,11 +26,15 @@ from typing import Any, Protocol
 
 from ledgergate.codec import CodecError, decode_command, digest
 from ledgergate.ledger import (
+    Advance,
     ChartOfAccounts,
     Command,
     Currency,
     InvalidIdentifierError,
     LedgerError,
+    OpenTransaction,
+    Refund,
+    Reverse,
 )
 from ledgergate.ledger.identifiers import require_identifier
 
@@ -196,4 +200,19 @@ class IdentityAdmitter:
             # The codec is structural and lets the core's constructors raise. An unbalanced
             # draft is still malformed input; it is recorded as such, not lost.
             raise AdmissionError(f"malformed_command:{type(exc).__name__}", "arguments") from exc
+        for path, value_ in _caller_identifiers(command):
+            _identifier(value_, path)
         return Request(tool, arguments, call_id, scope.principal, key, None, command)
+
+
+def _caller_identifiers(command: Command) -> list[tuple[str, str]]:
+    """Class-2 identifiers a command carries besides its key. Validated at admission so an
+    invalid one is recorded as `invalid` rather than reaching the core as a rejection."""
+    match command:
+        case Reverse(_, entry_id, _):
+            return [("arguments.entry_id", entry_id)]
+        case OpenTransaction(_, transaction_id, _) | Advance(_, transaction_id, _, _):
+            return [("arguments.transaction_id", transaction_id)]
+        case Refund(_, transaction_id, _, _):
+            return [("arguments.transaction_id", transaction_id)]
+    return []

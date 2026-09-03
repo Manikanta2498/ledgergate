@@ -1007,3 +1007,92 @@ class TestCreateHardening:
         envelope = json.loads(rows(raw, "events")[0][3])
         assert envelope["input_digest"].startswith("keyed:")
         j.close()
+
+
+class TestIdentifiersInsideArguments:
+    @pytest.mark.parametrize(
+        ("tool", "arguments", "path"),
+        [
+            (
+                "open_transaction",
+                {"transaction_id": "a\nb", "amount": {"amount": 1, "currency": "USD"}},
+                "arguments.transaction_id",
+            ),
+            (
+                "advance",
+                {"transaction_id": " padded", "event": "authorize"},
+                "arguments.transaction_id",
+            ),
+            (
+                "refund",
+                {"transaction_id": "x" * 300, "money": {"amount": 1, "currency": "USD"}},
+                "arguments.transaction_id",
+            ),
+            ("reverse", {"entry_id": ""}, "arguments.entry_id"),
+        ],
+    )
+    def test_invalid_caller_identifier_in_arguments_is_an_admission_failure(
+        self,
+        journal: Journal,
+        raw: sqlite3.Connection,
+        tool: str,
+        arguments: dict[str, object],
+        path: str,
+    ) -> None:
+        r = journal.handle({"tool": tool, "call_id": "c", "key": "k", "arguments": arguments})
+        assert (r.disposition, r.response) == ("invalid", "invalid")
+        assert r.error_message == f"invalid_identifier at {path}"
+        assert count(raw, "operations") == 0
+        assert journal.handle(open_txn("k", "t-ok")).response == "applied"  # key not spent
+
+
+class TestRegistryBinding:
+    def test_a_later_bundle_does_not_leak_into_an_old_journal(
+        self, journal: Journal, journal_path: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ledgergate import ledger as ledger_pkg
+        from ledgergate.journal import store as store_mod
+        from ledgergate.ledger import Currency
+
+        journal.close()
+        newer = {**ledger_pkg.CURRENCIES, "ZZZ": Currency("ZZZ", 2)}
+        monkeypatch.setattr(store_mod, "CURRENCIES", newer)
+        j = Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert "ZZZ" not in j.definition.registry
+        r = j.handle(
+            {
+                "tool": "open_transaction",
+                "call_id": "c",
+                "key": "k",
+                "arguments": {"transaction_id": "t", "amount": {"amount": 1, "currency": "ZZZ"}},
+            }
+        )
+        assert r.response == "invalid" and "malformed_command" in (r.error_message or "")
+        j.close()
+
+    def test_undecodable_applied_outcome_is_an_integrity_failure(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.handle(open_txn("k1", "t1"))
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER operations_no_update")
+        conn.execute('UPDATE operations SET command = \'{"kind": "teleport"}\'')
+        conn.close()
+        with pytest.raises(JournalError, match="does not decode"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+
+    def test_open_does_not_touch_a_foreign_file(self, tmp_path: Path) -> None:
+        foreign = tmp_path / "foreign.sqlite"
+        conn = sqlite3.connect(str(foreign))
+        conn.execute("CREATE TABLE customers (id INTEGER)")
+        conn.close()
+        before = foreign.read_bytes()
+        with pytest.raises(JournalError, match="not a journal"):
+            Journal.open(str(foreign), clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert foreign.read_bytes() == before  # no WAL switch, no schema, nothing
+
+    def test_message_role_is_constrained(self, journal: Journal) -> None:
+        with pytest.raises(ValueError, match="role"):
+            journal.record_message("cust@example.com", "hi")
+        assert journal.record_message("assistant", "hi") > 0

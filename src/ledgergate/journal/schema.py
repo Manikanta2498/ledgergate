@@ -224,6 +224,22 @@ BUSY_TIMEOUT_SECONDS = 5.0
 """How long a write waits for the lock before the attempt is an unrecorded failure."""
 
 
+def probe(path: str) -> None:
+    """Confirm, read-only and without pragmas, that ``path`` is a journal: it must exist,
+    be a database, and have a ``definition`` table. Raises ``sqlite3.Error`` or
+    ``ValueError`` otherwise; nothing about the file is changed."""
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        tables = {
+            name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    finally:
+        conn.close()
+    if "definition" not in tables:
+        raise ValueError("not a journal: no definition table")
+
+
 def connect(path: str, *, create: bool = True) -> sqlite3.Connection:
     """Open the journal file with the pragmas the protocol depends on.
 

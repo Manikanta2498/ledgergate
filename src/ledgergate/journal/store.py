@@ -23,6 +23,7 @@ from typing import Any
 
 from ledgergate.codec import (
     CODEC_VERSION,
+    CodecError,
     IJsonError,
     canonical_text,
     decode_command,
@@ -39,7 +40,7 @@ from ledgergate.journal.admission import (
     Request,
 )
 from ledgergate.journal.policy import NullPolicySet, PolicyContext, PolicySet
-from ledgergate.journal.schema import FACT_TABLES, SCHEMA_VERSION, connect, create_schema
+from ledgergate.journal.schema import FACT_TABLES, SCHEMA_VERSION, connect, create_schema, probe
 from ledgergate.ledger import (
     CURRENCIES,
     Account,
@@ -59,6 +60,7 @@ from ledgergate.ledger.identifiers import require_identifier
 
 LOCAL_PRINCIPAL = "local"
 ENVELOPE_BOUND = 4096  # bytes of UTF-8, per the specification
+MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
 
 class JournalError(Exception):
@@ -107,9 +109,18 @@ class Definition:
 
     @property
     def registry(self) -> dict[str, Currency]:
+        """Exactly the currencies the definition recorded. The process's bundled table is
+        folded in once, at creation; a later build's additions never leak into an old
+        journal, so two processes on one journal accept the same currency set."""
+        return dict(self.currencies)
+
+    @staticmethod
+    def full_registry(
+        chart: ChartOfAccounts, extra: Mapping[str, Currency] | None
+    ) -> dict[str, Currency]:
         out = dict(CURRENCIES)
-        out.update(self.currencies)
-        out.update(self.chart.currencies())
+        out.update(extra or {})
+        out.update(chart.currencies())
         return out
 
 
@@ -230,7 +241,7 @@ class Journal:
         definition = Definition(
             journal_id=secrets.token_hex(16),
             chart=chart,
-            currencies=dict(currencies or {}),
+            currencies=Definition.full_registry(chart, currencies),
             policy_set_version=self.policy.version,
             token_domain=self.admitter.token_domain,
             token_key_version=self.admitter.token_key_version,
@@ -272,8 +283,9 @@ class Journal:
     ) -> Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
         try:
+            probe(path)  # read-only: a foreign file is refused before any pragma touches it
             self._conn = connect(path, create=False)
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, ValueError) as exc:
             raise JournalError(f"cannot open journal at {path}: {exc}") from exc
         try:
             # Read the definition before touching the file: a journal from another schema
@@ -361,7 +373,10 @@ class Journal:
             return self._write(request)
 
     def record_message(self, role: str, content: str) -> int:
-        """A standalone message event: its own transaction, no invocation."""
+        """A standalone message event: its own transaction, no invocation. ``role`` is one
+        of the trace schema's four; only ``content`` is free text."""
+        if role not in MESSAGE_ROLES:
+            raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}")
         with self._txn():
             seq = self._alloc("events")
             self._conn.execute(
@@ -658,7 +673,10 @@ class Journal:
         cursor = 0
         for seq, outcome, command_json, entry_id, posted_at, head_after in rows:
             if outcome == "applied":
-                command = decode_command(json.loads(command_json), registry)
+                try:
+                    command = decode_command(json.loads(command_json), registry)
+                except (CodecError, LedgerError, ValueError) as exc:
+                    raise IntegrityError(f"applied outcome {seq} does not decode: {exc}") from exc
                 effects = _Effects(self.clock, self.ids, ledger)
                 if entry_id is not None:
                     effects.script(entry_id, datetime.fromisoformat(posted_at))

@@ -182,9 +182,11 @@ unrecorded-failure class in the spec (input that is not I-JSON, a fault of the p
 clock or id generator, the database being unavailable, an integrity failure), where the
 transaction rolls back and the caller gets an error instead of a row. No row is ever
 updated or deleted (the database refuses, not the code). A rejected command spends its key: the
-rejection *is* the recorded result, and a retry replays it. Every digest is SHA-256 over
-RFC 8785 canonical JSON, and every amount inside a digested structure is a decimal string,
-so a JavaScript client and this runtime agree byte for byte. The shipped policy set is the
+rejection *is* the recorded result, and a retry replays it. Every journal digest
+(`request_digest`, `input_digest`, `result_digest`) is SHA-256 over RFC 8785 canonical JSON
+with amounts as decimal strings, so a JavaScript client and this runtime agree byte for
+byte; the operation fingerprint and the hash chain are the core's own length-prefixed
+encoding. The shipped policy set is the
 null set (`none`), which allows everything and still writes a complete decision row; real
 policy arrives in M3 behind the same interface.
 

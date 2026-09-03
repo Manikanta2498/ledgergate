@@ -115,4 +115,14 @@ would fork the identifier space silently: the same raw idempotency key would app
 and a `settle` would miss the transaction its `open` stored. The label alone cannot detect
 that; the check value does.
 
+**Approval artefact fields.** An artefact is issued by the approver against what the
+journal already holds, so its `key` and `subject` are the stored tokens, and admission does
+not transform them again (re-tokenizing would break the equality check 3 depends on). Every
+field is nonetheless bounded by a fixed grammar at admission before anything is stored,
+verified or not: `journal_id` 32 hex, `fingerprint` 64 hex, `signature` 86 base64url
+characters, `amount` a decimal string of at most 40 digits, `currency` three capitals,
+`approval_id`, `approver`, `key` and `subject` identifiers. An artefact that fails the
+grammar is `approval_malformed` at admission and never reaches a presentation row; an
+artefact that passes it can carry nothing unbounded or free-form.
+
 v2's intent and policy fields are designed under the same four classes in M3.

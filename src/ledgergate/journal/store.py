@@ -559,23 +559,34 @@ class Journal:
             inv_seq, op_seq, context, decision, presentation, verdict, consumption
         )
         head = self._ledger.head
+        if decision.matched_rule == "runtime.approval_rejected":
+            # Pending-operation table: a failed verdict appends no outcome. The operation
+            # stays at its awaiting_approval tip, this response names that tip, and a plain
+            # retry therefore replays what the operation's own request was told
+            # (ApprovalRequired), never a verdict on an artefact it did not present.
+            tip = self._current_outcome(op_seq)
+            if tip is None:  # pragma: no cover - the approval disposition requires a tip
+                raise IntegrityError(f"operation {op_seq} has no outcome")
+            response = Response(
+                inv_seq,
+                disposition,
+                "awaiting_approval",
+                False,
+                error_type="ApprovalRejected",
+                error_message=f"{decision.matched_rule}: {decision.reason}",
+                outcome=tip,
+            )
+            self._respond(inv_seq, disposition, tip, "awaiting_approval", response)
+            return response
         if decision.decision != "allow":
-            rejected_artefact = decision.matched_rule == "runtime.approval_rejected"
-            # Pending-operation table: a failed verdict leaves the operation pending, so a
-            # later correct artefact can complete it; any other deny is terminal.
-            if decision.decision == "deny" and not rejected_artefact:
-                kind, error_type = "denied", "PolicyDenied"
-            elif rejected_artefact:
-                kind, error_type = "awaiting_approval", "ApprovalRejected"
-            else:
-                kind, error_type = "awaiting_approval", "ApprovalRequired"
+            kind = "denied" if decision.decision == "deny" else "awaiting_approval"
             outcome_seq = self._outcome(op_seq, kind, dec_seq, head, head)
             response = Response(
                 inv_seq,
                 disposition,
                 kind,
                 False,
-                error_type=error_type,
+                error_type="PolicyDenied" if kind == "denied" else "ApprovalRequired",
                 error_message=f"{decision.matched_rule}: {decision.reason}",
                 outcome=outcome_seq,
             )
@@ -651,14 +662,24 @@ class Journal:
             ),
         )
         self._inbound(inv_seq, request)
+        presentation: int | None = None
         if request.approval is not None:
-            self._present(inv_seq, request, "approval_not_applicable")
+            presentation = self._present(inv_seq, request, "approval_not_applicable")
         if self.policy.gates_read(request.tool):
+            verdict: Verdict | None = None if presentation is None else "approval_not_applicable"
             context = PolicyContext(
-                self.principal, None, request.request_digest(), "request", now, self.policy.version
+                self.principal,
+                None,
+                request.request_digest(),
+                "request",
+                now,
+                self.policy.version,
+                approval=None
+                if verdict is None
+                else {"presentation": presentation, "verdict": verdict},
             )
             decision = self.policy.evaluate(context)
-            self._decision(inv_seq, None, context, decision)
+            self._decision(inv_seq, None, context, decision, presentation, verdict)
             if decision.decision != "allow":
                 response = Response(
                     inv_seq,
@@ -893,6 +914,12 @@ class Journal:
         result; the verdict lives on the decision."""
         assert request.approval is not None
         a = Approval.from_json(request.approval)
+        # Display fields are the approver's words only once the signature verifies; until
+        # then they are whatever the presenter typed, and are not stored.
+        verified = result == "checks_passed" or result in (
+            "approval_expired",
+            "approval_scope_mismatch",
+        )
         seq = self._alloc("approvals")
         self._conn.execute(
             "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -904,9 +931,9 @@ class Journal:
                 a.approver,
                 a.fingerprint,
                 a.key,
-                a.subject,
-                a.amount,
-                a.currency,
+                a.subject if verified else None,
+                a.amount if verified else None,
+                a.currency if verified else None,
                 a.issued_at.isoformat(),
                 a.expires_at.isoformat(),
                 a.signature,

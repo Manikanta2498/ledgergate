@@ -172,22 +172,35 @@ def test_journal_pending_and_approve_round_trip(
     assert (r.disposition, r.response) == ("approval", "applied")
     j.close()
 
-    assert (
-        main(
-            [
-                "approve",
-                path,
-                "--key",
-                "big",
-                "--approver",
-                "cfo",
-                "--approval-id",
-                "a2",
-                "--signing-key",
-                str(key_file),
-            ]
-        )
-        == 1
-    )
+    assert _approve(path, "a1", str(key_file)) == 1  # consumed id
+    assert "already been consumed" in capsys.readouterr().err
+    assert _approve(path, "a2", str(key_file)) == 1  # nothing pending
     assert "awaiting approval" in capsys.readouterr().err
+    other = Path(f"{tmp_path}/other.key")
+    other.write_bytes(
+        generate_signing_key().private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        )
+    )
+    assert _approve(path, "a3", str(other)) == 1  # wrong signing key
+    assert "does not match" in capsys.readouterr().err
     assert main(["journal", "pending", path]) == 0 and capsys.readouterr().out == ""
+
+
+def _approve(path: str, approval_id: str, key_file: str) -> int:
+    return main(
+        [
+            "approve",
+            path,
+            "--key",
+            "big",
+            "--approver",
+            "cfo",
+            "--approval-id",
+            approval_id,
+            "--signing-key",
+            key_file,
+        ]
+    )

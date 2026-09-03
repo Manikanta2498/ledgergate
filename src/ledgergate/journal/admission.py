@@ -163,7 +163,7 @@ def _read_arguments(tool: str, arguments: dict[str, Any], chart: ChartOfAccounts
 
 
 class IdentityAdmitter:
-    """Validate shape and identifiers; change nothing. Refuses approval artefacts.
+    """Validate shape and identifiers; change nothing. Validates an artefact's shape.
 
     Also the structural base of :class:`TokenizingAdmitter`, which overrides only the four
     transforms; the shape rules, error codes and paths are identical in both.

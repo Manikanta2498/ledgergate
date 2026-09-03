@@ -33,6 +33,7 @@ from ledgergate.journal.policy import Decision, NullPolicySet
 from ledgergate.ledger import EPOCH, SequentialIds, SteppingClock
 
 SIGNER = generate_signing_key()
+JID, FP = "0" * 32, "a" * 64
 POLICY = ThresholdPolicySet(
     version="refunds-v1",
     deny_above=[Threshold("open_transaction", "USD", 100_000)],
@@ -101,10 +102,10 @@ class TestArtefacts:
     def test_issue_verify_and_round_trip(self) -> None:
         a = issue(
             SIGNER,
-            journal_id="j",
+            journal_id=JID,
             approval_id="a1",
             approver="cfo",
-            fingerprint="f",
+            fingerprint=FP,
             key="k",
             issued_at=EPOCH,
             expires_at=EPOCH + timedelta(hours=1),
@@ -112,41 +113,41 @@ class TestArtefacts:
         doc = a.to_json()
         assert Approval.from_json(doc) == a
         public = verification_key(verification_key_text(SIGNER))
-        ok = check(a, public=public, now=EPOCH, journal_id="j", fingerprint="f", key="k")
+        ok = check(a, public=public, now=EPOCH, journal_id=JID, fingerprint=FP, key="k")
         assert ok == "checks_passed"
         assert (
             check(
                 a,
                 public=public,
                 now=EPOCH + timedelta(hours=1),
-                journal_id="j",
-                fingerprint="f",
+                journal_id=JID,
+                fingerprint=FP,
                 key="k",
             )
             == "approval_expired"
         )
         assert (
-            check(a, public=public, now=EPOCH, journal_id="other", fingerprint="f", key="k")
+            check(a, public=public, now=EPOCH, journal_id="f" * 32, fingerprint=FP, key="k")
             == "approval_scope_mismatch"
         )
         forged = Approval.from_json({**doc, "approver": "intern"})
         assert (
-            check(forged, public=public, now=EPOCH, journal_id="j", fingerprint="f", key="k")
+            check(forged, public=public, now=EPOCH, journal_id=JID, fingerprint=FP, key="k")
             == "approval_invalid"
         )
         wrong_key = verification_key(verification_key_text(generate_signing_key()))
         assert (
-            check(a, public=wrong_key, now=EPOCH, journal_id="j", fingerprint="f", key="k")
+            check(a, public=wrong_key, now=EPOCH, journal_id=JID, fingerprint=FP, key="k")
             == "approval_invalid"
         )
 
     def test_null_display_fields_are_signed_as_null(self) -> None:
         a = issue(
             SIGNER,
-            journal_id="j",
+            journal_id=JID,
             approval_id="a",
             approver="x",
-            fingerprint="f",
+            fingerprint=FP,
             key="k",
             issued_at=EPOCH,
             expires_at=EPOCH + timedelta(hours=1),
@@ -165,10 +166,10 @@ class TestArtefacts:
     def test_checks_short_circuit_in_order(self) -> None:
         a = issue(
             SIGNER,
-            journal_id="j",
+            journal_id=JID,
             approval_id="a",
             approver="x",
-            fingerprint="f",
+            fingerprint=FP,
             key="k",
             issued_at=EPOCH,
             expires_at=EPOCH,
@@ -178,7 +179,7 @@ class TestArtefacts:
         )  # invalid AND expired AND mis-scoped
         public = verification_key(verification_key_text(SIGNER))
         assert (
-            check(forged, public=public, now=EPOCH, journal_id="j", fingerprint="f", key="k")
+            check(forged, public=public, now=EPOCH, journal_id=JID, fingerprint=FP, key="k")
             == "approval_invalid"
         )
 
@@ -226,7 +227,8 @@ class TestThresholdPolicySet:
         capped = self._ctx("refund", "1500", agg={"applied.refund.USD.86400s": "2000"})
         assert POLICY.evaluate(capped).matched_rule == "refunds-v1.window_cap"
         assert POLICY.evaluate(self._ctx("post", None)).matched_rule == "refunds-v1.no_amount"
-        assert POLICY.evaluate(self._ctx("refund", "2999")).decision == "allow"  # under the cap
+        with pytest.raises(ValueError, match="lacks aggregate"):
+            POLICY.evaluate(self._ctx("refund", "2999"))  # built for a set without the cap
 
     def test_version_none_is_reserved(self) -> None:
         with pytest.raises(ValueError, match="null policy set"):
@@ -286,7 +288,7 @@ class TestApprovalProtocol:
         ("over", "verdict"),
         [
             ({"expires_at": EPOCH + timedelta(seconds=1)}, "approval_expired"),
-            ({"journal_id": "someone-elses"}, "approval_scope_mismatch"),
+            ({"journal_id": "e" * 32}, "approval_scope_mismatch"),
             ({"fingerprint": "0" * 64}, "approval_scope_mismatch"),
             ({"signer": generate_signing_key()}, "approval_invalid"),
         ],
@@ -302,12 +304,14 @@ class TestApprovalProtocol:
             "ApprovalRejected",
         )
         assert r.error_message == f"runtime.approval_rejected: {verdict}"
-        outcomes = table(gated.path, "outcomes")
-        assert [o[3] for o in outcomes] == ["awaiting_approval", "awaiting_approval"]
-        assert outcomes[1][2] == outcomes[0][0]
+        (out,) = table(gated.path, "outcomes")  # nothing appended: the tip stays
+        assert out[3] == "awaiting_approval" and r.outcome == out[0]
         (dec,) = [d for d in table(gated.path, "decisions") if d[6] == "runtime.approval_rejected"]
         assert dec[5] == "deny" and dec[9] == verdict and dec[10] is None
         assert len(table(gated.path, "approval_consumptions")) == 0
+        # a plain retry is told what this operation's own request was told
+        plain = gated.handle({**open_txn("k1", "t-big", amount=6_000), "call_id": "plain"})
+        assert (plain.response, plain.error_type) == ("replayed", "ApprovalRequired")
         # still pending: a good artefact now succeeds
         ok = present(gated, "k1", artefact(gated, "k1", approval_id="appr-second"), call_id="c2")
         assert ok.response == "applied"
@@ -350,6 +354,129 @@ class TestApprovalProtocol:
         )
         (pres,) = table(gated.path, "approvals")
         assert pres[13] == "approval_not_applicable"
+
+    def test_valid_approval_then_another_rule_denies_is_terminal_and_consumed(
+        self, tmp_path: Path
+    ) -> None:
+        strict = ThresholdPolicySet(
+            version="v2",
+            approve_above=[Threshold("open_transaction", "USD", 5_000)],
+            window_caps=[WindowCap("open_transaction", "USD", 1, timedelta(hours=1))],
+        )
+
+        # approve_above fires first only when the cap does not: order is deny, cap, approve.
+        # Use a set whose cap is checked after an approval is present via a subclass:
+        class CapAfterApproval(ThresholdPolicySet):
+            def evaluate(self, context: PolicyContext) -> Decision:
+                if context.approval and context.approval.get("verdict") == "approval_valid":
+                    return Decision("deny", "v2.other", "some other rule refuses")
+                return super().evaluate(context)
+
+        j = Journal.create(
+            str(tmp_path / "d.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=CapAfterApproval(version=strict.version, approve_above=strict.approve_above),
+            approval_key=verification_key_text(SIGNER),
+        )
+        pending(j, "k1")
+        r = present(j, "k1", artefact(j, "k1"))
+        assert (r.disposition, r.response, r.error_type) == ("approval", "denied", "PolicyDenied")
+        outcomes = table(j.path, "outcomes")
+        assert [o[3] for o in outcomes] == ["awaiting_approval", "denied"] and outcomes[1][
+            2
+        ] == outcomes[0][0]
+        assert len(table(j.path, "approval_consumptions")) == 1  # consumed whatever policy said
+        again = present(j, "k1", artefact(j, "k1"), call_id="again")
+        assert again.response == "replayed" and again.error_type == "PolicyDenied"
+        assert table(j.path, "approvals")[-1][13] == "approval_not_applicable"
+        j.close()
+
+    def test_artefact_on_a_conflict_is_not_applicable(self, gated: Journal) -> None:
+        pending(gated, "k1")
+        r = gated.handle(
+            {**open_txn("k1", "t-big", amount=7_000), "approval": artefact(gated, "k1")}
+        )
+        assert r.response == "conflict"
+        assert table(gated.path, "approvals")[-1][13] == "approval_not_applicable"
+        assert len(table(gated.path, "decisions")) == 1  # conflict writes no decision
+
+    def test_gated_read_with_artefact_records_the_presentation_on_the_decision(
+        self, gated: Journal
+    ) -> None:
+        gated.handle(
+            {
+                "tool": "trial_balance",
+                "call_id": "tb",
+                "arguments": {},
+                "approval": artefact_free(gated),
+            }
+        )
+        (pres,) = table(gated.path, "approvals")
+        (dec,) = table(gated.path, "decisions")
+        assert dec[8] == pres[0] and dec[9] == "approval_not_applicable"
+        assert json.loads(dec[3])["approval"] == {
+            "presentation": pres[0],
+            "verdict": "approval_not_applicable",
+        }
+
+    def test_approval_under_a_tokenizing_admitter(self, tmp_path: Path) -> None:
+        from ledgergate.codec import Tokenizer
+        from ledgergate.journal import TokenizingAdmitter
+
+        tk = Tokenizer(bytes(range(32)), domain="acme", key_version="v1")
+        j = Journal.create(
+            str(tmp_path / "tk.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            admitter=TokenizingAdmitter(tk),
+            approval_key=verification_key_text(SIGNER),
+        )
+        pending(j, "order-42")
+        stored_key = tk.tokenize("order-42")
+        art = artefact(
+            j, stored_key, subject=tk.tokenize("t-big")
+        )  # issued against what the journal holds
+        r = j.handle(
+            {**open_txn("order-42", "t-big", amount=6_000), "call_id": "c2", "approval": art}
+        )
+        assert (r.disposition, r.response) == ("approval", "applied")
+        j.close()
+
+    def test_unbounded_artefact_fields_are_refused_at_admission(self, gated: Journal) -> None:
+        pending(gated, "k1")
+        bad = artefact(gated, "k1")
+        for field, value in (
+            ("journal_id", "x" * 200_000),
+            ("amount", "1e5"),
+            ("currency", "usd"),
+            ("signature", "short"),
+            ("approver", "two\nlines"),
+            ("subject", "x" * 300),
+        ):
+            r = present(gated, "k1", {**bad, field: value}, call_id=f"c-{field}")
+            assert (
+                r.response == "invalid" and r.error_message == "approval_malformed at approval"
+            ), field
+        assert len(table(gated.path, "approvals")) == 0
+
+    def test_display_fields_of_an_unverified_artefact_are_not_stored(self, gated: Journal) -> None:
+        pending(gated, "k1")
+        forged = {
+            **artefact(gated, "k1"),
+            "subject": "SECRET FREE TEXT",
+        }  # signature no longer covers it
+        r = present(gated, "k1", forged)
+        assert r.error_message == "runtime.approval_rejected: approval_invalid"
+        (pres,) = table(gated.path, "approvals")
+        assert pres[13] == "approval_invalid" and pres[7] is None and pres[8] is None
+        everything = " ".join(
+            json.dumps(row, default=str) for row in table(gated.path, "approvals")
+        )
+        assert "SECRET FREE" not in everything
 
     def test_deny_and_gated_read(self, gated: Journal) -> None:
         r = gated.handle(open_txn("big", "t-huge", amount=200_000))

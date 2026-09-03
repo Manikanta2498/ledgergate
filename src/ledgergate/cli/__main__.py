@@ -112,11 +112,15 @@ def journal_approve(args: argparse.Namespace) -> int:
     this process; only the artefact is printed."""
     from datetime import UTC, datetime, timedelta
 
-    from ledgergate.journal import issue, signing_key_from_bytes
+    from ledgergate.journal import issue, signing_key_from_bytes, verification_key_text
 
-    raw = args.signing_key.read_bytes().strip()
+    raw = args.signing_key.read_bytes()
     try:
-        private = signing_key_from_bytes(bytes.fromhex(raw.decode()) if len(raw) == 64 else raw)
+        # 32 raw bytes as written, or 64 hex characters (whitespace around the hex ignored;
+        # raw bytes are never stripped, since a key byte may itself be whitespace).
+        private = signing_key_from_bytes(
+            raw if len(raw) == 32 else bytes.fromhex(raw.decode("ascii").strip())
+        )
     except (ValueError, UnicodeDecodeError) as exc:
         print(f"signing key is not a 32-byte Ed25519 private key: {exc}", file=sys.stderr)
         return 2
@@ -127,8 +131,18 @@ def journal_approve(args: argparse.Namespace) -> int:
         return 2
     try:
         match = [r for r in _pending_rows(conn) if r[0] == args.key]
+        (approval_key,) = conn.execute("SELECT approval_key FROM definition").fetchone()
+        used = conn.execute(
+            "SELECT 1 FROM approval_consumptions WHERE approval_id = ?", (args.approval_id,)
+        ).fetchone()
     finally:
         conn.close()
+    if approval_key != verification_key_text(private):
+        print("signing key does not match the journal's verification key", file=sys.stderr)
+        return 1
+    if used is not None:
+        print(f"approval id {args.approval_id!r} has already been consumed", file=sys.stderr)
+        return 1
     if not match:
         print(f"no operation with key {args.key!r} is awaiting approval", file=sys.stderr)
         return 1

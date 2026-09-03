@@ -15,6 +15,7 @@ it is a row.
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
@@ -26,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from ledgergate.codec import canonical_bytes
+from ledgergate.ledger import InvalidIdentifierError
 from ledgergate.ledger.identifiers import require_identifier
 
 CheckResult = Literal[
@@ -43,6 +45,14 @@ Verdict = Literal[
     "approval_expired",
     "approval_scope_mismatch",
 ]
+
+_GRAMMAR = {
+    "journal_id": re.compile(r"[0-9a-f]{32}"),
+    "fingerprint": re.compile(r"[0-9a-f]{64}"),
+    "signature": re.compile(r"[A-Za-z0-9_-]{86}"),
+    "amount": re.compile(r"-?[0-9]{1,40}"),
+    "currency": re.compile(r"[A-Z]{3}"),
+}
 
 SIGNED_FIELDS = (
     "journal_id",
@@ -123,8 +133,19 @@ class Approval:
         for name in ("approval_id", "approver", "key"):
             try:
                 require_identifier(doc[name], f"approval.{name}")
-            except ValueError as exc:
+            except (ValueError, InvalidIdentifierError) as exc:
                 raise ApprovalError(str(exc)) from exc
+        if doc["subject"] is not None:
+            try:
+                require_identifier(doc["subject"], "approval.subject")
+            except (ValueError, InvalidIdentifierError) as exc:
+                raise ApprovalError(str(exc)) from exc
+        # Every remaining field has a fixed grammar, so nothing unbounded or free-form is
+        # ever stored from an artefact, verified or not.
+        for name, pattern in _GRAMMAR.items():
+            value = doc[name]
+            if value is not None and not pattern.fullmatch(value):
+                raise ApprovalError(f"approval.{name} does not match its grammar")
         return cls(
             doc["journal_id"],
             doc["approval_id"],

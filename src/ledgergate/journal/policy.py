@@ -229,7 +229,11 @@ class ThresholdPolicySet:
         for cap in self.window_caps:
             if cap.kind == kind and cap.currency == ccy:
                 name = f"applied.{kind}.{ccy}.{int(cap.window.total_seconds())}s"
-                prior = int(context.aggregates.get(name, "0"))
+                if name not in context.aggregates:
+                    raise ValueError(
+                        f"context lacks aggregate {name!r}: it was built for a different set"
+                    )
+                prior = int(context.aggregates[name])
                 if prior + amount > cap.amount:
                     return Decision(
                         "deny",

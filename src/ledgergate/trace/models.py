@@ -42,9 +42,11 @@ from pydantic import (
     JsonValue,
     StrictBool,
     StrictInt,
+    TypeAdapter,
     model_validator,
 )
 
+from ledgergate.codec import decode_command, encode_command
 from ledgergate.ledger import (
     CURRENCIES,
     Account,
@@ -59,9 +61,7 @@ from ledgergate.ledger import (
     Post,
     Posting,
     Refund,
-    Reverse,
     Side,
-    TransactionEvent,
 )
 
 SCHEMA_VERSION: Literal["1"] = "1"
@@ -251,7 +251,7 @@ class PostDoc(_Strict):
     draft: EntryDraftDoc
 
     def to_command(self, registry: Registry) -> Command:
-        return Post(self.key, self.draft.to_draft(registry))
+        return _decode(self, registry)
 
     def currencies(self) -> Iterator[str]:
         yield from (p.money.currency for p in self.draft.postings)
@@ -264,7 +264,7 @@ class ReverseDoc(_Strict):
     description: ShortText = ""
 
     def to_command(self, registry: Registry) -> Command:
-        return Reverse(self.key, self.entry_id, self.description)
+        return _decode(self, registry)
 
     def currencies(self) -> Iterator[str]:
         yield from ()
@@ -277,7 +277,7 @@ class OpenTransactionDoc(_Strict):
     amount: MoneyDoc
 
     def to_command(self, registry: Registry) -> Command:
-        return OpenTransaction(self.key, self.transaction_id, self.amount.to_money(registry))
+        return _decode(self, registry)
 
     def currencies(self) -> Iterator[str]:
         yield self.amount.currency
@@ -291,8 +291,7 @@ class AdvanceDoc(_Strict):
     entry: EntryDraftDoc | None = None
 
     def to_command(self, registry: Registry) -> Command:
-        entry = None if self.entry is None else self.entry.to_draft(registry)
-        return Advance(self.key, self.transaction_id, TransactionEvent(self.event), entry)
+        return _decode(self, registry)
 
     def currencies(self) -> Iterator[str]:
         if self.entry is not None:
@@ -307,8 +306,7 @@ class RefundDoc(_Strict):
     entry: EntryDraftDoc | None = None
 
     def to_command(self, registry: Registry) -> Command:
-        entry = None if self.entry is None else self.entry.to_draft(registry)
-        return Refund(self.key, self.transaction_id, self.money.to_money(registry), entry)
+        return _decode(self, registry)
 
     def currencies(self) -> Iterator[str]:
         yield self.money.currency
@@ -320,31 +318,19 @@ AnyCommandDoc = PostDoc | ReverseDoc | OpenTransactionDoc | AdvanceDoc | RefundD
 CommandDoc = Annotated[AnyCommandDoc, Field(discriminator="kind")]
 
 
+_COMMAND_DOC: TypeAdapter[AnyCommandDoc] = TypeAdapter(CommandDoc)
+
+
+def _decode(doc: _Strict, registry: Registry) -> Command:
+    """Every ``*Doc.to_command`` goes through the one codec, so a trace and a journal row
+    decode a command identically. The core's own constructors raise their own errors."""
+    return decode_command(doc.model_dump(mode="json", exclude_none=True), registry)
+
+
 def command_doc(command: Command) -> AnyCommandDoc:
-    """The document form of a runtime command. Inverse of ``.to_command()``."""
-    match command:
-        case Post(key, draft):
-            return PostDoc(key=key, draft=EntryDraftDoc.of(draft))
-        case Reverse(key, entry_id, description):
-            return ReverseDoc(key=key, entry_id=entry_id, description=description)
-        case OpenTransaction(key, transaction_id, amount):
-            return OpenTransactionDoc(
-                key=key, transaction_id=transaction_id, amount=MoneyDoc.of(amount)
-            )
-        case Advance(key, transaction_id, event, entry):
-            return AdvanceDoc(
-                key=key,
-                transaction_id=transaction_id,
-                event=event.value,
-                entry=None if entry is None else EntryDraftDoc.of(entry),
-            )
-        case Refund(key, transaction_id, money, entry):
-            return RefundDoc(
-                key=key,
-                transaction_id=transaction_id,
-                money=MoneyDoc.of(money),
-                entry=None if entry is None else EntryDraftDoc.of(entry),
-            )
+    """The document form of a runtime command. Inverse of ``.to_command()``. Produced by
+    the shared codec and validated into the typed model, so the two cannot drift."""
+    return _COMMAND_DOC.validate_python(encode_command(command))
 
 
 def command_currencies(command: Command) -> set[Currency]:

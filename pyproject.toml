@@ -106,6 +106,8 @@ warn_unreachable = true
 warn_unused_ignores = true
 disallow_any_explicit = false
 files = ["src", "tests", "scripts"]
+explicit_package_bases = true
+mypy_path = ["src", "."]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
@@ -154,13 +156,14 @@ root_package = "ledgergate"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layered architecture: cli -> runner -> {invariants, report} -> trace -> ledger"
+name = "Layered architecture: cli -> runner -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger"
 type = "layers"
 layers = [
   "ledgergate.cli",
   "ledgergate.runner",
-  "ledgergate.invariants | ledgergate.report",
-  "ledgergate.trace",
+  "ledgergate.invariants | ledgergate.report | (ledgergate.derive)",
+  "ledgergate.trace | ledgergate.journal",
+  "ledgergate.codec",
   "ledgergate.ledger",
 ]
 
@@ -174,6 +177,8 @@ forbidden_modules = [
   "ledgergate.report",
   "ledgergate.cli",
   "ledgergate.trace",
+  "ledgergate.journal",
+  "ledgergate.codec",
   "json",
   "pathlib",
   "sqlite3",

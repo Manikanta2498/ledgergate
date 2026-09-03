@@ -103,6 +103,7 @@ from ledgergate.ledger.state import (
     Reverse,
     TrialBalance,
     TrialBalanceRow,
+    command_fingerprint,
     replay,
 )
 
@@ -181,6 +182,7 @@ __all__ = [
     "UnknownEntryError",
     "UnknownTransactionError",
     "allowed_events",
+    "command_fingerprint",
     "conversion_entry",
     "credit",
     "currency",

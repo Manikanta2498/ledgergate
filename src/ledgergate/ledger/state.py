@@ -102,6 +102,46 @@ class Refund:
 Command = Post | Reverse | OpenTransaction | Advance | Refund
 
 
+def command_fingerprint(command: Command) -> str:
+    """The one fingerprint of a command's *request*, excluding its key.
+
+    Idempotency compares this: same key and same fingerprint is a replay, same key and a
+    different fingerprint is a conflict. The ledger computes it before executing and the
+    durable journal stores the same value, so there is exactly one definition and the two
+    cannot disagree. Amounts are encoded as decimal strings; the encoding is the
+    length-prefixed one in :func:`ledgergate.ledger.entries.fingerprint`.
+    """
+    match command:
+        case Post(_, draft):
+            return fingerprint("post", {"draft": draft.canonical()})
+        case Reverse(_, entry_id, description):
+            return fingerprint("reverse", {"entry": entry_id, "description": description})
+        case OpenTransaction(_, transaction_id, amount):
+            return fingerprint(
+                "open",
+                {"txn": transaction_id, "amount": str(amount.amount), "ccy": amount.currency.code},
+            )
+        case Advance(_, transaction_id, event, entry):
+            return fingerprint(
+                "advance",
+                {
+                    "txn": transaction_id,
+                    "event": event.value,
+                    "entry": "" if entry is None else entry.canonical(),
+                },
+            )
+        case Refund(_, transaction_id, money, entry):
+            return fingerprint(
+                "refund",
+                {
+                    "txn": transaction_id,
+                    "amount": str(money.amount),
+                    "ccy": money.currency.code,
+                    "entry": "" if entry is None else entry.canonical(),
+                },
+            )
+
+
 # -------------------------------------------------------------------- results
 
 
@@ -429,7 +469,7 @@ class Ledger:
         return Applied(new, entry=entry, transaction=txn)
 
     def _post(self, key: str, draft: EntryDraft, *, clock: Clock, ids: IdGenerator) -> Applied:
-        print_ = fingerprint("post", {"draft": draft.canonical()})
+        print_ = command_fingerprint(Post(key, draft))
         if replayed := self._replay(key, print_):
             return replayed
         return self._append(key, print_, draft, reverses=None, clock=clock, ids=ids)
@@ -437,7 +477,7 @@ class Ledger:
     def _reverse(
         self, key: str, entry_id: str, description: str, *, clock: Clock, ids: IdGenerator
     ) -> Applied:
-        print_ = fingerprint("reverse", {"entry": entry_id, "description": description})
+        print_ = command_fingerprint(Reverse(key, entry_id, description))
         if replayed := self._replay(key, print_):
             return replayed
         original = self.entry(entry_id)
@@ -447,10 +487,7 @@ class Ledger:
         return self._append(key, print_, draft, reverses=entry_id, clock=clock, ids=ids)
 
     def _open(self, key: str, transaction_id: str, amount: Money) -> Applied:
-        print_ = fingerprint(
-            "open",
-            {"txn": transaction_id, "amount": str(amount.amount), "ccy": amount.currency.code},
-        )
+        print_ = command_fingerprint(OpenTransaction(key, transaction_id, amount))
         if replayed := self._replay(key, print_):
             return replayed
         if transaction_id in self.transactions:
@@ -476,14 +513,7 @@ class Ledger:
         clock: Clock,
         ids: IdGenerator,
     ) -> Applied:
-        print_ = fingerprint(
-            "advance",
-            {
-                "txn": transaction_id,
-                "event": event.value,
-                "entry": "" if entry is None else entry.canonical(),
-            },
-        )
+        print_ = command_fingerprint(Advance(key, transaction_id, event, entry))
         if replayed := self._replay(key, print_):
             return replayed
         current = self.transaction(transaction_id)
@@ -504,15 +534,7 @@ class Ledger:
         clock: Clock,
         ids: IdGenerator,
     ) -> Applied:
-        print_ = fingerprint(
-            "refund",
-            {
-                "txn": transaction_id,
-                "amount": str(money.amount),
-                "ccy": money.currency.code,
-                "entry": "" if entry is None else entry.canonical(),
-            },
-        )
+        print_ = command_fingerprint(Refund(key, transaction_id, money, entry))
         if replayed := self._replay(key, print_):
             return replayed
         txn = self.transaction(transaction_id).refund(money)

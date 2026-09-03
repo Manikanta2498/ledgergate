@@ -54,10 +54,9 @@ log before it returns, and derived into the same trace format, so runtime traces
 straight back into the offline checks. LedgerGate keeps the books and decides what is
 admissible; it does not itself move money on external rails (see ADR-0002).
 
-**What exists today:** the ledger core, the trace schema, a recorder that produces traces
-from a ledger session, and a replayer that re-executes a trace's commands and reports
-every divergence from what it recorded. Invariants and policy land in M3, the MCP runtime
-in M4. The gates that keep all of it honest run in CI on every pull request and every push
+**What exists today:** the ledger core; the trace schema, recorder and replayer; and the
+durable journal, so a process can be restarted and answer a retried key exactly as it did
+the first time. Invariants and policy land in M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema
@@ -116,6 +115,73 @@ and every tool call has exactly one result after it, with none orphaned; ids are
 every currency code resolves; tool payloads are bounded in depth and size. One further
 asymmetry is pinned: the runtime refuses a whole float like `5.0` where the schema's
 `integer` must admit it, because the JSON data model has one number type.
+
+## The journal
+
+The runtime's durable truth is an append-only SQLite journal, specified in
+[`docs/spec/journal.md`](docs/spec/journal.md) and implemented in `ledgergate.journal`.
+The in-memory ledger is a projection rebuilt from it.
+
+```python
+from ledgergate.journal import Journal
+from ledgergate.ledger import (
+    USD,
+    Account,
+    AccountType,
+    ChartOfAccounts,
+    SequentialIds,
+    SteppingClock,
+    EPOCH,
+)
+
+chart = ChartOfAccounts(
+    [Account("cash", AccountType.ASSET, USD), Account("revenue", AccountType.REVENUE, USD)]
+)
+journal = Journal.create(path, chart, clock=SteppingClock(EPOCH), ids=SequentialIds())
+
+sale = {
+    "postings": [
+        {"account": "cash", "side": "debit", "money": {"amount": 1999, "currency": "USD"}},
+        {"account": "revenue", "side": "credit", "money": {"amount": 1999, "currency": "USD"}},
+    ]
+}
+first = journal.handle(
+    {"tool": "post", "call_id": "c1", "key": "order-42", "arguments": {"draft": sale}}
+)
+retry = journal.handle(
+    {"tool": "post", "call_id": "c2", "key": "order-42", "arguments": {"draft": sale}}
+)
+assert first.response == "applied" and retry.response == "replayed"
+assert retry.result["entry_id"] == first.result["entry_id"]
+
+changed = journal.handle(
+    {
+        "tool": "post",
+        "call_id": "c3",
+        "key": "order-42",
+        "arguments": {"draft": {**sale, "description": "different"}},
+    }
+)
+assert changed.response == "conflict"
+
+journal.close()
+reopened = Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=100))
+assert reopened.ledger.head == first.result["head"]  # rebuilt from outcomes, not trusted
+again = reopened.handle(
+    {"tool": "post", "call_id": "c4", "key": "order-42", "arguments": {"draft": sale}}
+)
+assert again.response == "replayed"  # idempotency survives the restart
+reopened.close()
+```
+
+One invocation is one `BEGIN IMMEDIATE` transaction; the response is rendered only after
+commit. Every attempt is a row, including malformed input, and no row is ever updated or
+deleted (the database refuses, not the code). A rejected command spends its key: the
+rejection *is* the recorded result, and a retry replays it. Every digest is SHA-256 over
+RFC 8785 canonical JSON, and every amount inside a digested structure is a decimal string,
+so a JavaScript client and this runtime agree byte for byte. The shipped policy set is the
+null set (`none`), which allows everything and still writes a complete decision row; real
+policy arrives in M3 behind the same interface.
 
 ## The ledger core
 
@@ -211,8 +277,8 @@ These are enforced by CI gates, not by convention:
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
 | **M2a** | Trace schema v1, recorder, replay | **done** |
-| M2b | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use (per journal) approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an outcome cursor. Ships with a pass-through admitter and a null policy so the protocol is complete end to end; trace derivation follows in M3 | next |
-| M2c | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | |
+| **M2b** | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use (per journal) approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an outcome cursor. Ships with a pass-through admitter and a null policy so the protocol is complete end to end; trace derivation follows in M3 | **done** |
+| M2c | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | next |
 | M3 | Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; **policy layer** over an explicit, persisted `PolicyContext` carried in every decision event, with validated, single-use (per journal) approvals; invariant registry; scorecard; `ledgergate verify` | |
 | M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |

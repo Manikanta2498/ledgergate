@@ -12,7 +12,7 @@ input without being reversible by dictionary.
 
 1. **Free text** (`description`, message `content`, tool `arguments` and `result`, tags
    (keys *and* values: both are the caller's), account `name` in the definition, metadata
-   values): fail-closed redaction. A field not on the allowlist is redacted. Replacement
+   keys and values): fail-closed redaction. A field not on the allowlist is redacted. Replacement
    tokens are deterministic (keyed HMAC), so equal inputs redact equally across runs. The
    empty string redacts to itself: there is nothing to protect, and the ledger treats `""`
    as "no description"; this reveals that a field was empty and nothing else.

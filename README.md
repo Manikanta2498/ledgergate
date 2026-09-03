@@ -56,9 +56,10 @@ log before it returns, and derived into the same trace format, so runtime traces
 straight back into the offline checks. LedgerGate keeps the books and decides what is
 admissible; it does not itself move money on external rails (see ADR-0002).
 
-**What exists today:** the ledger core; the trace schema, recorder and replayer; and the
+**What exists today:** the ledger core; the trace schema, recorder and replayer; the
 durable journal, so a process can be restarted and answer a retried key exactly as it did
-the first time. Invariants and policy land in M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
+the first time; and the tokenizing, redacting admitter, so no caller identifier or free
+text has to reach disk. Invariants and policy land in M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema

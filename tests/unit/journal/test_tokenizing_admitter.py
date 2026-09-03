@@ -310,3 +310,16 @@ def test_create_warns_on_sensitive_looking_account_ids(tmp_path: Path) -> None:
             str(tmp_path / "w.journal"), chart, clock=SteppingClock(EPOCH), ids=SequentialIds()
         )
     j.close()
+
+
+def test_untrimmed_tag_key_is_refused_by_both_admitters(
+    tokenizing: Journal, tmp_path: Path
+) -> None:
+    request = post("k", call_id="c", tags={" a": "x"})
+    r = tokenizing.handle(request)
+    identity = Journal.create(
+        str(tmp_path / "i.journal"), CHART, clock=SteppingClock(EPOCH), ids=SequentialIds()
+    )
+    i = identity.handle(request)
+    identity.close()
+    assert r.error_message == i.error_message == "malformed_command:InvalidAmountError at arguments"

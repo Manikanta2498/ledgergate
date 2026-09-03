@@ -159,21 +159,58 @@ class TestCommands:
         )
         assert command_fingerprint(TK.command(c)) != command_fingerprint(c)
 
-    def test_arguments_document_transform_matches_command_transform(self) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            Post(
+                "k",
+                EntryDraft.of(
+                    debit("cash", Money(5, USD)),
+                    credit("revenue", Money(5, USD)),
+                    description="d",
+                    o="1",
+                ),
+            ),
+            Reverse("k", "e-000001", "why"),
+            OpenTransaction("k", "txn-alice", Money(5, USD)),
+            Advance(
+                "k",
+                "txn-alice",
+                TransactionEvent.SETTLE,
+                EntryDraft.of(
+                    debit("cash", Money(5, USD)),
+                    credit("revenue", Money(5, USD)),
+                    description="d",
+                    o="1",
+                ),
+            ),
+            Refund(
+                "k",
+                "txn-alice",
+                Money(1, USD),
+                EntryDraft.of(
+                    debit("revenue", Money(1, USD)), credit("cash", Money(1, USD)), note="n"
+                ),
+            ),
+        ],
+        ids=lambda c: type(c).__name__,
+    )
+    def test_arguments_document_transform_matches_command_transform(self, command: object) -> None:
         """The journal transforms the JSON document; the recorder transforms the runtime
         command. Both must yield the same stored command, or the two paths would diverge."""
         from ledgergate.codec import decode_command, encode_command
-        from ledgergate.ledger import CURRENCIES
+        from ledgergate.ledger import CURRENCIES, Command
 
-        command = Advance("k", "txn-alice", TransactionEvent.SETTLE, self._sale())
-        doc = encode_command(command)
+        assert isinstance(command, Post | Reverse | OpenTransaction | Advance | Refund)
+        cmd: Command = command
+        doc = encode_command(cmd)
         arguments = {k: v for k, v in doc.items() if k not in ("kind", "key")}
         via_doc = decode_command(
-            {"kind": "advance", "key": TK.tokenize("k"), **TK.arguments("advance", arguments)},
+            {"kind": doc["kind"], "key": TK.tokenize("k"), **TK.arguments(doc["kind"], arguments)},
             CURRENCIES,
         )
-        assert via_doc == TK.command(command)
-        assert command_fingerprint(via_doc) == command_fingerprint(TK.command(command))
+        assert via_doc == TK.command(cmd)
+        assert command_fingerprint(via_doc) == command_fingerprint(TK.command(cmd))
 
     def test_arguments_leaves_wrong_types_for_the_codec(self) -> None:
         out = TK.arguments(

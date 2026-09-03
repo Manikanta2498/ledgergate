@@ -87,23 +87,32 @@ class TestRedaction:
         assert TK.redact("Bob's refund") != a
         assert TK.redact("x") != TK.tokenize("x")  # text and identifier domains are separate
 
-    def test_redact_json_is_fail_closed_on_every_string_leaf(self) -> None:
+    def test_redact_json_is_fail_closed_on_keys_strings_and_numbers(self) -> None:
         doc = {
             "customer": "alice@example.com",
-            "n": 3,
+            "bob@example.com": {"balance": 5, "card": 4111111111111111},
             "ok": True,
-            "nested": {"note": "card 4111"},
-            "list": ["a", 1, None],
+            "none": None,
+            "list": ["a", 1, None, 2.5],
         }
         out = TK.redact_json(doc)
+        assert set(out) == {TK.redact(k) for k in doc}  # keys are caller text too
+        inner = out[TK.redact("bob@example.com")]
+        assert inner[TK.redact("card")] == TK.redact("4111111111111111")
+        assert out[TK.redact("ok")] is True and out[TK.redact("none")] is None
+        assert out[TK.redact("list")][2] is None
+        assert all(REDACTION_PATTERN.match(str(v)) for v in out[TK.redact("list")] if v is not None)
+        text = str(out)
         assert (
-            out["n"] == 3 and out["ok"] is True and out["list"][1] == 1 and out["list"][2] is None
+            "alice" not in text and "bob" not in text and "4111" not in text and "2.5" not in text
         )
-        assert REDACTION_PATTERN.match(out["customer"]) and REDACTION_PATTERN.match(
-            out["nested"]["note"]
-        )
-        assert REDACTION_PATTERN.match(out["list"][0])
-        assert "alice" not in str(out) and "4111" not in str(out)
+
+    def test_looks_sensitive_is_conservative(self) -> None:
+        from ledgergate.codec import looks_sensitive
+
+        assert looks_sensitive("alice@example.com") and looks_sensitive("4111 1111 1111 1111")
+        assert looks_sensitive("+1 555 123 4567") and not looks_sensitive("cash")
+        assert not looks_sensitive("acct-2026-01")
 
     def test_digest_input_is_keyed_and_canonical(self) -> None:
         a = TK.digest_input({"b": 1, "a": "x"})

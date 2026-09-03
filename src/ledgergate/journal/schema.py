@@ -18,7 +18,7 @@ from pathlib import Path
 
 # ruff: noqa: S608 - table names are interpolated from FACT_TABLES, a module constant, never input
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: definition.token_check
 
 FACT_TABLES = (
     "definition",

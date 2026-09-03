@@ -16,6 +16,7 @@ import hmac
 import json
 import secrets
 import sqlite3
+import warnings
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from ledgergate.codec import (
     decode_command,
     digest,
     encode_command,
+    looks_sensitive,
     require_ijson,
 )
 from ledgergate.journal.admission import (
@@ -251,6 +253,13 @@ class Journal:
     def _define(
         cls, self: Journal, chart: ChartOfAccounts, currencies: Mapping[str, Currency] | None
     ) -> Journal:
+        for account in chart.values():
+            if looks_sensitive(account.account_id):
+                warnings.warn(
+                    f"account id {account.account_id!r} looks like an email, phone or card"
+                    " number; operator-defined identifiers are stored as given",
+                    stacklevel=3,
+                )
         definition = Definition(
             journal_id=secrets.token_hex(16),
             chart=chart,

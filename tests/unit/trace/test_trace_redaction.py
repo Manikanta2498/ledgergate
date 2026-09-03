@@ -91,11 +91,13 @@ class TestRedactedTrace:
         failed = next(e for e in events if isinstance(e, LedgerResultEvent) and not e.ok)
         assert REDACTION_PATTERN.match(msg.content)
         assert TOKEN_PATTERN.match(call.call_id) and TOKEN_PATTERN.match(call.idempotency_key or "")
-        assert REDACTION_PATTERN.match(str(call.arguments["transaction_id"]))
-        assert call.arguments["n"] == 1
+        args = call.arguments
+        assert set(args) == {TK.redact("transaction_id"), TK.redact("n")}  # keys redacted too
+        assert REDACTION_PATTERN.match(str(args[TK.redact("transaction_id")]))
+        assert args[TK.redact("n")] == TK.redact("1")  # numbers are redacted in untyped JSON
         first_result = results[0].result
         assert isinstance(first_result, dict)
-        assert REDACTION_PATTERN.match(str(first_result["transaction"]))
+        assert REDACTION_PATTERN.match(str(first_result[TK.redact("transaction")]))
         assert results[1].error is not None and REDACTION_PATTERN.match(results[1].error.message)
         assert cmd.command.key == TK.tokenize("order-42") and cmd.call_id == call.call_id
         # the core saw only tokens, so its message names a token and needs no redaction

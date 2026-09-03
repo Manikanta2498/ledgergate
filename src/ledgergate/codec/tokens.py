@@ -20,7 +20,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from ledgergate.codec.jcs import canonical_bytes
+from ledgergate.codec.jcs import canonical_bytes, canonical_text
 from ledgergate.ledger import (
     Advance,
     Command,
@@ -96,12 +96,19 @@ class Tokenizer:
     # -------------------------------------------------------------- documents
 
     def redact_json(self, value: Any) -> Any:
-        """Fail-closed redaction of untyped JSON (tool arguments and results in a trace):
-        every string leaf is replaced, structure and non-string leaves are kept."""
+        """Fail-closed redaction of untyped JSON (tool arguments and results in a trace).
+        Every string, whether an object key or a leaf, and every number is replaced by a
+        redaction token (a card or phone number is a number as often as a string); booleans
+        and null are kept, as is structure. Nothing in a trace replays a tool payload, so
+        nothing depends on the original values."""
         if isinstance(value, str):
             return self.redact(value)
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, int | float):
+            return self.redact(canonical_text(value))
         if isinstance(value, Mapping):
-            return {k: self.redact_json(v) for k, v in value.items()}
+            return {self.redact(str(k)): self.redact_json(v) for k, v in value.items()}
         if isinstance(value, list):
             return [self.redact_json(v) for v in value]
         return value
@@ -165,3 +172,14 @@ class Tokenizer:
                 self.redact(k): self.redact(v) if isinstance(v, str) else v for k, v in tags.items()
             }
         return out
+
+
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+_LONG_DIGIT_RUN = re.compile(r"(?:\d[ -]?){10,}")
+
+
+def looks_sensitive(value: str) -> bool:
+    """A cheap, conservative guess for operator-defined names: an email address, or a run
+    of ten or more digits (a phone or card number). Used only to *warn*; the operator owns
+    what they name their accounts."""
+    return bool(_EMAIL.search(value) or _LONG_DIGIT_RUN.search(value))

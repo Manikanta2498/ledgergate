@@ -24,7 +24,9 @@ input without being reversible by dictionary.
    to the same value and finds it. A retry with the raw key tokenizes to the same key.
    Replay operates only on stored tokens and needs no key.
 3. **Operator-defined identifiers** (`account_id`, tool names): configuration in the
-   ledger definition, stored as given.
+   ledger definition, stored as given. `Journal.create` warns (Python `warnings`) on an
+   account id that looks like an email address or a run of ten or more digits; the operator
+   owns what they name their accounts.
 4. **References to runtime-generated identifiers** (`entry_id` in a `reverse`): the
    caller repeats an id the ledger issued. Validated by `require_identifier` at admission,
    never tokenized, because tokenizing it would make every reference resolve to nothing.
@@ -54,6 +56,12 @@ always meaningful), and a fixed `tk1` version prefix: between 49 and 80 characte
 `[A-Za-z0-9_-]`, validated once more after construction. The token domain and key version are in `definition`; rotating the key
 means a new journal, and cross-journal correlation is an explicit operation.
 
+A free-text replacement has the parallel form `rd1_<domain>_<base64url(HMAC-SHA256(key,
+domain || ":text" || 0x00 || text))>`; the `:text` purpose suffix (a domain cannot contain
+`:`) separates it from the identifier space, so a value used as both an identifier and a
+description yields two unrelated outputs. Both forms are validated against their grammar
+after construction.
+
 ## Scope and mechanism
 
 M2c covers schema v1 documents and the journal's admission `Request`, through one
@@ -73,7 +81,9 @@ classes: amounts, currencies, sides and account references in the clear; `descri
 tag values redacted; caller identifiers tokenized; the `entry_id` of a `reverse` validated
 and kept. A field of the wrong type is left for the codec to refuse structurally. In a v1
 trace, tool `arguments` and `result` are untyped JSON and are redacted fail-closed: every
-string leaf is replaced, structure and non-string leaves are kept. `trace_id`, `call_id`
+string, whether an object key or a leaf, and every number is replaced by a redaction token
+(a card number is a number as often as a string); booleans, null and structure are kept.
+Nothing replays a tool payload, so nothing depends on the original values. `trace_id`, `call_id`
 and idempotency keys are tokenized; `scenario_id` and the agent descriptor are operator
 configuration and stay as given; metadata values are redacted.
 

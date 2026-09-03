@@ -221,9 +221,7 @@ class TestNoRawValueReachesStorage:
 
 
 class TestReplayAndKeyBinding:
-    def test_reopen_needs_no_key_to_rebuild_but_the_same_key_to_admit(
-        self, tokenizing: Journal
-    ) -> None:
+    def test_reopen_for_admission_requires_the_same_key(self, tokenizing: Journal) -> None:
         tokenizing.handle(post("order-42", call_id="c1", description="alice@example.com"))
         head, path = tokenizing.ledger.head, tokenizing.path
         tokenizing.close()
@@ -298,3 +296,17 @@ class TestReplayAndKeyBinding:
         )
         stored = everything_stored(tokenizing.path)
         assert "4111" not in stored and "123-45" not in stored and '"ssn"' not in stored
+
+
+def test_create_warns_on_sensitive_looking_account_ids(tmp_path: Path) -> None:
+    chart = ChartOfAccounts(
+        [
+            Account("alice@example.com", AccountType.LIABILITY, USD),
+            Account("revenue", AccountType.REVENUE, USD),
+        ]
+    )
+    with pytest.warns(UserWarning, match="looks like an email"):
+        j = Journal.create(
+            str(tmp_path / "w.journal"), chart, clock=SteppingClock(EPOCH), ids=SequentialIds()
+        )
+    j.close()

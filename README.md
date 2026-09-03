@@ -190,16 +190,19 @@ fingerprint and the hash chain are the core's own length-prefixed encoding. The 
 null set (`none`), which allows everything and still writes a complete decision row; real
 policy arrives in M3 behind the same interface.
 
-**Redaction and tokenization (M2c).** Nothing a caller types has to reach disk. With a
+**Redaction and tokenization (M2c).** No caller identifier or free text has to reach disk.
+With a
 `TokenizingAdmitter` (or a `Recorder(redactor=...)` for traces), every caller identifier
 (idempotency keys, transaction ids, call ids) becomes a keyed HMAC token *before* the
 command is fingerprinted, looked up or written, so a later `settle` with the raw id finds
 the transaction the earlier `open_transaction` stored, and a retry with the raw key replays;
 every free-text field (descriptions, tags, message content, tool arguments and results,
 account names) becomes a deterministic replacement. Amounts, currencies, sides and
-account references stay in the clear: they are the books. A redacted journal or trace
-replays with no key at all, because every digest was computed over the stored form. The
-identity admitter, which changes nothing, remains available for development.
+account references stay in the clear: they are the books. Every digest was computed over
+the stored form, so the fold that rebuilds a journal and the replay of a trace need no key;
+opening a journal *for admission* requires the key that created it, and a different key
+under the same label is detected and refused. The identity admitter, which changes
+nothing, remains available for development.
 
 ```python
 from ledgergate.codec import Tokenizer

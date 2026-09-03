@@ -45,6 +45,7 @@ from ledgergate.codec.tokens import (
     REDACTION_PATTERN,
     TOKEN_PATTERN,
     Tokenizer,
+    looks_sensitive,
 )
 
 __all__ = [
@@ -66,5 +67,6 @@ __all__ = [
     "encode_command",
     "encode_draft",
     "loads",
+    "looks_sensitive",
     "require_ijson",
 ]

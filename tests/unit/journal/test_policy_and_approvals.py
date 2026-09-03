@@ -544,16 +544,20 @@ class TestApprovalProtocol:
         j.close()
 
     def test_journal_without_verification_key_never_verifies(self, tmp_path: Path) -> None:
+        no_lines = ThresholdPolicySet(
+            version="nk", deny_above=[Threshold("open_transaction", "USD", 100_000)]
+        )
         j = Journal.create(
             str(tmp_path / "nokey.journal"),
             CHART,
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
-            policy=POLICY,
+            policy=no_lines,
         )
-        pending(j, "k1")
-        r = present(j, "k1", artefact(j, "k1"))
-        assert r.error_message == "runtime.approval_rejected: approval_invalid"
+        r = j.handle({**open_txn("k1", "t-big", amount=10), "approval": artefact_free(j)})
+        assert r.response == "applied"
+        (pres,) = table(j.path, "approvals")
+        assert pres[13] == 0 and pres[14] == "approval_not_applicable"  # nothing can verify
         j.close()
         with pytest.raises(ValueError):
             Journal.create(
@@ -610,8 +614,14 @@ def artefact_free(j: Journal) -> dict[str, Any]:
 class TestConfigurationBinding:
     def test_same_version_label_different_rules_is_refused_at_open(self, tmp_path: Path) -> None:
         path = str(tmp_path / "rules.journal")
+        key = verification_key_text(SIGNER)
         j = Journal.create(
-            path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=POLICY
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=key,
         )
         j.close()
         looser = ThresholdPolicySet(
@@ -822,17 +832,105 @@ class TestNoPolicyCodeOnFailedVerdict:
         pending(gated, "k1")
         present(gated, "k1", artefact(gated, "k1"))
         conn = sqlite3.connect(gated.path, isolation_level=None)
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             (pres,) = [r for r in rows(conn, "approvals") if r[14] == "checks_passed"]
+            (dec,) = [d for d in rows(conn, "decisions") if d[9] == "approval_valid"]
+            inv = pres[1]
+            # (a) a valid verdict without a consumption reference is refused by the CHECK
             conn.execute("BEGIN")
-            seq = conn.execute(
+            seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
+            with pytest.raises(sqlite3.IntegrityError, match=r"CHECK|constraint"):
+                conn.execute(
+                    "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        seq,
+                        inv,
+                        dec[2],
+                        "{}",
+                        "v",
+                        "allow",
+                        "r",
+                        "why",
+                        pres[0],
+                        "approval_valid",
+                        None,
+                    ),
+                )
+            conn.execute("ROLLBACK")
+            # (b) a consumption of a presentation whose checks failed is refused by the trigger
+            conn.execute("BEGIN")
+            failed = conn.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
+            conn.execute(
+                "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    failed,
+                    inv,
+                    "0" * 32,
+                    "x1",
+                    "cfo",
+                    "f" * 64,
+                    "k",
+                    None,
+                    None,
+                    None,
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:00:01+00:00",
+                    "A" * 86,
+                    1,
+                    "approval_expired",
+                ),
+            )
+            cons = conn.execute(
                 "INSERT INTO journal (kind) VALUES ('approval_consumptions')"
             ).lastrowid
-            with pytest.raises(sqlite3.IntegrityError):  # UNIQUE on approval_id, or the trigger
+            with pytest.raises(sqlite3.IntegrityError, match="checks passed"):
+                conn.execute(
+                    "INSERT INTO approval_consumptions VALUES (?,?,?,?)", (cons, "x1", failed, inv)
+                )
+            conn.execute("ROLLBACK")
+            # (c) a consumption must carry its presentation's approval id and invocation
+            conn.execute("BEGIN")
+            cons = conn.execute(
+                "INSERT INTO journal (kind) VALUES ('approval_consumptions')"
+            ).lastrowid
+            with pytest.raises(sqlite3.IntegrityError):
                 conn.execute(
                     "INSERT INTO approval_consumptions VALUES (?,?,?,?)",
-                    (seq, "other-id", pres[0] + 1000, pres[1]),
+                    (cons, "other", pres[0], inv),
+                )
+            conn.execute("ROLLBACK")
+            # (d) a decision may not claim a presentation another invocation made
+            conn.execute("BEGIN")
+            other_inv = next(r for r in rows(conn, "invocations") if r[0] != inv)[0]
+            seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
+            with pytest.raises(sqlite3.IntegrityError, match="own invocation"):
+                conn.execute(
+                    "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        seq,
+                        other_inv,
+                        None,
+                        "{}",
+                        "v",
+                        "allow",
+                        "r",
+                        "why",
+                        pres[0],
+                        "approval_not_applicable",
+                        None,
+                    ),
                 )
             conn.execute("ROLLBACK")
         finally:
             conn.close()
+
+    def test_create_refuses_approval_rules_without_a_verification_key(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="nothing could ever approve"):
+            Journal.create(
+                str(tmp_path / "x.journal"),
+                CHART,
+                clock=SteppingClock(EPOCH),
+                ids=SequentialIds(),
+                policy=POLICY,
+            )

@@ -122,6 +122,11 @@ BEGIN
     SELECT RAISE(ABORT, 'a consumption must reference a presentation whose checks passed')
     WHERE (SELECT check_result FROM approvals WHERE journal_sequence = NEW.presentation)
           IS NOT 'checks_passed';
+    SELECT RAISE(ABORT, 'a consumption must match its presentation''s approval id and invocation')
+    WHERE (SELECT approval_id FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT NEW.approval_id
+       OR (SELECT invocation FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT NEW.invocation;
 END;
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -137,10 +142,22 @@ CREATE TABLE IF NOT EXISTS decisions (
     approval_verdict TEXT CHECK (approval_verdict IS NULL OR approval_verdict IN (
         'approval_valid','approval_already_used','approval_not_applicable',
         'approval_invalid','approval_expired','approval_scope_mismatch')),
-    consumption INTEGER REFERENCES approval_consumptions(journal_sequence),
+    consumption INTEGER UNIQUE REFERENCES approval_consumptions(journal_sequence),
     CHECK ((presentation IS NULL) = (approval_verdict IS NULL)),
     CHECK ((consumption IS NOT NULL) = (approval_verdict IS 'approval_valid'))
 );
+
+CREATE TRIGGER IF NOT EXISTS decisions_presentation_is_own
+BEFORE INSERT ON decisions
+BEGIN
+    SELECT RAISE(ABORT, 'a decision must reference a presentation of its own invocation')
+    WHERE NEW.presentation IS NOT NULL
+      AND (SELECT invocation FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT NEW.invocation;
+    SELECT RAISE(ABORT, 'a decision must reference the presentation its invocation made')
+    WHERE NEW.presentation IS NULL
+      AND EXISTS (SELECT 1 FROM approvals WHERE invocation = NEW.invocation);
+END;
 
 CREATE TABLE IF NOT EXISTS outcomes (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),

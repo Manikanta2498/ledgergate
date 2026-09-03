@@ -242,6 +242,11 @@ class Journal:
         against; ``none`` means no artefact can ever verify."""
         if approval_key != "none":
             verification_key(approval_key)  # refuse a malformed key at creation
+        elif getattr(policy, "approve_above", ()):
+            raise ConfigurationError(
+                "the policy set can require approval but the journal has no verification key,"
+                " so nothing could ever approve; supply approval_key or drop approve_above"
+            )
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
         self._approval_key = approval_key
         target = Path(path)

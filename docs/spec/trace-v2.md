@@ -41,7 +41,11 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   operation resolved to and, for `replay`, the exact outcome that answered (so a retry
   that was told `awaiting_approval` says so even if the operation was approved later),
   whose original decision and pair appear earlier in the same trace (a trace is always
-  derived from a whole journal, under one read snapshot, so every reference resolves).
+  derived from a whole journal, under one read snapshot, so every reference resolves, and
+  the model enforces it: a `new` creates a fresh operation and a fresh outcome; a `replay`,
+  `conflict` or `approval` names an operation an earlier `new` created; a `replay` or a
+  failed-verdict `approval` names an outcome that operation produced earlier; a produced
+  outcome is produced exactly once).
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
   names the operation's pending tip, an outcome produced by an *earlier* invocation, exactly
@@ -159,7 +163,9 @@ load; a document violating them fails to load rather than failing a row, and the
 then records that the loaded document satisfies them. The registry is the statement of what
 is checked; the validator is one of its mechanisms. The read invariant is the one check of
 the projection a trace supports: every `read_result` head equals the most recent recorded
-`ledger_result` head (or genesis) and its cursor never exceeds an outcome recorded before it.
+`ledger_result` head (or genesis) and its cursor equals the largest outcome any earlier
+resolution referenced, since every outcome is named by the resolution that produced it and
+that resolution precedes any later read; a stale or premature projection fails.
 The scorecard is the combined result; the process exits 0 only when nothing failed.
 
 ## Status

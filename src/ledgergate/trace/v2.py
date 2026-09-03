@@ -179,7 +179,9 @@ class TraceV2(_Strict):
     otherwise; a read_result exists iff a read was not denied; every runtime intent is
     bracketed by a tool_call immediately before and a tool_result immediately after with
     the same call_id; events of one intent appear in ordinal order; seq is dense and
-    strictly increasing; every ledger_command has exactly one ledger_result."""
+    strictly increasing; every ledger_command has exactly one ledger_result and command_id
+    is unique; every operation and outcome reference resolves to one recorded earlier, and
+    a produced outcome is produced once."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -234,10 +236,12 @@ class TraceV2(_Strict):
                 if owner is None:
                     raise ValueError(f"ledger_result {e.command_id} has no ledger_command")
                 by_intent[owner].append(e)
+        positions = {id(e): i for i, e in enumerate(self.events)}
         for r in resolutions:
             self._check_intent(r, by_intent[r.intent_id])
             if r.disposition != "legacy":
-                self._check_boundary(r, by_intent[r.intent_id])
+                self._check_boundary(r, by_intent[r.intent_id], positions)
+        self._check_references(resolutions, by_intent)
         for intent_id, group in by_intent.items():
             if not any(isinstance(e, InvocationResolution) for e in group):
                 raise ValueError(f"intent {intent_id!r} has events but no resolution")
@@ -301,13 +305,51 @@ class TraceV2(_Strict):
         ]:
             raise ValueError(f"{r.intent_id}: legacy grammar is intent, resolution, command")
 
-    def _check_boundary(self, r: InvocationResolution, group: list[AnyV2Event]) -> None:
+    def _check_references(
+        self, resolutions: list[InvocationResolution], by_intent: dict[str, list[AnyV2Event]]
+    ) -> None:
+        """Every reference resolves to something recorded earlier: a new operation and a
+        produced outcome are fresh; a replay, conflict or approval names an operation an
+        earlier new created; a replay or failed approval names an outcome that operation
+        produced earlier."""
+        operations: set[str] = set()
+        outcomes: dict[str, str] = {}  # outcome_ref -> operation_id
+        for r in resolutions:
+            op, out = r.operation_id, r.outcome_ref
+            decision = next(
+                (e for e in by_intent[r.intent_id] if isinstance(e, PolicyDecision)), None
+            )
+            produced = r.disposition == "new" or (
+                r.disposition == "approval"
+                and decision is not None
+                and not decision.runtime_written
+            )
+            if r.disposition in ("read", "invalid", "legacy"):
+                continue
+            assert op is not None
+            if r.disposition == "new":
+                if op in operations:
+                    raise ValueError(f"{r.intent_id}: new names an operation already created")
+                operations.add(op)
+            elif op not in operations:
+                raise ValueError(f"{r.intent_id}: {r.disposition} names an unknown operation")
+            if produced:
+                assert out is not None
+                if out in outcomes:
+                    raise ValueError(f"{r.intent_id}: outcome {out} was already produced")
+                outcomes[out] = op
+            elif out is not None and outcomes.get(out) != op:
+                raise ValueError(f"{r.intent_id}: outcome {out} was not produced for {op}")
+
+    def _check_boundary(
+        self, r: InvocationResolution, group: list[AnyV2Event], positions: dict[int, int]
+    ) -> None:
         """A runtime intent is bracketed by its own tool_call and tool_result: the event
         immediately before its first event is a tool_call, the event immediately after its
         last is a tool_result, and both carry the intent's call_id."""
         first, last = group[0], group[-1]
-        before = self.events.index(first) - 1
-        after = self.events.index(last) + 1
+        before = positions[id(first)] - 1
+        after = positions[id(last)] + 1
         call = self.events[before] if before >= 0 else None
         result = self.events[after] if after < len(self.events) else None
         if not isinstance(call, ToolCallEvent):

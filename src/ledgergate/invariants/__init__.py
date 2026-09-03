@@ -184,6 +184,8 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
             and d.approval is not None
             and d.approval.verdict == d.reason
             and d.approval.verdict not in ("approval_valid", "approval_not_applicable")
+            and d.consumption_ref is None
+            and d.approval.presentation_ref == r.presentation_ref
         )
         if not ok:
             out.append(
@@ -203,7 +205,21 @@ def context_matches_decision(t: TraceV2) -> list[Finding]:
     verdict carries no policy-derived subject or aggregates (no policy code ran)."""
     out = []
     attempted = {r.intent_id: r.attempted_digest for r in t.resolutions()}
+    kinds = {
+        r.intent_id: ("request" if r.disposition == "read" else "fingerprint")
+        for r in t.resolutions()
+    }
     for iid, d in _decided(t).items():
+        if d.context.get("digest_kind") != kinds.get(iid):
+            out.append(
+                Finding(
+                    "context_matches_decision",
+                    "error",
+                    f"{iid}: digest_kind {d.context.get('digest_kind')!r} does not fit"
+                    " the disposition",
+                    iid,
+                )
+            )
         if d.context.get("command_digest") != attempted.get(iid):
             out.append(
                 Finding(
@@ -287,10 +303,11 @@ def books_balance_and_chain_verifies(t: TraceV2) -> list[Finding]:
     return out
 
 
-def read_observed_the_replayed_head(t: TraceV2) -> list[Finding]:
+def read_observed_the_recorded_head(t: TraceV2) -> list[Finding]:
     """Every read_result's head is the head the most recent preceding ledger_result recorded
-    (or the genesis hash), and its cursor never exceeds the largest outcome any earlier
-    resolution referenced: a read saw the projection the journal was at, not another."""
+    (or the genesis hash), and its cursor equals the largest outcome any earlier resolution
+    referenced (every outcome is named by the resolution that produced it, which precedes
+    any later read): a read saw the projection the journal was at, neither stale nor ahead."""
     out = []
     head = GENESIS_HASH
     max_outcome = 0
@@ -303,20 +320,20 @@ def read_observed_the_replayed_head(t: TraceV2) -> list[Finding]:
             if e.head != head:
                 out.append(
                     Finding(
-                        "read_observed_the_replayed_head",
+                        "read_observed_the_recorded_head",
                         "error",
                         f"{e.intent_id}: read saw head {e.head[:12]}"
                         f" but the books were at {head[:12]}",
                         e.intent_id,
                     )
                 )
-            if e.cursor > max_outcome:
+            if e.cursor != max_outcome:
                 out.append(
                     Finding(
-                        "read_observed_the_replayed_head",
+                        "read_observed_the_recorded_head",
                         "error",
-                        f"{e.intent_id}: read cursor {e.cursor} exceeds any outcome"
-                        " recorded before it",
+                        f"{e.intent_id}: read cursor {e.cursor} is not the latest outcome"
+                        f" recorded before it ({max_outcome})",
                         e.intent_id,
                     )
                 )
@@ -405,10 +422,10 @@ REGISTRY: tuple[Invariant, ...] = (
         _has_ledger_pairs,
     ),
     Invariant(
-        "read_observed_the_replayed_head",
-        read_observed_the_replayed_head.__doc__ or "",
+        "read_observed_the_recorded_head",
+        read_observed_the_recorded_head.__doc__ or "",
         "docs/spec/journal.md, read protocol",
-        read_observed_the_replayed_head,
+        read_observed_the_recorded_head,
         lambda t: any(isinstance(e, ReadResult) for e in t.events),
     ),
     Invariant(

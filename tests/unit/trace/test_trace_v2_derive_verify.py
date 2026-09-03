@@ -668,58 +668,69 @@ class TestEveryDispositionTheSpecSinglesOut:
 
 class TestBoundaryGrammar:
     def test_a_runtime_intent_without_its_tool_call_is_refused(self) -> None:
-        cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
-        base = {
-            "trace_id": "t",
-            "started_at": EPOCH.isoformat(),
-            "ended_at": EPOCH.isoformat(),
-            "policy_set_version": "none",
-        }
-        intent = {
-            "type": "command_intent",
-            "seq": 2,
-            "at": EPOCH.isoformat(),
-            "intent_id": "i",
-            "call_id": "c",
-            "command": cmd,
-        }
+        at = EPOCH.isoformat()
+        base = {"trace_id": "t", "started_at": at, "ended_at": at, "policy_set_version": "none"}
         res = {
             "type": "invocation_resolution",
-            "seq": 3,
-            "at": EPOCH.isoformat(),
+            "seq": 2,
+            "at": at,
             "intent_id": "i",
-            "disposition": "conflict",
-            "operation_id": "op",
+            "disposition": "invalid",
             "attempted_digest": "0" * 64,
         }
         call = {
             "type": "tool_call",
             "seq": 1,
-            "at": EPOCH.isoformat(),
+            "at": at,
             "call_id": "c",
-            "tool": "reverse",
+            "tool": "x",
             "arguments": {},
         }
         result = {
             "type": "tool_result",
-            "seq": 4,
-            "at": EPOCH.isoformat(),
+            "seq": 3,
+            "at": at,
             "call_id": "c",
             "ok": False,
             "error": {"type": "X", "message": "m"},
         }
-        TraceV2.model_validate({**base, "events": [call, intent, res, result]})
+        TraceV2.model_validate({**base, "events": [call, res, result]})
         with pytest.raises(ValidationError, match="no tool_call immediately before"):
-            TraceV2.model_validate({**base, "events": [intent, res, result]})
+            TraceV2.model_validate({**base, "events": [{**res, "seq": 1}, {**result, "seq": 2}]})
         with pytest.raises(ValidationError, match="no matching tool_result"):
-            TraceV2.model_validate(
-                {**base, "events": [call, intent, res, {**result, "call_id": "other"}]}
-            )
+            TraceV2.model_validate({**base, "events": [call, res, {**result, "call_id": "other"}]})
+        cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
+        intent = {
+            "type": "command_intent",
+            "seq": 2,
+            "at": at,
+            "intent_id": "i",
+            "call_id": "c",
+            "command": cmd,
+        }
+        new = {**res, "seq": 3, "disposition": "new", "operation_id": "op", "outcome_ref": "o"}
+        decision = {
+            "type": "policy_decision",
+            "seq": 4,
+            "at": at,
+            "intent_id": "i",
+            "policy_set_version": "none",
+            "decision": "deny",
+            "matched_rule": "r",
+            "reason": "x",
+            "context": {},
+        }
         with pytest.raises(ValidationError, match="differs from its tool_call"):
             TraceV2.model_validate(
                 {
                     **base,
-                    "events": [{**call, "call_id": "z"}, intent, res, {**result, "call_id": "z"}],
+                    "events": [
+                        {**call, "call_id": "z"},
+                        intent,
+                        new,
+                        decision,
+                        {**result, "seq": 5, "call_id": "z"},
+                    ],
                 }
             )
 
@@ -736,17 +747,17 @@ class TestSecondReviewFindings:
     def test_read_invariant_checks_recorded_head_and_cursor(self, journal_path: str) -> None:
         t = derive(journal_path)
         assert {r.name: r.status for r in check(t).results}[
-            "read_observed_the_replayed_head"
+            "read_observed_the_recorded_head"
         ] == "pass"
         doc = t.model_dump(mode="json")
         rr = next(e for e in doc["events"] if e["type"] == "read_result")
         rr["head"] = "e" * 64
         bad = check(TraceV2.model_validate(doc))
-        assert {r.name: r.status for r in bad.results}["read_observed_the_replayed_head"] == "fail"
+        assert {r.name: r.status for r in bad.results}["read_observed_the_recorded_head"] == "fail"
         doc2 = t.model_dump(mode="json")
-        next(e for e in doc2["events"] if e["type"] == "read_result")["cursor"] = 10_000
+        next(e for e in doc2["events"] if e["type"] == "read_result")["cursor"] = 0  # stale
         assert {r.name: r.status for r in check(TraceV2.model_validate(doc2)).results}[
-            "read_observed_the_replayed_head"
+            "read_observed_the_recorded_head"
         ] == "fail"
 
     def test_recorded_heads_must_chain(self, journal_path: str) -> None:
@@ -871,3 +882,92 @@ class TestSecondReviewFindings:
         after = derive(journal_path)
         assert sum(e.type == "message" for e in before.events) == 1
         assert sum(e.type == "message" for e in after.events) == 2
+
+
+class TestThirdReviewFindings:
+    def test_a_schema_3_journal_is_refused_by_open_and_derive(self, journal_path: str) -> None:
+        import sqlite3
+
+        from ledgergate.journal import ConfigurationError
+
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET schema_version = 3")
+        conn.close()
+        with pytest.raises(ConfigurationError, match="schema 3"):
+            Journal.open(
+                journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=POLICY
+            )
+        with pytest.raises(DerivationError, match="schema 3"):
+            derive(journal_path)
+
+    def test_dangling_references_are_refused_at_load(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        doc = t.model_dump(mode="json")
+        replay = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        replay["operation_id"] = "command-424242"
+        with pytest.raises(ValidationError, match="unknown operation"):
+            TraceV2.model_validate(doc)
+        doc = t.model_dump(mode="json")
+        replay = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        replay["outcome_ref"] = "outcome-999999"
+        with pytest.raises(ValidationError, match="was not produced"):
+            TraceV2.model_validate(doc)
+        doc = t.model_dump(mode="json")
+        news = [
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "new"
+        ]
+        news[1]["outcome_ref"] = news[0]["outcome_ref"]
+        with pytest.raises(ValidationError, match="already produced"):
+            TraceV2.model_validate(doc)
+
+    def test_runtime_decision_with_a_consumption_or_foreign_presentation_fails(
+        self, tmp_path: Path
+    ) -> None:
+        j = Journal.create(
+            str(tmp_path / "f.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(
+            _open(
+                "big",
+                "c2",
+                500,
+                approval=_artefact(j, "big", expires_at=EPOCH + timedelta(seconds=1)),
+            )
+        )
+        j.close()
+        t = derive(str(tmp_path / "f.journal"))
+        doc = t.model_dump(mode="json")
+        d = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["matched_rule"].startswith("runtime.")
+        )
+        d["consumption_ref"] = "consumption-99"
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+        doc = t.model_dump(mode="json")
+        d = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["matched_rule"].startswith("runtime.")
+        )
+        d["context"]["digest_kind"] = "request"
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["context_matches_decision"] == "fail"

@@ -80,7 +80,7 @@ non-optional layer whose module does not exist; M2b writes it as an optional lay
 final in shape and passes on day one.
 
 `journal` imports `sqlite3`; the core still may not; `ledgergate.derive` (M3) is the
-`trace(journal) -> Trace` derivation and depends on both siblings. This supersedes the
+`trace(journal) -> TraceV2` derivation and depends on both siblings. This supersedes the
 layer line in ADR-0001, which predates `trace`.
 
 ### 2. Authority is a pure layer with explicit inputs (M3)

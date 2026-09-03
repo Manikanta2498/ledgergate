@@ -62,8 +62,9 @@ admissible; it does not itself move money on external rails (see ADR-0002).
 
 **What exists today:** the ledger core; the trace schema, recorder and replayer; the
 durable journal, so a process can be restarted and answer a retried key exactly as it did
-the first time; and the tokenizing, redacting admitter, so no caller identifier or free
-text has to reach disk. The MCP runtime lands in M4. The gates that keep all of it honest run in CI on every pull request and every push
+the first time; the tokenizing, redacting admitter, so no caller identifier or free text
+has to reach disk; the policy layer with signed, single-use approvals; trace v2 derived
+from the journal; and the invariant registry behind `ledgergate verify`. The MCP runtime lands in M4. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema
@@ -229,7 +230,7 @@ pass         runtime_decisions_are_verdicts
 pass         context_matches_decision
 pass         ledger_pairs_replay
 pass         books_balance_and_chain_verifies
-pass         read_observed_the_replayed_head
+pass         read_observed_the_recorded_head
 no_evidence  legacy_carries_no_policy_evidence
 PASS: 8 intents, 3 ledger commands
 ```

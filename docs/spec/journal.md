@@ -529,7 +529,7 @@ nothing.
 
 ## Trace derivation (M3)
 
-`trace(journal) -> Trace` is deterministic and emits schema v2 only. Ordering is
+`trace(journal) -> TraceV2` is deterministic and emits schema v2 only. Ordering is
 *invocation-anchored*: every event derived from one invocation, from whatever table its
 data comes, is placed at `(invocation.journal_sequence, ordinal)` with the fixed ordinal
 order in [trace-v2](trace-v2.md), so the `tool_call` precedes the `command_intent` even

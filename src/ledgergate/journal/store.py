@@ -43,7 +43,21 @@ from ledgergate.journal.admission import (
     IdentityAdmitter,
     Request,
 )
-from ledgergate.journal.policy import NullPolicySet, PolicyContext, PolicySet
+from ledgergate.journal.approvals import (
+    Approval,
+    CheckResult,
+    Verdict,
+    check,
+    verification_key,
+)
+from ledgergate.journal.policy import (
+    Decision,
+    NullPolicySet,
+    PolicyContext,
+    PolicySet,
+    command_amount,
+    command_kind,
+)
 from ledgergate.journal.schema import (
     JOURNAL_TABLES,
     SCHEMA_VERSION,
@@ -204,6 +218,7 @@ class Journal:
     _ledger: Ledger = field(init=False, repr=False)
     _cursor: int = field(init=False, default=0)
     _pending_projection: tuple[Ledger, int] | None = field(init=False, default=None, repr=False)
+    _approval_key: str = field(init=False, default="none", repr=False)
 
     # ------------------------------------------------------------- lifecycle
 
@@ -218,8 +233,14 @@ class Journal:
         currencies: Mapping[str, Currency] | None = None,
         admitter: Admitter | None = None,
         policy: PolicySet | None = None,
+        approval_key: str = "none",
     ) -> Journal:
+        """``approval_key`` is the base64url Ed25519 verification key approvals must verify
+        against; ``none`` means no artefact can ever verify."""
+        if approval_key != "none":
+            verification_key(approval_key)  # refuse a malformed key at creation
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
+        self._approval_key = approval_key
         target = Path(path)
         if target.exists() and target.stat().st_size > 0:
             # Inspect read-only before any pragma touches the file. Only an empty database
@@ -273,6 +294,7 @@ class Journal:
             token_domain=self.admitter.token_domain,
             token_key_version=self.admitter.token_key_version,
             token_check=self.admitter.key_check(),
+            approval_key=self._approval_key,
         )
         registry = definition.registry
         with self._txn():
@@ -441,6 +463,7 @@ class Journal:
         ).fetchone()
 
         # step 4: resolve the key and write the invocation
+        presented = request.approval is not None
         if row is None:
             op_seq = self._alloc("operations")
             self._conn.execute(
@@ -449,7 +472,9 @@ class Journal:
             )
             disposition = "new"
         elif row[1] == fingerprint:
-            op_seq, disposition = row[0], "replay"  # approvals are refused at admission in M2b
+            op_seq = row[0]
+            current = self._current_outcome_kind(op_seq)
+            disposition = "approval" if current == "awaiting_approval" and presented else "replay"
         else:
             op_seq, disposition = row[0], "conflict"
 
@@ -470,6 +495,14 @@ class Journal:
         )
         self._inbound(inv_seq, request)  # step 5
 
+        # An artefact presented where none was expected is kept, not dropped.
+        presentation: int | None = None
+        verdict: Verdict | None = None
+        consumption: int | None = None
+        if presented and disposition != "approval":
+            presentation = self._present(inv_seq, request, "approval_not_applicable")
+            verdict = "approval_not_applicable"
+
         # step 6: short paths
         if disposition == "replay":
             outcome_seq = self._current_outcome(op_seq)
@@ -489,28 +522,60 @@ class Journal:
             )
             self._respond(inv_seq, disposition, None, "conflict", response)
             return response
+        if disposition == "approval":
+            presentation, verdict, consumption = self._validate_approval(
+                inv_seq, request, now, fingerprint
+            )
 
         # step 7: decide
+        approval_ctx = (
+            None if verdict is None else {"presentation": presentation, "verdict": verdict}
+        )
+        money = command_amount(command)
         context = PolicyContext(
             principal=self.principal,
-            subject=None,
+            subject=self.policy.subject_of(command),
             command_digest=fingerprint,
             digest_kind="fingerprint",
             evaluated_at=now,
             policy_set_version=self.policy.version,
+            command_kind=command_kind(command),
+            amount=None if money is None else str(money.amount),
+            currency=None if money is None else money.currency.code,
+            aggregates=self.policy.aggregates_for(command, now, _History(self)),
+            approval=approval_ctx,
         )
-        decision = self.policy.evaluate(context)
-        dec_seq = self._decision(inv_seq, op_seq, context, decision)
+        if verdict is not None and verdict not in ("approval_valid", "approval_not_applicable"):
+            # A failed verdict: the runtime decides; the policy set never sees it.
+            decision = Decision("deny", "runtime.approval_rejected", verdict)
+        else:
+            decision = self.policy.evaluate(context)
+            if decision.decision == "approval_required" and verdict == "approval_valid":
+                raise ConfigurationError(
+                    "policy set asked for approval after a valid approval was consumed;"
+                    " the rule that required it has been satisfied and the set is misconfigured"
+                )
+        dec_seq = self._decision(
+            inv_seq, op_seq, context, decision, presentation, verdict, consumption
+        )
         head = self._ledger.head
         if decision.decision != "allow":
-            kind = "denied" if decision.decision == "deny" else "awaiting_approval"
+            rejected_artefact = decision.matched_rule == "runtime.approval_rejected"
+            # Pending-operation table: a failed verdict leaves the operation pending, so a
+            # later correct artefact can complete it; any other deny is terminal.
+            if decision.decision == "deny" and not rejected_artefact:
+                kind, error_type = "denied", "PolicyDenied"
+            elif rejected_artefact:
+                kind, error_type = "awaiting_approval", "ApprovalRejected"
+            else:
+                kind, error_type = "awaiting_approval", "ApprovalRequired"
             outcome_seq = self._outcome(op_seq, kind, dec_seq, head, head)
             response = Response(
                 inv_seq,
                 disposition,
                 kind,
                 False,
-                error_type="PolicyDenied" if kind == "denied" else "ApprovalRequired",
+                error_type=error_type,
                 error_message=f"{decision.matched_rule}: {decision.reason}",
                 outcome=outcome_seq,
             )
@@ -586,6 +651,8 @@ class Journal:
             ),
         )
         self._inbound(inv_seq, request)
+        if request.approval is not None:
+            self._present(inv_seq, request, "approval_not_applicable")
         if self.policy.gates_read(request.tool):
             context = PolicyContext(
                 self.principal, None, request.request_digest(), "request", now, self.policy.version
@@ -785,7 +852,14 @@ class Journal:
         return None if value is None else int(value)
 
     def _decision(
-        self, inv_seq: int, op_seq: int | None, context: PolicyContext, decision: Any
+        self,
+        inv_seq: int,
+        op_seq: int | None,
+        context: PolicyContext,
+        decision: Decision,
+        presentation: int | None = None,
+        verdict: Verdict | None = None,
+        consumption: int | None = None,
     ) -> int:
         seq = self._alloc("decisions")
         self._conn.execute(
@@ -799,12 +873,79 @@ class Journal:
                 decision.decision,
                 decision.matched_rule,
                 decision.reason,
-                None,
-                None,
-                None,
+                presentation,
+                verdict,
+                consumption,
             ),
         )
         return seq
+
+    def _current_outcome_kind(self, op_seq: int) -> str | None:
+        row = self._conn.execute(
+            "SELECT outcome FROM outcomes WHERE operation = ?"
+            " ORDER BY journal_sequence DESC LIMIT 1",
+            (op_seq,),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def _present(self, inv_seq: int, request: Request, result: CheckResult) -> int:
+        """The approvals presentation row: one per presentation, carrying the pure-check
+        result; the verdict lives on the decision."""
+        assert request.approval is not None
+        a = Approval.from_json(request.approval)
+        seq = self._alloc("approvals")
+        self._conn.execute(
+            "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                seq,
+                inv_seq,
+                a.journal_id,
+                a.approval_id,
+                a.approver,
+                a.fingerprint,
+                a.key,
+                a.subject,
+                a.amount,
+                a.currency,
+                a.issued_at.isoformat(),
+                a.expires_at.isoformat(),
+                a.signature,
+                result,
+            ),
+        )
+        return seq
+
+    def _validate_approval(
+        self, inv_seq: int, request: Request, now: datetime, fingerprint: str
+    ) -> tuple[int, Verdict, int | None]:
+        """Checks 1 to 3, then the presentation row, then consumption (check 4)."""
+        assert request.approval is not None and request.key is not None
+        artefact = Approval.from_json(request.approval)
+        if self._definition.approval_key == "none":
+            result: CheckResult = "approval_invalid"  # no verification key: nothing verifies
+        else:
+            result = check(
+                artefact,
+                public=verification_key(self._definition.approval_key),
+                now=now,
+                journal_id=self._definition.journal_id,
+                fingerprint=fingerprint,
+                key=request.key,
+            )
+        presentation = self._present(inv_seq, request, result)
+        if result != "checks_passed":
+            return presentation, result, None
+        used = self._conn.execute(
+            "SELECT 1 FROM approval_consumptions WHERE approval_id = ?", (artefact.approval_id,)
+        ).fetchone()
+        if used is not None:
+            return presentation, "approval_already_used", None
+        seq = self._alloc("approval_consumptions")
+        self._conn.execute(
+            "INSERT INTO approval_consumptions VALUES (?,?,?,?)",
+            (seq, artefact.approval_id, presentation, inv_seq),
+        )
+        return presentation, "approval_valid", seq
 
     def _outcome(
         self,
@@ -901,6 +1042,38 @@ class Journal:
             error_message=body["error"]["message"],
             outcome=outcome_seq,
         )
+
+
+class _History:
+    """Reads, inside the admitting transaction, what the policy set asks about the past."""
+
+    def __init__(self, journal: Journal) -> None:
+        self._journal = journal
+
+    def applied_total(self, *, subject: str, kind: str, currency: str, since: datetime) -> int:
+        j = self._journal
+        rows = j._conn.execute(
+            "SELECT op.command, i.requested_at FROM outcomes o"
+            " JOIN operations op ON op.journal_sequence = o.operation"
+            " JOIN invocation_responses r ON r.outcome = o.journal_sequence"
+            " JOIN invocations i ON i.journal_sequence = r.invocation"
+            " WHERE o.outcome = 'applied' AND r.disposition IN ('new', 'approval')"
+        ).fetchall()
+        total = 0
+        registry = j._definition.registry
+        for command_json, requested_at in rows:
+            if datetime.fromisoformat(requested_at) < since:
+                continue
+            command = decode_command(json.loads(command_json), registry)
+            money = command_amount(command)
+            if (
+                command_kind(command) == kind
+                and money is not None
+                and money.currency.code == currency
+                and j.policy.subject_of(command) == subject
+            ):
+                total += money.amount
+        return total
 
 
 # ------------------------------------------------------------------- helpers

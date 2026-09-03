@@ -254,7 +254,7 @@ class TestInvalidAdmission:  # family 2
                     "approval": {"id": 1},
                     "arguments": {},
                 },
-                "approval_unsupported",
+                "approval_malformed",
                 "approval",
             ),
         ],
@@ -289,7 +289,7 @@ class TestInvalidAdmission:  # family 2
         first, second = rows(raw, "invocations")
         assert first[8] == "fine" and second[8] is None
 
-    def test_approvals_tables_stay_empty_in_m2b(
+    def test_a_malformed_artefact_writes_no_presentation_row(
         self, journal: Journal, raw: sqlite3.Connection
     ) -> None:
         journal.handle(

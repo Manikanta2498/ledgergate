@@ -339,6 +339,13 @@ milestones replace an implementation, never the protocol:
   the test that makes that claim is the one that presents an artefact and asserts the
   `invalid` path. M2c's tokenizing admitter returns the same `approval_unsupported`; from
   M3 the admitter accepts artefacts and the presentation rules below apply.
+- **Policy sets and approvals** ship in the first M3 change: `ThresholdPolicySet`
+  (`deny_above`, `approve_above`, per-subject `window_caps`, `gated_reads`), the
+  `PolicyContext` fields it reads (`command_kind`, `amount`, `currency`, `aggregates`,
+  `approval`), the `History` seam the journal implements over its own rows, Ed25519
+  approval artefacts with the checks above, and `ledgergate journal pending` /
+  `ledgergate approve`. Both admitters accept an artefact from then on, validating its shape;
+  the verdict is the journal's.
 - **Trace derivation** is M3, with schema v2. M2b exposes the journal for inspection
   (`ledgergate journal dump`) but derives no trace; the M2a replayer is not run against
   a journal in M2b. The roadmap says so.

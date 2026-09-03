@@ -12,11 +12,12 @@ unknown tool, a malformed shape, an identifier the core would refuse, a command 
 the codec cannot decode, and a command the core's own constructors reject (an unbalanced
 draft, a zero posting). Nothing caller-controlled escapes the journal unrecorded.
 
-M2b ships the :class:`IdentityAdmitter`: identifiers are validated by the core's
-``require_identifier`` and passed through, free text is passed through, and an approval
-artefact is refused with ``approval_unsupported`` because the artefact format is an M3
-deliverable. M2c replaces it, behind the same :class:`Admitter` protocol, with the
-tokenizing and redacting one.
+M2b shipped the :class:`IdentityAdmitter`: identifiers are validated by the core's
+``require_identifier`` and passed through, free text is passed through. M2c added the
+tokenizing, redacting one behind the same :class:`Admitter` protocol. From M3 both accept an
+approval artefact, validated for *shape* here (the checks that decide its verdict are the
+journal's, inside the transaction); its ``key`` is already the stored token, since the
+approver issued it against what the journal holds.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ledgergate.codec import CodecError, Tokenizer, decode_command, digest
+from ledgergate.journal.approvals import Approval, ApprovalError
 from ledgergate.ledger import (
     Advance,
     ChartOfAccounts,
@@ -202,14 +204,18 @@ class IdentityAdmitter:
         arguments = value.get("arguments", {})
         if not isinstance(arguments, dict):
             raise AdmissionError("wrong_type", "arguments")
-        if value.get("approval") is not None:
-            raise AdmissionError("approval_unsupported", "approval")
+        approval = value.get("approval")
+        if approval is not None:
+            try:
+                approval = Approval.from_json(approval).to_json()
+            except ApprovalError as exc:
+                raise AdmissionError("approval_malformed", "approval") from exc
 
         if tool in READ_TOOLS:
             if "key" in value:
                 raise AdmissionError("unexpected_field", "key")
             _read_arguments(tool, arguments, scope.chart)
-            return Request(tool, arguments, call_id, scope.principal, None)
+            return Request(tool, arguments, call_id, scope.principal, None, approval)
 
         key = self.tokenize_identifier(_identifier(_str_field(value, "key"), "key"))
         for reserved in ("kind", "key"):
@@ -237,7 +243,7 @@ class IdentityAdmitter:
             # A reference to a runtime-generated id is only free of caller content once
             # it resolves; until then it is arbitrary text and must not reach a row.
             raise AdmissionError("unknown_entry", "arguments.entry_id")
-        return Request(tool, arguments, call_id, scope.principal, key, None, command)
+        return Request(tool, arguments, call_id, scope.principal, key, approval, command)
 
 
 def _identifier_fields(command: Command) -> list[tuple[str, str]]:

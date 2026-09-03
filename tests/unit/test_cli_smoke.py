@@ -6,6 +6,8 @@ imports, the console script resolves, and the parser is wired up.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ledgergate import __version__
@@ -74,3 +76,118 @@ def test_journal_dump_on_a_missing_file_fails_cleanly(capsys: pytest.CaptureFixt
 def test_journal_without_subcommand_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         main(["journal"])
+
+
+def test_journal_pending_and_approve_round_trip(
+    tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+
+    from ledgergate.journal import (
+        Journal,
+        Threshold,
+        ThresholdPolicySet,
+        generate_signing_key,
+        verification_key_text,
+    )
+    from ledgergate.ledger import (
+        EPOCH,
+        USD,
+        Account,
+        AccountType,
+        ChartOfAccounts,
+        SequentialIds,
+        SteppingClock,
+    )
+
+    signer = generate_signing_key()
+    key_file = Path(f"{tmp_path}/approver.key")
+    key_file.write_bytes(
+        signer.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        )
+    )
+    path = f"{tmp_path}/j.journal"
+    chart = ChartOfAccounts(
+        [Account("cash", AccountType.ASSET, USD), Account("revenue", AccountType.REVENUE, USD)]
+    )
+    policy = ThresholdPolicySet(
+        version="p1", approve_above=[Threshold("open_transaction", "USD", 100)]
+    )
+    j = Journal.create(
+        path,
+        chart,
+        clock=SteppingClock(EPOCH),
+        ids=SequentialIds(),
+        policy=policy,
+        approval_key=verification_key_text(signer),
+    )
+    request = {
+        "tool": "open_transaction",
+        "call_id": "c1",
+        "key": "big",
+        "arguments": {"transaction_id": "t", "amount": {"amount": 500, "currency": "USD"}},
+    }
+    assert j.handle(request).response == "awaiting_approval"
+
+    assert main(["journal", "pending", path]) == 0
+    (line,) = capsys.readouterr().out.splitlines()
+    assert json.loads(line)["key"] == "big"
+
+    assert (
+        main(
+            [
+                "approve",
+                path,
+                "--key",
+                "big",
+                "--approver",
+                "cfo",
+                "--approval-id",
+                "a1",
+                "--signing-key",
+                str(key_file),
+            ]
+        )
+        == 0
+    )
+    artefact = json.loads(capsys.readouterr().out)
+    assert (
+        artefact["amount"] == "500" and artefact["currency"] == "USD" and artefact["subject"] == "t"
+    )
+
+    class WallClock:
+        def now(self):  # type: ignore[no-untyped-def]
+            from datetime import UTC, datetime
+
+            return datetime.now(UTC)
+
+    j.close()
+    j = Journal.open(path, clock=WallClock(), ids=SequentialIds(start=5), policy=policy)
+    r = j.handle({**request, "call_id": "c2", "approval": artefact})
+    assert (r.disposition, r.response) == ("approval", "applied")
+    j.close()
+
+    assert (
+        main(
+            [
+                "approve",
+                path,
+                "--key",
+                "big",
+                "--approver",
+                "cfo",
+                "--approval-id",
+                "a2",
+                "--signing-key",
+                str(key_file),
+            ]
+        )
+        == 1
+    )
+    assert "awaiting approval" in capsys.readouterr().err
+    assert main(["journal", "pending", path]) == 0 and capsys.readouterr().out == ""

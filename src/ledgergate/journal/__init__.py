@@ -18,11 +18,25 @@ from ledgergate.journal.admission import (
     Request,
     TokenizingAdmitter,
 )
+from ledgergate.journal.approvals import (
+    Approval,
+    ApprovalError,
+    check,
+    generate_signing_key,
+    issue,
+    signing_key_from_bytes,
+    verification_key,
+    verification_key_text,
+)
 from ledgergate.journal.policy import (
     Decision,
+    History,
     NullPolicySet,
     PolicyContext,
     PolicySet,
+    Threshold,
+    ThresholdPolicySet,
+    WindowCap,
 )
 from ledgergate.journal.schema import FACT_TABLES, SCHEMA_VERSION, connect, create_schema
 from ledgergate.journal.store import (
@@ -48,10 +62,13 @@ __all__ = [
     "AdmissionError",
     "AdmissionScope",
     "Admitter",
+    "Approval",
+    "ApprovalError",
     "ConfigurationError",
     "Decision",
     "Definition",
     "EffectError",
+    "History",
     "IdentityAdmitter",
     "IntegrityError",
     "Journal",
@@ -61,7 +78,16 @@ __all__ = [
     "PolicySet",
     "Request",
     "Response",
+    "Threshold",
+    "ThresholdPolicySet",
     "TokenizingAdmitter",
+    "WindowCap",
+    "check",
     "connect",
     "create_schema",
+    "generate_signing_key",
+    "issue",
+    "signing_key_from_bytes",
+    "verification_key",
+    "verification_key_text",
 ]

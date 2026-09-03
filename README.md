@@ -175,8 +175,10 @@ reopened.close()
 ```
 
 One invocation is one `BEGIN IMMEDIATE` transaction; the response is rendered only after
-commit. Every attempt is a row, including malformed input, and no row is ever updated or
-deleted (the database refuses, not the code). A rejected command spends its key: the
+commit. Every attempt the transport delivers as I-JSON is a row, including malformed
+input; only a value that cannot be digested at all (a non-finite number, an integer beyond
+2^53) is refused before any row, and that is stated rather than hidden. No row is ever
+updated or deleted (the database refuses, not the code). A rejected command spends its key: the
 rejection *is* the recorded result, and a retry replays it. Every digest is SHA-256 over
 RFC 8785 canonical JSON, and every amount inside a digested structure is a decimal string,
 so a JavaScript client and this runtime agree byte for byte. The shipped policy set is the

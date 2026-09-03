@@ -23,6 +23,7 @@ from typing import Any
 from ledgergate.codec import (
     CODEC_VERSION,
     IJsonError,
+    canonical_text,
     decode_command,
     digest,
     encode_command,
@@ -115,25 +116,47 @@ def _money_str(m: Money) -> dict[str, str]:
     return {"amount": str(m.amount), "currency": m.currency.code}
 
 
-class _Effects:
-    """Feeds recorded effects back to the core on rebuild; on live execution, delegates."""
+class EffectError(JournalError):
+    """The process's injected clock or id generator produced something the core would
+    refuse. That is a fault of this process, not a verdict on the command, so it is never
+    recorded as a rejection and never spends the caller's key."""
 
-    def __init__(self, clock: Clock, ids: IdGenerator) -> None:
-        self._clock, self._ids = clock, ids
+
+class _Effects:
+    """Feeds recorded effects back to the core on rebuild; on live execution, validates what
+    the injected effects produce before the core sees it."""
+
+    def __init__(self, clock: Clock, ids: IdGenerator, ledger: Ledger) -> None:
+        self._clock, self._ids, self._ledger = clock, ids, ledger
         self._scripted: tuple[str, datetime] | None = None
 
     def script(self, entry_id: str, posted_at: datetime) -> None:
         self._scripted = (entry_id, posted_at)
 
     def next_id(self) -> str:
-        return self._scripted[0] if self._scripted else self._ids.next_id()
+        if self._scripted:
+            return self._scripted[0]
+        entry_id = self._ids.next_id()
+        try:
+            require_identifier(entry_id, "generated entry id")
+        except InvalidIdentifierError as exc:
+            raise EffectError(f"id generator produced an invalid id: {exc}") from exc
+        if any(e.entry_id == entry_id for e in self._ledger.entries):
+            raise EffectError(
+                f"id generator produced {entry_id!r}, which this ledger already holds;"
+                " generators must be fresh across processes"
+            )
+        return entry_id
 
     def now(self) -> datetime:
         if self._scripted:
             at = self._scripted[1]
             self._scripted = None
             return at
-        return self._clock.now()
+        at = self._clock.now()
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise EffectError("clock produced a naive datetime")
+        return at
 
 
 @dataclass
@@ -177,6 +200,8 @@ class Journal:
             chart=chart,
             currencies=dict(currencies or {}),
             policy_set_version=self.policy.version,
+            token_domain=self.admitter.token_domain,
+            token_key_version=self.admitter.token_key_version,
         )
         registry = definition.registry
         with self._txn():
@@ -193,7 +218,7 @@ class Journal:
                     definition.token_domain,
                     definition.token_key_version,
                     definition.approval_key,
-                    json.dumps(_encode_chart(chart), sort_keys=True),
+                    json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
                     self.clock.now().astimezone(UTC).isoformat(),
                 ),
@@ -233,6 +258,11 @@ class Journal:
                     f"journal was defined with policy set {row[2]!r};"
                     f" this process runs {self.policy.version!r}"
                 )
+            if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
+                raise ConfigurationError(
+                    f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
+                    f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
+                )
             currencies = {code: Currency(code, exp) for code, exp in json.loads(row[7]).items()}
             chart = _decode_chart(json.loads(row[6]), currencies)
             self._definition = Definition(
@@ -240,7 +270,11 @@ class Journal:
             )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
-            self._rebuild()
+            self._conn.execute("BEGIN")  # one snapshot for the chain check and the fold
+            try:
+                self._rebuild()
+            finally:
+                self._conn.execute("COMMIT")
         except JournalError:
             self._conn.close()
             raise
@@ -296,7 +330,10 @@ class Journal:
                     seq,
                     None,
                     "message",
-                    json.dumps({"role": role, "content": content}, sort_keys=True),
+                    json.dumps(
+                        {"role": role, "content": self.admitter.redact_text(content)},
+                        sort_keys=True,
+                    ),
                 ),
             )
             return seq
@@ -390,13 +427,16 @@ class Journal:
             self._respond(inv_seq, disposition, outcome_seq, kind, response)
             return response
 
-        # step 8: execute through the pure core
-        effects = _Effects(self.clock, self.ids)
+        # step 8: execute through the pure core. A LedgerError here is the core's verdict on
+        # the command against this projection; a fault of this process's effects raises
+        # EffectError from _Effects first and is never recorded.
+        effects = _Effects(self.clock, self.ids, self._ledger)
         try:
             applied = self._ledger.execute(command, clock=effects, ids=effects)
         except LedgerError as exc:
+            message = self.admitter.redact_text(str(exc))
             outcome_seq = self._outcome(
-                op_seq, "rejected", dec_seq, head, head, error=(type(exc).__name__, str(exc))
+                op_seq, "rejected", dec_seq, head, head, error=(type(exc).__name__, message)
             )
             response = Response(
                 inv_seq,
@@ -404,7 +444,7 @@ class Journal:
                 "rejected",
                 False,
                 error_type=type(exc).__name__,
-                error_message=str(exc),
+                error_message=message,
                 outcome=outcome_seq,
             )
             self._respond(inv_seq, disposition, outcome_seq, "rejected", response)
@@ -573,7 +613,7 @@ class Journal:
         for seq, outcome, command_json, entry_id, posted_at, head_after in rows:
             if outcome == "applied":
                 command = decode_command(json.loads(command_json), registry)
-                effects = _Effects(self.clock, self.ids)
+                effects = _Effects(self.clock, self.ids, ledger)
                 if entry_id is not None:
                     effects.script(entry_id, datetime.fromisoformat(posted_at))
                 try:
@@ -648,7 +688,7 @@ class Journal:
                 seq,
                 inv_seq,
                 op_seq,
-                json.dumps(context.serialized(), sort_keys=True),
+                canonical_text(context.serialized()),
                 self.policy.version,
                 decision.decision,
                 decision.matched_rule,
@@ -777,14 +817,14 @@ def _applied_result(applied: Applied) -> dict[str, Any]:
     return out
 
 
-def _encode_chart(chart: ChartOfAccounts) -> list[dict[str, Any]]:
+def _encode_chart(chart: ChartOfAccounts, admitter: Admitter) -> list[dict[str, Any]]:
     return [
         {
             "account_id": a.account_id,
             "kind": a.kind.value,
             "currency": a.currency.code,
             "allow_negative": a.allow_negative,
-            "name": a.name,
+            "name": admitter.redact_text(a.name),  # definition free text: class 1
         }
         for a in chart.values()
     ]

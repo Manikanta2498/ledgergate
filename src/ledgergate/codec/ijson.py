@@ -65,6 +65,8 @@ def require_ijson(value: Any) -> Any:
                 raise IJsonError("string contains an unpaired surrogate") from exc
         elif isinstance(v, dict):
             for k, item in v.items():
+                if not isinstance(k, str):
+                    raise IJsonError("object keys must be strings")
                 stack.append(k)
                 stack.append(item)
         elif isinstance(v, list):

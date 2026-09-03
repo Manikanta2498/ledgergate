@@ -88,7 +88,20 @@ class AdmissionScope:
 
 
 class Admitter(Protocol):
+    """The admission seam. M2b's identity implementation changes nothing; M2c's tokenizes
+    and redacts. ``token_domain`` and ``token_key_version`` are recorded in the definition
+    at creation and checked at open, so a journal is never read with a different key."""
+
+    token_domain: str
+    token_key_version: str
+
     def admit(self, value: Any, scope: AdmissionScope) -> Request: ...
+
+    def redact_text(self, text: str) -> str:
+        """Free text the admitter does not see through ``admit``: the core's own error
+        messages (which can echo a caller identifier), standalone message content, and
+        account names in the definition."""
+        ...
 
 
 def _str_field(obj: dict[str, Any], name: str) -> str:
@@ -123,6 +136,12 @@ def _read_arguments(tool: str, arguments: dict[str, Any], chart: ChartOfAccounts
 class IdentityAdmitter:
     """Validate shape and identifiers; change nothing. Refuses approval artefacts."""
 
+    token_domain = "none"  # noqa: S105 - a label, not a credential
+    token_key_version = "none"  # noqa: S105 - a label, not a credential
+
+    def redact_text(self, text: str) -> str:
+        return text
+
     def admit(self, value: Any, scope: AdmissionScope) -> Request:
         if not isinstance(value, dict):
             raise AdmissionError("not_an_object")
@@ -145,8 +164,9 @@ class IdentityAdmitter:
             return Request(tool, arguments, call_id, scope.principal, None)
 
         key = _identifier(_str_field(value, "key"), "key")
-        if "kind" in arguments or "key" in arguments:
-            raise AdmissionError("unexpected_field", "arguments.kind")
+        for reserved in ("kind", "key"):
+            if reserved in arguments:
+                raise AdmissionError("unexpected_field", f"arguments.{reserved}")
         doc = {"kind": tool, "key": key, **arguments}
         try:
             command = decode_command(doc, scope.registry)

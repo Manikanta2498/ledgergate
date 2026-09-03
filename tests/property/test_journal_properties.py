@@ -13,10 +13,23 @@ from typing import Any
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from tests.unit.journal.support import CHART, balance, open_txn, post
+from tests.unit.journal.support import CHART, balance, open_txn, post, sale_doc
 
 from ledgergate.journal import FACT_TABLES, Journal
 from ledgergate.ledger import EPOCH, SequentialIds, SteppingClock
+
+
+def _write(key: str, i: int, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {"tool": tool, "call_id": f"c{i}", "key": key, "arguments": arguments}
+
+
+def refund_doc(amount: int) -> dict[str, Any]:
+    return {
+        "postings": [
+            {"account": "revenue", "side": "debit", "money": {"amount": amount, "currency": "USD"}},
+            {"account": "cash", "side": "credit", "money": {"amount": amount, "currency": "USD"}},
+        ]
+    }
 
 
 @st.composite
@@ -25,11 +38,52 @@ def requests(draw: st.DrawFn) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for i in range(draw(st.integers(1, 12))):
         key = draw(st.sampled_from(keys))
-        kind = draw(st.sampled_from(["post", "post", "open", "read", "invalid"]))
+        kind = draw(
+            st.sampled_from(
+                [
+                    "post",
+                    "post",
+                    "open",
+                    "authorize",
+                    "settle",
+                    "refund",
+                    "reverse",
+                    "read",
+                    "invalid",
+                ]
+            )
+        )
+        txn = f"t-{draw(st.sampled_from(keys))}"
         if kind == "post":
             out.append(post(key, call_id=f"c{i}", amount=draw(st.sampled_from([5, 5, 7]))))
         elif kind == "open":
-            out.append(open_txn(key, f"t-{key}"))
+            out.append(open_txn(key, txn, amount=100))
+        elif kind == "authorize":
+            out.append(_write(key, i, "advance", {"transaction_id": txn, "event": "authorize"}))
+        elif kind == "settle":
+            out.append(
+                _write(
+                    key,
+                    i,
+                    "advance",
+                    {"transaction_id": txn, "event": "settle", "entry": sale_doc(100)},
+                )
+            )
+        elif kind == "refund":
+            out.append(
+                _write(
+                    key,
+                    i,
+                    "refund",
+                    {
+                        "transaction_id": txn,
+                        "money": {"amount": 40, "currency": "USD"},
+                        "entry": refund_doc(40),
+                    },
+                )
+            )
+        elif kind == "reverse":
+            out.append(_write(key, i, "reverse", {"entry_id": f"e-{draw(st.integers(1, 6)):06d}"}))
         elif kind == "read":
             out.append(balance("cash", call_id=f"c{i}"))
         else:

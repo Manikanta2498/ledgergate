@@ -17,12 +17,22 @@ from tests.unit.journal.support import CHART, balance, count, open_txn, post, ro
 from ledgergate.journal import (
     FACT_TABLES,
     ConfigurationError,
+    EffectError,
+    IdentityAdmitter,
     Journal,
     JournalError,
     NullPolicySet,
 )
 from ledgergate.journal.policy import Decision, PolicyContext
-from ledgergate.ledger import EPOCH, SequentialIds, SteppingClock
+from ledgergate.ledger import (
+    EPOCH,
+    USD,
+    Account,
+    AccountType,
+    ChartOfAccounts,
+    SequentialIds,
+    SteppingClock,
+)
 
 
 class TestGlobalSequenceAndAppendOnly:  # family 12
@@ -812,3 +822,92 @@ class TestReviewFindings:
             }
         )
         assert inv[7] == expected
+
+
+class TestEffectFaults:
+    """A fault of this process's clock or id generator is never a verdict on the command."""
+
+    def test_stale_id_generator_in_a_second_process_is_unrecorded_and_spends_no_key(
+        self, journal: Journal, journal_path: str, raw: sqlite3.Connection
+    ) -> None:
+        journal.handle(post("k1"))  # produces e-000001
+        other = Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())  # stale
+        before = count(raw, "journal")
+        with pytest.raises(EffectError, match="fresh across processes"):
+            other.handle(post("k2"))
+        assert count(raw, "journal") == before and count(raw, "operations") == 1
+        fresh = Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=2))
+        assert fresh.handle(post("k2")).response == "applied"  # the key was never spent
+        other.close()
+        fresh.close()
+
+    def test_naive_clock_is_an_effect_fault(self, journal_path: str) -> None:
+        from datetime import datetime
+
+        class Naive:
+            def now(self) -> datetime:
+                return datetime(2026, 1, 1)  # noqa: DTZ001 - the naive case is the point
+
+        j = Journal.create(journal_path, CHART, clock=Naive(), ids=SequentialIds())
+        with pytest.raises(EffectError, match="naive"):
+            j.handle(post("k1"))
+        j.close()
+
+    def test_invalid_generated_id_is_an_effect_fault(self, journal_path: str) -> None:
+        class Bad:
+            def next_id(self) -> str:
+                return "two\nlines"
+
+        j = Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=Bad())
+        with pytest.raises(EffectError, match="invalid id"):
+            j.handle(post("k1"))
+        j.close()
+
+
+class TestRedactionSeam:
+    class Loud(IdentityAdmitter):
+        def redact_text(self, text: str) -> str:
+            return "[redacted]"
+
+    def test_redact_text_is_called_at_every_free_text_site(
+        self, journal_path: str, raw: sqlite3.Connection
+    ) -> None:
+        chart = ChartOfAccounts([Account("cash", AccountType.ASSET, USD, name="Alice's wallet")])
+        j = Journal.create(
+            journal_path,
+            chart,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            admitter=self.Loud(),
+        )
+        j.record_message("user", "my card is 4111")
+        j.handle(
+            {
+                "tool": "refund",
+                "call_id": "c",
+                "key": "k",
+                "arguments": {
+                    "transaction_id": "cust@example.com",
+                    "money": {"amount": 1, "currency": "USD"},
+                },
+            }
+        )
+        (d,) = rows(raw, "definition")
+        assert json.loads(d[9])[0]["name"] == "[redacted]"
+        message = next(e for e in rows(raw, "events") if e[2] == "message")
+        assert json.loads(message[3])["content"] == "[redacted]"
+        (out,) = rows(raw, "outcomes")
+        assert out[3] == "rejected" and out[5] == "[redacted]"  # the core's message, redacted
+        j.close()
+
+    def test_open_refuses_an_admitter_with_a_different_token_key(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        class Other(IdentityAdmitter):
+            token_key_version = "v2"
+
+        journal.close()
+        with pytest.raises(ConfigurationError, match="tokens"):
+            Journal.open(
+                journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(), admitter=Other()
+            )

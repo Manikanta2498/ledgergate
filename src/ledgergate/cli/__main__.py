@@ -9,6 +9,7 @@ import json
 import sqlite3
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from ledgergate import __version__
 from ledgergate.journal import FACT_TABLES
@@ -49,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 def journal_dump(args: argparse.Namespace) -> int:
     """Rows in ``journal_sequence`` order, one JSON object per line, read-only."""
     try:
-        conn = sqlite3.connect(f"file:{args.path}?mode=ro", uri=True)
+        conn = sqlite3.connect(Path(args.path).resolve().as_uri() + "?mode=ro", uri=True)
     except sqlite3.OperationalError as exc:
         print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
         return 2

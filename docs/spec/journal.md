@@ -287,12 +287,15 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
-**Two redaction entry points M2c must cover.** The admitter sees `arguments`; it does not
-see the core's own error messages (`outcomes.error_message`, the outbound event's
-`error.message`), which can echo caller-supplied identifiers such as an unknown account
-id, nor the `content` of standalone message events written by `record_message`. M2c's
-admitter interface therefore also exposes `redact_text` for both, and the journal calls it
-at those two sites.
+**Three redaction entry points, one seam.** The admitter sees `arguments` through
+`admit`. Three kinds of free text bypass `admit`: the core's own error messages
+(`outcomes.error_message`, the outbound event's `error.message`), which can echo a
+caller-supplied identifier; the `content` of standalone message events; and account
+names in the definition. The `Admitter` protocol therefore also has `redact_text`, and the
+journal calls it at exactly those three sites from M2b, where the identity implementation
+returns its input. M2c changes the implementation, not the call sites. The admitter's
+`token_domain` and `token_key_version` are written into the definition at creation and
+compared at open, so a journal is never read with a different token key.
 
 ## What M2b ships, and what it stubs
 
@@ -384,8 +387,10 @@ anything that references it, an operation before the invocation that references 
      `approval_not_applicable` follows the inbound event.
 5. Write the inbound `events` row (the admitted `tool_call`), referencing the invocation.
 6. **Short paths.** For `replay`: `invocation_responses` (`replayed`, naming the
-   operation's current outcome row, which is the one the response is rendered from);
-   outbound `events` derived from that outcome; commit; return. For `conflict`:
+   operation's current outcome row); the outbound `events` row is a copy of the outbound
+   event of the invocation that *produced* that outcome (the earliest response row naming
+   it), with `replayed` set, so a retry is told exactly what the first caller was told;
+   commit; return. For `conflict`:
    `invocation_responses` (`conflict`, no outcome); outbound `events` with the conflict
    error; commit; return. Neither writes a decision row: no policy evaluation happened.
    For `approval`:
@@ -418,7 +423,10 @@ outcome in the same transaction (invariant 2).
 
 **Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
 violation other than the approval consumption `UNIQUE`, an integrity failure at step 2, a
-transport-level I-JSON violation (a number outside the JCS-safe range, a non-finite
+fault of this process's injected effects (an id generator that repeats an id the ledger
+already holds or produces an invalid one, a clock that returns a naive datetime; these are
+not verdicts on the command and must never spend its key), a transport-level I-JSON
+violation (a number outside the JCS-safe range, a non-finite
 double, an unpaired surrogate or a duplicate member name never reaches admission), a policy set returning `approval_required` against a consumed approval, or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
@@ -498,4 +506,7 @@ in M2b.
 
 Any number of unaudited readers under WAL. Every journal write, including audited reads,
 is a serialized `BEGIN IMMEDIATE` transaction. Multiple writer processes are correct under
-write step 2 and not optimized.
+write step 2, with one precondition: each process's id generator must be fresh with
+respect to the journal (it must not repeat an entry id already applied). A process that
+violates it gets an unrecorded effect fault, never a recorded rejection. Multi-process
+writing is not optimized.

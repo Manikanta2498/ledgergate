@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS outcomes (
     UNIQUE (previous_outcome),
     FOREIGN KEY (previous_outcome, operation) REFERENCES outcomes(journal_sequence, operation),
     CHECK ((outcome = 'rejected') = (error_type IS NOT NULL)),
+    CHECK ((outcome = 'rejected') = (error_message IS NOT NULL)),
     CHECK ((entry_id IS NULL) = (posted_at IS NULL)),
     CHECK (outcome = 'applied' OR entry_id IS NULL)
 );

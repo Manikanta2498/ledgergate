@@ -408,8 +408,9 @@ def context_matches_decision(t: TraceV2) -> list[Finding]:
 def ledger_pairs_replay(t: TraceV2) -> list[Finding]:
     """Re-executing every ledger command reproduces every recorded result, head and entry."""
     report = replay_trace(t.ledger_view())
+    owners = _pair_owners(t)
     return [
-        Finding("ledger_pairs_replay", "error", str(d), _owner_of(t, d.command_id))
+        Finding("ledger_pairs_replay", "error", str(d), _owner_of(t, d.command_id, owners))
         for d in report.divergences
     ]
 
@@ -489,11 +490,12 @@ def _tool_results(t: TraceV2) -> dict[str, ToolResultEvent]:
         iid = getattr(e, "intent_id", None)
         if iid is not None:
             last[iid] = i
-    owners = _pair_owners(t)
-    for iid, cid in owners.items():
-        for i, e in enumerate(t.events):
-            if isinstance(e, LedgerResultEvent) and e.command_id == cid:
-                last[iid] = max(last[iid], i)
+    result_at = {
+        e.command_id: i for i, e in enumerate(t.events) if isinstance(e, LedgerResultEvent)
+    }
+    for iid, cid in _pair_owners(t).items():
+        if cid in result_at:
+            last[iid] = max(last[iid], result_at[cid])
     for iid, i in last.items():
         nxt = t.events[i + 1] if i + 1 < len(t.events) else None
         if isinstance(nxt, ToolResultEvent):
@@ -505,8 +507,10 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
     """The tool_result closing each runtime intent says what the journal did (the two
     decision-to-outcome tables): success iff a read was not denied or the ledger applied;
     otherwise the error type of the path taken (AdmissionError, IdempotencyConflictError,
-    PolicyDenied, ApprovalRequired, ApprovalRejected, or the core's own error), and a replay
-    is told exactly what the producing invocation was told."""
+    PolicyDenied, ApprovalRequired, ApprovalRejected, or the core's own error); a denial
+    carries the decision's rule and reason; an applied write's served head, sequence and entry
+    are the ledger result's; and a replay is told exactly what the producing invocation was
+    told (the same result with ``replayed`` set, or the same error verbatim)."""
     out = []
     results = _tool_results(t)
     decisions = _decided(t)
@@ -552,6 +556,22 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 continue
             expected_ok = told.ok
             expected_error = None if told.error is None else told.error.type
+            # Exactly what the producer was told: the same result with replayed set, or the
+            # same error verbatim (journal step 6).
+            exact = (
+                tr.result == {**told.result, "replayed": True}
+                if told.ok and isinstance(told.result, dict)
+                else tr.error == told.error
+            )
+            if not exact:
+                out.append(
+                    Finding(
+                        "caller_was_told_what_happened",
+                        "error",
+                        f"{r.intent_id}: replay was not told exactly what {producer} was told",
+                        r.intent_id,
+                    )
+                )
         else:  # new, approval
             assert d is not None
             if r.outcome_ref is not None and (d.decision != "deny" or not d.runtime_written):
@@ -561,6 +581,18 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 expected_error = "ApprovalRejected" if d.runtime_written else "PolicyDenied"
             elif d.decision == "approval_required":
                 expected_ok, expected_error = False, "ApprovalRequired"
+            if d.decision != "allow":
+                message = None if tr.error is None else tr.error.message
+                if message != f"{d.matched_rule}: {d.reason}":
+                    out.append(
+                        Finding(
+                            "caller_was_told_what_happened",
+                            "error",
+                            f"{r.intent_id}: denial message does not carry the decision's rule"
+                            " and reason",
+                            r.intent_id,
+                        )
+                    )
             else:
                 lr = ledger_results.get(owners.get(r.intent_id, ""))
                 if lr is None:
@@ -575,6 +607,21 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                     continue
                 expected_ok = lr.ok
                 expected_error = None if lr.error is None else lr.error.type
+                served = tr.result if isinstance(tr.result, dict) else {}
+                if lr.ok and (
+                    served.get("head") != lr.head
+                    or served.get("sequence") != lr.sequence
+                    or served.get("entry_id") != lr.entry_id
+                ):
+                    out.append(
+                        Finding(
+                            "caller_was_told_what_happened",
+                            "error",
+                            f"{r.intent_id}: served head, sequence or entry differ from the"
+                            " ledger result",
+                            r.intent_id,
+                        )
+                    )
         actual_error = None if tr.error is None else tr.error.type
         if tr.ok != expected_ok or actual_error != expected_error:
             out.append(
@@ -640,8 +687,9 @@ def _pair_owners(t: TraceV2) -> dict[str, str]:
     return owners
 
 
-def _owner_of(t: TraceV2, cid: str) -> str | None:
-    return next((iid for iid, c in _pair_owners(t).items() if c == cid), None)
+def _owner_of(t: TraceV2, cid: str, owners: dict[str, str] | None = None) -> str | None:
+    owners = _pair_owners(t) if owners is None else owners
+    return next((iid for iid, c in owners.items() if c == cid), None)
 
 
 REGISTRY: tuple[Invariant, ...] = (

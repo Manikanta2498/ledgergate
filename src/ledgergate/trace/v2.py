@@ -194,9 +194,10 @@ class TraceV2(_Strict):
     strictly increasing; every ledger_command has exactly one ledger_result and command_id
     is unique; every operation and outcome reference resolves to one recorded earlier, a
     replay or failed approval names the operation's outcome current at the time, an
-    approval is against a pending operation, a produced outcome is produced once, in
-    allocation order; a command intent's fingerprint is its attempted_digest, matches the
-    operation's for new, replay and approval and differs for conflict, and equals its
+    approval is against a pending operation and a replay with a presentation never is, a
+    produced outcome is produced once, in allocation order; a command intent's fingerprint
+    is its attempted_digest, matches the operation's for new, replay and approval and
+    differs for conflict, and equals its
     ledger_command's, whose command_id is the operation and whose call_id is the intent's;
     in a derived document every boundary event brackets an intent; a document is derived iff
     it carries a journal_id, and then has no legacy resolution, or lifted, and then has no

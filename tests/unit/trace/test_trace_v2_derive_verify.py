@@ -1718,3 +1718,52 @@ class TestTenthReviewFindings:
         ] = 2
         with pytest.raises(ValidationError, match="ledger_command differs"):
             TraceV2.model_validate(doc)
+
+
+class TestEleventhReviewFindings:
+    def _statuses(self, doc: dict[str, Any]) -> dict[str, str]:
+        return {r.name: r.status for r in check(TraceV2.model_validate(doc)).results}
+
+    def _replay_result(self, doc: dict[str, Any]) -> dict[str, Any]:
+        events = doc["events"]
+        replay = next(
+            e
+            for e in events
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        return next(e for e in events[events.index(replay) :] if e["type"] == "tool_result")
+
+    def test_replay_must_be_told_exactly_what_the_producer_was_told(
+        self, journal_path: str
+    ) -> None:
+        t = derive(journal_path)
+        doc = t.model_dump(mode="json")
+        tr = self._replay_result(doc)
+        assert tr["ok"] and tr["result"]["replayed"] is True
+        tr["result"]["head"] = "f" * 64
+        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        doc = t.model_dump(mode="json")
+        self._replay_result(doc)["result"].pop("replayed")
+        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+
+    def test_denial_message_must_carry_rule_and_reason(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        awaiting = next(
+            e
+            for e in events
+            if e["type"] == "policy_decision" and e["decision"] == "approval_required"
+        )
+        i = next(i for i, e in enumerate(events) if e.get("intent_id") == awaiting["intent_id"])
+        tr = next(e for e in events[i:] if e["type"] == "tool_result")
+        tr["error"]["message"] = "some.other_rule: swapped"
+        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+
+    def test_applied_write_must_serve_the_ledger_results_head(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        lr = next(e for e in events if e["type"] == "ledger_result" and e["ok"])
+        tr = events[events.index(lr) + 1]
+        assert tr["type"] == "tool_result" and tr["result"]["head"] == lr["head"]
+        tr["result"]["head"] = "e" * 64
+        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"

@@ -67,8 +67,13 @@ to one invariant: `command_fingerprint(decode(encode(c))) == command_fingerprint
 resulting contract, which M2b writes into import-linter and which is the final shape:
 
 ```
-cli -> runner -> {invariants, report, derive} -> {trace, journal} -> codec -> ledger
+cli -> runner -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger
 ```
+
+`derive` is in parentheses because it is an M3 package and import-linter rejects a
+non-optional layer whose module does not exist; M2b writes it as an optional layer
+(`ledgergate.invariants | ledgergate.report | (ledgergate.derive)`) so the contract is
+final in shape and passes on day one.
 
 `journal` imports `sqlite3`; the core still may not; `ledgergate.derive` (M3) is the
 `trace(journal) -> Trace` derivation and depends on both siblings. This supersedes the
@@ -107,8 +112,9 @@ then.
 
 Schema v1 is frozen. v2's unit is an *intent* with a *disposition* (`new`, `replay`,
 `conflict`, `approval`, `read`, `invalid`; plus `legacy` for lifted v1 content, which has
-its own grammar because v1 tool events and ledger pairs are not one-to-one). A `policy_decision` appears only when
-policy actually ran; a replay never re-evaluates policy and the trace says so. A denied
+its own grammar because v1 tool events and ledger pairs are not one-to-one). A `policy_decision` appears only when this
+invocation was decided, by the policy set or by the runtime on a rejected approval (which
+the event marks with a `runtime.` rule); a replay never re-evaluates policy and carries none. A denied
 intent ends at its decision and never reaches the ledger. The runtime derives v2 from the
 journal and never derives v1; v1 documents are lifted into the v2 model with disposition
 `legacy` and no policy evidence, because inventing an `allow` would be a synthesized

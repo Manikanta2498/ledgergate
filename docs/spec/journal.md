@@ -27,8 +27,10 @@ core's `fingerprint(kind, payload)` primitive is called with five inlined payloa
 inside `Ledger` (`state.py`); M2b lifts those into a public
 `ledgergate.ledger.command_fingerprint(command) -> str` that `Ledger.execute` and the
 journal both call, so there is one definition and `operations.fingerprint` equals what the
-core would compute. `PolicyContext.command_digest` **is** `operations.fingerprint`; there
-is no second command digest.
+core would compute. `PolicyContext.command_digest` is `operations.fingerprint` for a write intent and
+`invocations.request_digest` for a read intent, and the context carries `digest_kind`
+(`fingerprint` or `request`) so a consumer recomputing a decision knows which to
+recompute. There is no third digest.
 
 **Admission input and Request.** The transport hands admission one untyped JSON value
 (M4's MCP layer decodes the wire and passes the params object; the journal never sees
@@ -37,7 +39,10 @@ wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `
 named digests, both SHA-256 over canonical JSON (sorted keys, no whitespace, UTF-8):
 `input_digest`, over the untyped input, is what the failure envelope records, because a
 malformed input has no `Request` to digest; `request_digest`, over the `Request`, is
-recorded on every admitted invocation. Neither is the operation fingerprint (next
+recorded on every admitted invocation. "Canonical JSON" means RFC 8785 (JSON
+Canonicalization Scheme): sorted keys, no whitespace, shortest round-trip number form,
+UTF-8, no ASCII escaping of non-ASCII, so two implementations digest identically and
+`5.0` is not `5`. Neither is the operation fingerprint (next
 paragraph), which is over the decoded *command*.
 
 ## Sequences
@@ -77,7 +82,7 @@ All strictly append-only. No row is ever updated or deleted.
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
-| `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, or the presentation's check result when checks 1 to 3 failed), and the `consumption` row if check 4 succeeded. |
+| `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row if check 4 succeeded. |
 | `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and the **check result** of the pure checks 1 to 3 (`checks_passed`, `approval_invalid`, `approval_expired`, `approval_scope_mismatch`, or `approval_not_applicable`). The *final verdict*, which also depends on check 4 (consumption), lives on the `decisions` row that considered this presentation; a row written before a check cannot carry that check's result. Presenting the same artefact twice appends two rows. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse: the row is written during validation, before the decision exists. |
 | `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own single-row transaction and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
@@ -127,8 +132,12 @@ that violates any rule above cannot exist in the journal, so rebuild needs no re
 
 Issued out of band by the operator via `ledgergate approve` (delivered in M3 with the
 validation and consumption code; M4 is only the transport that presents artefacts), signed
-with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation:
-`fingerprint`, tokenized `key`, subject, amount and currency.
+with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation by its
+`fingerprint` and tokenized `key`, which together identify it uniquely; the artefact also
+carries subject, amount and currency as display fields for the approver, copied from the
+command at issuance and recorded for audit but not compared, since not every command has
+a single amount (`Post`, `Reverse`) and "subject" is defined by the policy set, not the
+core.
 
 **Validation and consumption**, performed inside the write transaction, after the
 invocation row exists (the presentation references it) and *before* the `PolicyContext`
@@ -141,12 +150,14 @@ artefact never touches `approval_consumptions`.
 
 1. Signature verifies against the definition's key, else verdict `approval_invalid`.
 2. `expires_at` is after the injected evaluation time, else `approval_expired`.
-3. Every bound field equals the pending operation's, else `approval_scope_mismatch`.
+3. The artefact's `fingerprint` and `key` equal the pending operation's, else `approval_scope_mismatch`.
 4. **Consumption.** `INSERT INTO approval_consumptions (approval_id, presentation,
    invocation)`. A `UNIQUE` violation means an earlier *committed* transaction consumed
-   this logical approval (writes are serialized, so there is no other way): verdict
-   `approval_already_used`; the failed insert leaves behind only a permitted allocator
-   gap. Success: verdict `approval_valid`; the approval is consumed.
+   this logical approval (writes are serialized, so there is no other way). Because writes
+   are serialized, the check is exact as a `SELECT` before allocating a `journal` row, so a
+   used approval leaves no allocator row and no gap; the `UNIQUE` remains as the
+   constraint that makes the `SELECT` merely an optimization. Verdict
+   `approval_already_used`. Success: verdict `approval_valid`; the approval is consumed.
 
 The verdict enters the `PolicyContext`. Nothing is consumed on any verdict other than
 `approval_valid`.
@@ -174,7 +185,7 @@ migrate. It expires with the retired journal, and the caller resubmits under a n
 the new one. The retired journal remains the record of what was attempted.
 
 **An artefact presented on any other disposition** (`new`, `replay` of a terminal outcome,
-`conflict`, `read`) is not silently dropped: an `approvals` presentation row with verdict
+`conflict`, `read`) is not silently dropped: an `approvals` presentation row with check result
 `approval_not_applicable` is written immediately after the inbound `events` row (so its
 `invocation` reference resolves), nothing is consumed, and the disposition's normal path
 continues. On `invalid`, no `Request` was decoded, so there is no artefact to present; any
@@ -288,17 +299,17 @@ anything that references it, an operation before the invocation that references 
 4. **Resolve the key** in `operations` and write the invocation:
    - Absent: insert `operations` (`key`, `fingerprint`, canonical `command`), then
      `invocations` (`new`, referencing it). If an approval was presented, an `approvals` row
-     with verdict `approval_not_applicable` follows the inbound event; the `PolicyContext`
+     with check result `approval_not_applicable` follows the inbound event; the `PolicyContext`
      carries that verdict.
    - Present, fingerprint matches, current outcome terminal: `invocations` (`replay`). If an
-     approval was presented, an `approvals` row with verdict `approval_not_applicable`
+     approval was presented, an `approvals` row with check result `approval_not_applicable`
      follows the inbound event.
    - Present, fingerprint matches, current outcome `awaiting_approval`, approval
      presented: `invocations` (`approval`).
    - Present, fingerprint matches, current outcome `awaiting_approval`, no approval:
      `invocations` (`replay`).
    - Present, fingerprint differs: `invocations` (`conflict`, with attempted fingerprint
-     and command). If an approval was presented, an `approvals` row with verdict
+     and command). If an approval was presented, an `approvals` row with check result
      `approval_not_applicable` follows the inbound event.
 5. Write the inbound `events` row (the admitted `tool_call`), referencing the invocation.
 6. **Short paths.** For `replay`: `invocation_responses` (`replayed`, naming the
@@ -323,8 +334,11 @@ anything that references it, an operation before the invocation that references 
 
 **Crash analysis.** Before commit: nothing exists; a retry runs afresh. After commit,
 before step 10: a complete invocation exists including its outbound event. A retry of a
-committed `new` or `approval` resolves as `replay`; a retry of a committed `conflict` is a
-fresh `conflict`; a retry of a committed `invalid` is a fresh `invalid`; a retry of a read
+committed `new` resolves as `replay`. A retry of a committed `approval` resolves as `replay`
+if its verdict was `approval_valid` (the operation is now terminal) and as a fresh
+`approval` if the verdict failed (the operation is still pending; checks 1 to 3 re-run,
+another presentation row is appended, nothing is consumed). A retry of a committed
+`conflict` is a fresh `conflict`; a retry of a committed `invalid` is a fresh `invalid`; a retry of a read
 is a fresh read. None of these apply anything twice. Every path from step 4 onward that created an operation appends an
 outcome in the same transaction (invariant 2).
 
@@ -377,7 +391,7 @@ snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable s
 1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3; an invalid read writes
 `invocations` (`invalid`), the failure-envelope inbound event, `invocation_responses`
 (`invalid`, no outcome), the outbound event; commits; returns). 4. `invocations` (`read`).
-5. Inbound `events`; then, if an approval was presented, an `approvals` row with verdict
+5. Inbound `events`; then, if an approval was presented, an `approvals` row with check result
 `approval_not_applicable`. 6. `decisions` if the read is policy-gated (its `PolicyContext.command_digest` is the
 invocation's `request_digest`; a read has no operation and no fingerprint). On `deny`: no `reads`
 row; disposition stays `read`; go to 8 with `ok=false`/`PolicyDenied` as the outbound

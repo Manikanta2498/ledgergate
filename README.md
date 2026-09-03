@@ -35,7 +35,7 @@ Deterministic invariants over a versioned execution trace.
 
 ```
                   offline: prove it before deploy
-agent run ──▶ trace (schema v1) ──▶ invariants + policy ──▶ result.json ──▶ md | junit | sarif
+agent run ──▶ trace (schema v1 | v2) ──▶ invariants + policy ──▶ result.json ──▶ md | junit | sarif
                     ▲
        adapters: OpenTelemetry GenAI | openai | anthropic | langgraph
 

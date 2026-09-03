@@ -35,12 +35,12 @@ Deterministic invariants over a versioned execution trace.
 
 ```
                   offline: prove it before deploy
-agent run ──▶ trace (schema v1) ──▶ invariants + policy ──▶ result.json ──▶ md | junit | sarif
+agent run ──▶ trace (schema v1 | v2) ──▶ invariants + policy ──▶ result.json ──▶ md | junit | sarif
                     ▲
        adapters: OpenTelemetry GenAI | openai | anthropic | langgraph
 
-                  online: enforce it in production
-MCP client ──▶ ledgergate serve ──▶ policy ──▶ ledger ──▶ trace (same schema)
+                  online: enforce it at the call boundary
+MCP client ──▶ ledgergate serve (stdio) ──▶ policy ──▶ command log ──▶ ledger + trace
 ```
 
 The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON Schema
@@ -48,9 +48,11 @@ The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON S
 whatever framework it uses.
 
 The same ledger, policy and trace serve both paths. Offline, a recorded run is checked
-before an agent ships. Online, the MCP server is the agent's money-moving tool, and every
-call is checked at the boundary and recorded in the same format, so production traces
-feed straight back into the offline checks.
+before an agent ships. Online, the MCP server is the agent's ledger of record and
+authorization gate: every call is checked at the boundary, written to a durable command
+log before it returns, and derived into the same trace format, so runtime traces feed
+straight back into the offline checks. LedgerGate keeps the books and decides what is
+admissible; it does not itself move money on external rails (see ADR-0002).
 
 **What exists today:** the ledger core, the trace schema, a recorder that produces traces
 from a ledger session, and a replayer that re-executes a trace's commands and reports
@@ -176,7 +178,7 @@ What is in the box:
 | Entries | `EntryDraft` cannot exist unbalanced (checked per currency at construction), strictly positive postings, sign lives in the side |
 | Accounts | Five account types with normal sides, per-account currency, optional no-overdraft rule that fails an over-refund loudly |
 | Ledger | Immutable, append-only, reversal by mirror entry, trial balance, per-account history, SHA-256 hash chain; `verify_chain()` recomputes every digest *and* re-derives every balance and index from the entries, so an edited balance fails as surely as an edited entry |
-| Idempotency | Every command carries a key; same key + same request replays the original result, same key + different request raises. Fingerprints are SHA-256 over an unambiguous length-prefixed encoding, so no delimiter trick can make two different requests serialize the same |
+| Idempotency | Every command carries a key; same key + same request replays the original result, same key + different request raises. In the in-memory core a rejected command leaves the key unspent; in the durable journal (M2b) a rejection is itself the recorded result and the key is spent, so retrying after a rejection means a new key. Fingerprints are SHA-256 over an unambiguous length-prefixed encoding, so no delimiter trick can make two different requests serialize the same |
 | Lifecycle | `PENDING -> AUTHORIZED -> SETTLED -> PARTIALLY_REFUNDED -> REFUNDED` plus dispute, cancel, fail; illegal moves raise. `SETTLE` and `REFUND` *require* a journal entry that moves exactly the stated amount in the transaction's currency, posted atomically with the transition; other events must not carry one |
 | FX | Balanced four-line conversion through clearing accounts, so cross-currency moves cannot leak |
 | Effects | `Clock`, `IdGenerator`, `FxRateSource` Protocols with deterministic reference implementations |
@@ -209,16 +211,18 @@ These are enforced by CI gates, not by convention:
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
 | **M2a** | Trace schema v1, recorder, replay | **done** |
-| M2b | Durable command log (SQLite, WAL, `UNIQUE` key); ledger rebuilds by replay; idempotency survives restart | next |
-| M2c | Fail-closed redaction: allowlist, deterministic tokens, redacted traces still replay | |
-| M3 | Invariant registry over traces; **policy layer** (limits, approval thresholds, velocity caps); scorecard; `ledgergate verify` | |
-| M4 | **`ledgergate serve`: MCP runtime.** The ledger as tools any MCP client can call, with idempotency required, policy enforced at the call boundary, every call traced | |
-| M5 | OpenTelemetry GenAI adapter (primary); thin framework wrappers; recorded cassettes | |
+| M2b | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use (per journal) approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an outcome cursor. Ships with a pass-through admitter and a null policy so the protocol is complete end to end; trace derivation follows in M3 | next |
+| M2c | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | |
+| M3 | Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; **policy layer** over an explicit, persisted `PolicyContext` carried in every decision event, with validated, single-use (per journal) approvals; invariant registry; scorecard; `ledgergate verify` | |
+| M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
+| M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
+| M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
 
 The reasoning behind this order, and what was deliberately left out, is in
-[ADR-0002](docs/adr/0002-runtime-surface-and-plan.md).
+[ADR-0002](docs/adr/0002-runtime-surface-and-plan.md). The normative protocols the
+milestones are built to are in [`docs/spec/`](docs/spec/).
 
 ## Development
 
@@ -241,7 +245,7 @@ CI additionally scans the **full Git history** for secrets, not just the working
 Source-available, split deliberately:
 
 - `corpus/` and `schema/` are **Apache-2.0**. Adopt, redistribute and cite them freely,
-  including in production. The trace schema is published; the corpus lands in M3.
+  including in production. The trace schema is published; the corpus lands in M6.
 - The runtime under `src/ledgergate/` is **BUSL-1.1**. Read it, modify it, run it in
   development, CI and evaluation. Production use requires a commercial license. Converts
   to Apache-2.0 on 2030-08-31.

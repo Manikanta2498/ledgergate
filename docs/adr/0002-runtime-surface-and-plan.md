@@ -1,94 +1,193 @@
-# ADR 0002: A runtime surface, a durable command log, and an authority layer
+# ADR 0002: A runtime surface, a durable journal, and an authority layer
 
 - Status: Accepted
 - Date: 2026-09-03
-- Supersedes: the M2-M6 roadmap as written in ADR-0001's era
+- Normative detail: [spec/journal.md](../spec/journal.md),
+  [spec/trace-v2.md](../spec/trace-v2.md),
+  [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md). This ADR
+  records the decisions and their trade-offs; the specs are what implementations and
+  tests are held to.
 
 ## Context
 
 After M0-M2a the project has a deterministic ledger core, a published trace schema, a
-recorder and a replayer. The remaining roadmap (invariant registry, corpus, adapters,
-scorecards) was entirely *offline*: everything from M3 onward consumed a finished trace
-and produced a verdict. Nothing let a live agent use the ledger as its money-moving tool
-with the guarantees enforced at the moment of the call.
+recorder and a replayer. The remaining roadmap was entirely *offline*: everything from M3
+onward consumed a finished trace and produced a verdict. Nothing let a live agent use the
+ledger with the guarantees enforced at the moment of the call.
 
 That left three gaps between the plan and the README's first sentence, "a
-correctness-enforcing ledger runtime":
+correctness-enforcing ledger runtime": no runtime; no notion of *authority* (the ledger
+enforces accounting correctness, not whether an agent was allowed to do what it did); no
+persistence. Two further weaknesses: per-framework adapters are a treadmill now that the
+ecosystem has converged on OpenTelemetry GenAI conventions, and nothing demonstrated the
+checks against an agent *trying* to misbehave.
 
-1. **No runtime.** The enforcing half of the pitch had no milestone.
-2. **No notion of authority.** The ledger enforces accounting correctness (balance,
-   lifecycle, idempotency). It has no concept of whether an agent was *allowed* to do
-   what it did: refund limits, approval thresholds, velocity caps. Those are the
-   guardrails a fintech risk team actually writes.
-3. **No persistence.** The ledger is in-memory. A runtime must survive a restart.
+## What this runtime is, and is not
 
-Two further weaknesses: per-framework adapters ("anthropic | openai | langgraph") are a
-treadmill when the ecosystem has converged on OpenTelemetry GenAI semantic conventions;
-and nothing in the plan demonstrated the checks against an agent *trying* to misbehave.
+LedgerGate is a **ledger of record and an authorization gate**. It decides whether a
+command is admissible, records the decision and its effects durably, and maintains the
+books. It does **not** move money on external rails. Calling a payment provider has its
+own failure modes (dual writes, provider idempotency, partial settlement, reconciliation),
+and claiming SQLite idempotency covers them would be exactly the false guarantee this
+project exists to catch. External execution, if built, is M8, with an explicit outbox and
+reconciliation. Until then the tools operate on LedgerGate's ledger and nothing else.
 
-## Decision
+## Decisions
 
-**The ledger persists as an append-only command log (M2b).** SQLite in WAL mode, one row
-per command, `UNIQUE` on the idempotency key so atomicity comes from the database rather
-than from check-then-write. The in-memory ledger is a projection: on start, replay the
-log through the pure core. This is event sourcing, and it falls out of what exists: the
-trace already *is* a command log with recorded effects, and `replay()` already rebuilds a
-ledger from one. Idempotency across restarts is a consequence, not a separate feature.
+### 1. The ledger persists as a strictly append-only journal (M2b)
 
-**Authority is a pure layer above the ledger (M3).** A policy is a deterministic,
-versioned rule evaluated over the same inputs the ledger sees: "refunds above 500.00 USD
-require approval", "no more than three refunds per customer per day", "cross-currency
-movements are never autonomous". Policies are checked offline over traces (as invariants
-are) and online at the runtime's call boundary (M4), by the same code. A policy violation
-is a first-class outcome in the trace, so it replays and is checked like any other.
+The journal is the single authoritative artefact; the in-memory ledger is a projection
+rebuilt from it; traces are a pure function of it. Every fact is a row, every row has one
+position in a single global sequence, and **no row is ever updated**. An idempotency key
+is an *operation* (immutable identity) with an appended history of *outcomes*; each caller
+attempt is an *invocation*. A retry is therefore visible in the trace as a retry and
+invisible to the books as an effect, which is the property the README leads with.
 
-**The runtime surface is an MCP server (M4).** `ledgergate serve` exposes the ledger as
-Model Context Protocol tools: `open_transaction`, `authorize`, `settle`, `refund`,
-`balance`, and so on. Every tool requires an idempotency key; every call is checked
-against policy before it reaches the ledger; every call and its outcome is recorded as a
-trace event. Any MCP client, whatever model or framework drives it, gets a money-moving
-tool that cannot double-refund, cannot post an unbalanced entry, and cannot exceed its
-mandate. MCP is chosen because it is the one tool protocol the major clients share; it
-turns "framework-agnostic" from a schema property into a deployment property.
+The invariants an implementation is held to are listed in
+[spec/journal.md, *Invariants*](../spec/journal.md#invariants); the protocol that
+maintains them follows. Two are worth naming here because they changed the design. The
+projection cursor is the journal sequence of the latest *outcome* folded in, not the
+entry-chain head (lifecycle commands change state without touching the chain) and not the
+global maximum (most rows are audit, not state). And every invocation records the exact
+outcome that answered it, because "the operation's current outcome" is a different fact
+by the time the journal is read.
 
-**OpenTelemetry GenAI is the primary adapter (M5).** Frameworks already emit `gen_ai.*`
-spans. One OTel-to-trace adapter covers them; per-framework adapters, where they exist at
-all, are thin conveniences over it.
+*Trade-offs:* audited reads serialize with writes; a balance query is cheap, and the
+alternative (a deferred read that upgrades to write) can fail after its snapshot is taken.
+And a rejected command spends its key in the journal, where the in-memory core leaves it
+unspent: the ledger of record treats "what happened to this request" as the answer, even
+when what happened is a refusal. Retrying after a refusal is a new request with a new key.
 
-**The corpus includes a red team (M6).** Alongside scenarios that exercise correct
-behaviour, a set of traces from agents behaving badly: prompt-injected, retrying without
-keys, jumping lifecycle states, exceeding limits. The suite's claim is that these are
-stopped; the red-team corpus is the evidence.
+*Placement:* the journal is a new package, `ledgergate.journal`, a sibling of `trace`
+above the core. Both need to encode a `Command` to JSON and back, and today that codec
+lives inside `trace.models` (pydantic), which `journal` may not import. M2b therefore
+extracts it into `ledgergate.codec`, a thin layer below both siblings that imports only
+the standard library and the core, and `trace.models` delegates to it. The codec is tested
+to one invariant: `command_fingerprint(decode(encode(c))) == command_fingerprint(c)` for
+every `c` the core accepts. It imposes no bound of its own; the frozen v1 path keeps
+accepting every integer the schema accepts, and runtime inputs are bounded by the
+transport's I-JSON contract. The JCS serializer the journal digests with, and the I-JSON decoder that admission and
+the M4 transport share, live here too. The
+resulting contract, which M2b writes into import-linter and which is the final shape:
+
+```
+cli -> runner -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger
+```
+
+`derive` is in parentheses because it is an M3 package and import-linter rejects a
+non-optional layer whose module does not exist; M2b writes it as an optional layer
+(`ledgergate.invariants | ledgergate.report | (ledgergate.derive)`) so the contract is
+final in shape and passes on day one.
+
+`journal` imports `sqlite3`; the core still may not; `ledgergate.derive` (M3) is the
+`trace(journal) -> Trace` derivation and depends on both siblings. This supersedes the
+layer line in ADR-0001, which predates `trace`.
+
+### 2. Authority is a pure layer with explicit inputs (M3)
+
+A policy is a deterministic, versioned function of an explicit, serializable
+`PolicyContext`: principal, subject (nullable), command digest with its kind, evaluation
+time from the injected clock, historical aggregates read inside the admitting transaction (so two concurrent
+refunds cannot both see "under the cap"), a validated approval if one is presented, and
+the policy set version. The full context is persisted with every decision, owned by the
+invocation that evaluated it, and carried verbatim in the v2 `policy_decision` event, so an
+offline consumer holding the same policy set re-runs the same code on the same inputs; one
+without it verifies the recorded evidence and says so.
+
+Approvals are signed artefacts bound to one pending operation and validated before they
+enter the context; single use is a database constraint within a journal and a signed journal identity across journals, not a flag. A validated approval
+is consumed whatever policy then decides, because every decision on a valid presentation
+leaves its operation terminal, so there is nothing left for the artefact to serve. Details
+in [spec/journal.md, *Approval artefacts*](../spec/journal.md#approval-artefacts).
+
+### 3. The runtime surface is a local MCP server (M4)
+
+`ledgergate serve` exposes the ledger as Model Context Protocol tools over **stdio only**.
+Write tools require an idempotency key and run the journal's write protocol; read tools
+run the audited-read protocol and record the journal position they observed. What M4
+guarantees: within one local process, for a single local principal, the tools cannot
+double-apply, post an unbalanced entry, take an illegal lifecycle step, or exceed the
+configured policies. What M4 does not do: listen on a network. Authentication,
+multi-tenancy and real approver identity arrive together in M8, because a mandate without
+an authenticated principal is not a mandate; the server refuses a network transport until
+then.
+
+### 4. Trace schema v2 is built around intents and dispositions (M3)
+
+Schema v1 is frozen. v2's unit is an *intent* with a *disposition* (`new`, `replay`,
+`conflict`, `approval`, `read`, `invalid`; plus `legacy` for lifted v1 content, which has
+its own grammar because v1 tool events and ledger pairs are not one-to-one). A `policy_decision` appears only when this
+invocation was decided, by the policy set or by the runtime on a rejected approval (which
+the event marks with a `runtime.` rule); a replay never re-evaluates policy and carries none. A denied
+intent ends at its decision and never reaches the ledger. The runtime derives v2 from the
+journal and never derives v1; v1 documents are lifted into the v2 model with disposition
+`legacy` and no policy evidence, because inventing an `allow` would be a synthesized
+decision.
+
+### 5. Redaction and tokenization happen at admission (M2c)
+
+Free text is fail-closed redacted; caller-supplied identifiers are tokenized with a keyed
+HMAC in a fixed format that satisfies the ledger's identifier rule; operator-defined
+identifiers are configuration. All of it happens before the ledger hashes anything, so a
+redacted trace replays exactly. The earlier claim that identifiers are "not personal data"
+is withdrawn: the code accepts an email address as an account id.
+
+### 6. OpenTelemetry GenAI is the primary *observational* adapter (M5)
+
+The journal is authoritative. An OTel adapter maps `gen_ai.*` spans to trace events,
+validates completeness against the v2 contract, and yields either a conforming trace or
+a report of exactly what was missing. It requires unsampled capture. Per-framework
+adapters, where they exist, are conveniences over it.
+
+### 7. The corpus includes a red team (M6)
+
+Alongside scenarios that exercise correct behaviour, traces of agents behaving badly:
+prompt-injected, retrying without keys, jumping lifecycle states, exceeding limits. The
+suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 ## Explicitly rejected
 
-- **LLM-as-a-judge in any check.** The thesis is that financial correctness is an
-  assertion, not an opinion. A probabilistic judge anywhere in the verdict path would
-  undercut it.
+- **LLM-as-a-judge in any check.** Financial correctness is an assertion, not an opinion.
 - **An agent framework of our own.** The value is in being usable from all of them.
 - **Retrieval, memory, vector stores.** Nothing here needs them.
+- **Network MCP before authentication.** An unauthenticated listener applying "policy" is
+  theatre.
+- **Deriving v1 from the journal.** The journal has more structure than v1 can carry; a
+  lossy projection is a second thing to keep consistent.
 
 ## Roadmap
 
 | Milestone | Contents |
 | :--- | :--- |
-| M2b | Durable command log; ledger as projection; idempotency across restarts |
-| M2c | Fail-closed redaction: allowlist, deterministic tokens, redacted traces still replay |
-| M3 | Invariant registry over traces; policy layer; scorecard; `ledgergate verify` |
-| M4 | `ledgergate serve`: MCP runtime, policy at the call boundary, every call traced |
-| M5 | OpenTelemetry GenAI adapter; thin framework wrappers; recorded cassettes |
-| M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across models |
+| M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
+| M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
+| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, replacing the null policy; invariant registry; scorecard; `ledgergate verify` |
+| M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call |
+| M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
+| M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels |
+| M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation |
 
 ## Consequences
 
-- The command log becomes a second durable artefact alongside the trace, and they must
-  agree; replay is the check.
-- Policies need a versioning story from day one: a trace must record which policy
-  version judged it, or drift comparisons are meaningless.
-- The MCP server is the first component with a network boundary. Authentication,
-  multi-tenancy and rate limiting are deliberately out of scope for M4; the server is
-  single-tenant and local-first. That boundary is stated, not assumed.
-- Moving the runtime ahead of the corpus means M4 ships with accounting invariants and
-  whatever policies M3 defines, not with a full scenario library. That is the right
-  trade: the runtime is what the project is, and the corpus is how it is proven.
+- One durable truth, strictly append-only. Traces are a function of it; the v2 replayer
+  checks a journal against its own projection.
+- A journal is bound to one ledger definition. Reconfiguring means a new journal; migration
+  is an explicit, replayed operation.
+- Policies are versioned from day one: the version is in every decision row and every v2
+  policy event.
+- M4 ships as a local tool with real guarantees inside a stated boundary, rather than a
+  network service with claimed guarantees outside it.
+- The runtime ships before the full corpus. The runtime is what the project is; the corpus
+  is how it is proven.
+- Infrastructure failures (SQLite unavailable, a bug in the core) leave no journal row.
+  This is the one class of unrecorded call, and it is stated rather than hidden.
+
+## History
+
+Repeated review rounds on 2026-09-03 moved this document from guarantees without mechanisms,
+to mechanisms without invariants, to a mutable row that defeated its own cursor, to a
+protocol that never inserted the row everything referenced and consumed approvals before
+validating them. Each round pushed a check earlier and removed a place where two things
+could disagree. The normative detail that accumulated was moved to `docs/spec/` so this
+record can stay a record.

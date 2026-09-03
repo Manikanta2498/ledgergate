@@ -32,3 +32,13 @@ coverage.xml
 
 # OS
 .DS_Store
+
+# Local editor and assistant configuration. Project tooling lives in Makefile,
+# pyproject.toml and .github/; nothing under these paths is part of the project.
+.devin/
+.claude/
+.cursor/
+.windsurf/
+.agents/
+.idea/
+.vscode/

@@ -170,8 +170,9 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 ## Consequences
 
-- One durable truth, strictly append-only. Traces are a function of it; the v2 replayer
-  checks a journal against its own projection.
+- One durable truth, strictly append-only. Traces are a function of it; `verify` replays
+  a derived trace's ledger pairs and checks every recorded read against the head and cursor
+  the books were at.
 - A journal is bound to one ledger definition. Reconfiguring means a new journal; migration
   is an explicit, replayed operation.
 - Policies are versioned from day one: the version is in every decision row and every v2

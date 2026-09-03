@@ -74,7 +74,10 @@ def trace(path: str, *, trace_id: str | None = None) -> TraceV2:
     conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("BEGIN")  # one read snapshot for the whole derivation
+        # One read snapshot for the whole derivation. Under WAL a deferred transaction
+        # takes its snapshot at the first read, so read immediately after BEGIN.
+        conn.execute("BEGIN")
+        conn.execute("SELECT COUNT(*) FROM journal").fetchone()
         try:
             return _Derivation(conn).run(trace_id)
         finally:

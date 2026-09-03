@@ -269,6 +269,12 @@ class TraceV2(_Strict):
         if d == "read" and decisions > 1:
             raise ValueError(f"{r.intent_id}: a read carries at most one policy_decision")
         decision = next((e for e in group if isinstance(e, PolicyDecision)), None)
+        if (
+            decision is not None
+            and decision.decision == "approval_required"
+            and d in ("read", "approval")
+        ):
+            raise ValueError(f"{r.intent_id}: {d} never awaits approval (a configuration fault)")
         allowed = decision is not None and decision.decision == "allow"
         if d in ("new", "approval"):
             if pairs != (1 if allowed else 0):
@@ -313,9 +319,11 @@ class TraceV2(_Strict):
             raise ValueError(f"{r.intent_id}: intent call_id differs from its tool_call")
 
     def _check_ledger_pairs(self) -> None:
-        commands = {e.command_id for e in self.events if isinstance(e, LedgerCommandEvent)}
+        commands = [e.command_id for e in self.events if isinstance(e, LedgerCommandEvent)]
         results = [e.command_id for e in self.events if isinstance(e, LedgerResultEvent)]
-        if len(commands) != len(results) or set(results) != commands:
+        if len(set(commands)) != len(commands):
+            raise ValueError("command_id must be unique across ledger_command events")
+        if sorted(results) != sorted(commands):
             raise ValueError("every ledger_command has exactly one ledger_result")
 
     # ------------------------------------------------------------ helpers
@@ -365,7 +373,9 @@ def lift(trace: Trace) -> TraceV2:
     anchored: list[tuple[tuple[int, int], Any]] = []
     for e in trace.events:
         if isinstance(e, LedgerCommandEvent):
-            intent_id = f"legacy-{e.command_id}"
+            # v1 command ids may use the whole identifier length; the lifted id is bounded by
+            # position, which cannot overflow, and the command_id itself stays on the pair.
+            intent_id = f"legacy-{e.seq}"
             anchored.append(
                 (
                     (e.seq, 0),

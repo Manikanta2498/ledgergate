@@ -730,3 +730,144 @@ class TestBoundaryGrammar:
         bad.write_text(json.dumps({"trace_id": "t", "events": []}))  # no schema_version
         assert main(["verify", str(bad)]) == 2
         assert "schema_version" in capsys.readouterr().err
+
+
+class TestSecondReviewFindings:
+    def test_read_invariant_checks_recorded_head_and_cursor(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        assert {r.name: r.status for r in check(t).results}[
+            "read_observed_the_replayed_head"
+        ] == "pass"
+        doc = t.model_dump(mode="json")
+        rr = next(e for e in doc["events"] if e["type"] == "read_result")
+        rr["head"] = "e" * 64
+        bad = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in bad.results}["read_observed_the_replayed_head"] == "fail"
+        doc2 = t.model_dump(mode="json")
+        next(e for e in doc2["events"] if e["type"] == "read_result")["cursor"] = 10_000
+        assert {r.name: r.status for r in check(TraceV2.model_validate(doc2)).results}[
+            "read_observed_the_replayed_head"
+        ] == "fail"
+
+    def test_recorded_heads_must_chain(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        doc = t.model_dump(mode="json")
+        rejected = next(e for e in doc["events"] if e["type"] == "ledger_result" and not e["ok"])
+        rejected["head"] = "d" * 64  # a rejection cannot move the head
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}[
+            "books_balance_and_chain_verifies"
+        ] == "fail"
+
+    def test_chartless_v1_trace_reports_no_evidence_for_replay_not_a_traceback(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rec = Recorder("t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds())
+        rec.execute(OpenTransaction("o", "t", Money(1, USD)))
+        doc = json.loads(dump_trace(rec.trace()))
+        doc.pop("chart")
+        p = tmp_path / "nochart.json"
+        p.write_text(json.dumps(doc))
+        assert main(["verify", str(p), "--json"]) == 0
+        card = json.loads(capsys.readouterr().out)
+        statuses = {i["name"]: i["status"] for i in card["invariants"]}
+        assert statuses["ledger_pairs_replay"] == "no_evidence"
+
+    def test_duplicate_command_ids_are_refused_at_load(self) -> None:
+        at = EPOCH.isoformat()
+        cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
+        events = []
+        for i, cid in enumerate(("dup", "dup")):
+            base = i * 4
+            events += [
+                {
+                    "type": "tool_call",
+                    "seq": base + 1,
+                    "at": at,
+                    "call_id": f"c{i}",
+                    "tool": "x",
+                    "arguments": {},
+                },
+                {
+                    "type": "legacy_intent",
+                    "seq": base + 2,
+                    "at": at,
+                    "intent_id": f"i{i}",
+                    "command": cmd,
+                },
+                {
+                    "type": "invocation_resolution",
+                    "seq": base + 3,
+                    "at": at,
+                    "intent_id": f"i{i}",
+                    "disposition": "legacy",
+                    "operation_id": cid,
+                    "attempted_digest": "0" * 64,
+                },
+                {
+                    "type": "ledger_command",
+                    "seq": base + 4,
+                    "at": at,
+                    "command_id": cid,
+                    "command": cmd,
+                },
+            ]
+        events.append(
+            {
+                "type": "ledger_result",
+                "seq": 9,
+                "at": at,
+                "command_id": "dup",
+                "ok": False,
+                "error": {"type": "X", "message": "m"},
+                "head": "0" * 64,
+                "sequence": 0,
+            }
+        )
+        with pytest.raises(ValidationError, match="unique"):
+            TraceV2.model_validate(
+                {
+                    "trace_id": "t",
+                    "started_at": at,
+                    "ended_at": at,
+                    "policy_set_version": "legacy",
+                    "events": events,
+                }
+            )
+
+    def test_lift_accepts_a_maximal_v1_command_id(self) -> None:
+        rec = Recorder("t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds())
+        rec.execute(OpenTransaction("o", "t", Money(1, USD)))
+        doc = json.loads(dump_trace(rec.trace()))
+        long_id = "x" * 256
+        for e in doc["events"]:
+            if e["type"] in ("ledger_command", "ledger_result"):
+                e["command_id"] = long_id
+        lifted = load_any(json.dumps(doc))
+        assert lifted.resolutions()[0].operation_id == long_id
+
+    def test_derivation_is_one_snapshot(
+        self, journal_path: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row committed after derivation began is not seen by it."""
+        import ledgergate.derive as derive_mod
+
+        original = derive_mod._Derivation.run
+
+        def run_and_write_midway(self: Any, trace_id: str | None) -> Any:
+            j = Journal.open(
+                journal_path,
+                clock=SteppingClock(EPOCH + timedelta(days=1)),
+                ids=SequentialIds(start=900),
+                policy=POLICY,
+            )
+            j.record_message("user", "late")
+            j.close()
+            return original(self, trace_id)
+
+        monkeypatch.setattr(derive_mod._Derivation, "run", run_and_write_midway)
+        before = derive(journal_path)
+        monkeypatch.undo()
+        after = derive(journal_path)
+        assert sum(e.type == "message" for e in before.events) == 1
+        assert sum(e.type == "message" for e in after.events) == 2

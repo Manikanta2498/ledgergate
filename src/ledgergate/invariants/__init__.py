@@ -22,10 +22,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from ledgergate.ledger import LedgerError
+from ledgergate.ledger import GENESIS_HASH, LedgerError
 from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent
 from ledgergate.trace.replay import replay_trace
-from ledgergate.trace.v2 import PolicyDecision, TraceV2
+from ledgergate.trace.v2 import InvocationResolution, PolicyDecision, ReadResult, TraceV2
 
 Severity = Literal["error", "warning"]
 Status = Literal["pass", "fail", "no_evidence"]
@@ -109,7 +109,8 @@ def _has_runtime_decision(t: TraceV2) -> bool:
 
 
 def _has_ledger_pairs(t: TraceV2) -> bool:
-    return any(isinstance(e, LedgerCommandEvent) for e in t.events)
+    """Replay needs both the pairs and the chart they were posted against."""
+    return t.chart is not None and any(isinstance(e, LedgerCommandEvent) for e in t.events)
 
 
 def _decided(t: TraceV2) -> dict[str, PolicyDecision]:
@@ -257,9 +258,24 @@ def ledger_pairs_replay(t: TraceV2) -> list[Finding]:
 
 
 def books_balance_and_chain_verifies(t: TraceV2) -> list[Finding]:
-    """The replayed ledger's trial balance balances and its hash chain verifies."""
-    report = replay_trace(t.ledger_view())
+    """The *recorded* heads form one chain: each ledger_result's head equals the previous
+    recorded head unless it appended an entry, and the ledger replayed from the pairs balances
+    and verifies its own chain (a core self-check the recorded chain must agree with)."""
     out = []
+    previous = GENESIS_HASH
+    for e in t.events:
+        if isinstance(e, LedgerResultEvent) and e.head is not None:
+            appended = e.ok and e.entry_id is not None
+            if not appended and e.head != previous:
+                out.append(
+                    Finding(
+                        "books_balance_and_chain_verifies",
+                        "error",
+                        f"{e.command_id}: head moved without an entry being appended",
+                    )
+                )
+            previous = e.head
+    report = replay_trace(t.ledger_view())
     if not report.ledger.trial_balance().is_balanced:
         out.append(
             Finding("books_balance_and_chain_verifies", "error", "trial balance does not balance")
@@ -268,6 +284,42 @@ def books_balance_and_chain_verifies(t: TraceV2) -> list[Finding]:
         report.ledger.verify_chain()
     except LedgerError as exc:
         out.append(Finding("books_balance_and_chain_verifies", "error", f"hash chain: {exc}"))
+    return out
+
+
+def read_observed_the_replayed_head(t: TraceV2) -> list[Finding]:
+    """Every read_result's head is the head the most recent preceding ledger_result recorded
+    (or the genesis hash), and its cursor never exceeds the largest outcome any earlier
+    resolution referenced: a read saw the projection the journal was at, not another."""
+    out = []
+    head = GENESIS_HASH
+    max_outcome = 0
+    for e in t.events:
+        if isinstance(e, LedgerResultEvent) and e.head is not None:
+            head = e.head
+        elif isinstance(e, InvocationResolution) and e.outcome_ref is not None:
+            max_outcome = max(max_outcome, int(e.outcome_ref.split("-")[1]))
+        elif isinstance(e, ReadResult):
+            if e.head != head:
+                out.append(
+                    Finding(
+                        "read_observed_the_replayed_head",
+                        "error",
+                        f"{e.intent_id}: read saw head {e.head[:12]}"
+                        f" but the books were at {head[:12]}",
+                        e.intent_id,
+                    )
+                )
+            if e.cursor > max_outcome:
+                out.append(
+                    Finding(
+                        "read_observed_the_replayed_head",
+                        "error",
+                        f"{e.intent_id}: read cursor {e.cursor} exceeds any outcome"
+                        " recorded before it",
+                        e.intent_id,
+                    )
+                )
     return out
 
 
@@ -351,6 +403,13 @@ REGISTRY: tuple[Invariant, ...] = (
         "ledger core: double entry and hash chain",
         books_balance_and_chain_verifies,
         _has_ledger_pairs,
+    ),
+    Invariant(
+        "read_observed_the_replayed_head",
+        read_observed_the_replayed_head.__doc__ or "",
+        "docs/spec/journal.md, read protocol",
+        read_observed_the_replayed_head,
+        lambda t: any(isinstance(e, ReadResult) for e in t.events),
     ),
     Invariant(
         "legacy_carries_no_policy_evidence",

@@ -47,7 +47,9 @@ agent run ──▶ trace (schema v1 | v2) ──▶ invariants + policy ──�
 MCP client ──▶ ledgergate serve (stdio) ──▶ policy ──▶ command log ──▶ ledger + trace
 ```
 
-The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json), a JSON Schema
+The interop contract is [`schema/trace/v1.json`](schema/trace/v1.json) for recorded and
+imported traces and [`schema/trace/v2.json`](schema/trace/v2.json) for what the runtime
+derives, each a JSON Schema
 2020-12 document, not our harness. Any agent that emits the schema can be checked,
 whatever framework it uses.
 
@@ -211,8 +213,9 @@ policy, and the operation stays pending for a correct one. Every verdict is a ro
 **Trace v2, derivation and `verify` (M3).** A journal derives, deterministically and with
 no key, into a schema v2 trace built around *intents* and *dispositions*: every invocation
 yields exactly one `invocation_resolution` naming what the runtime did and the exact outcome
-that answered it; a `policy_decision` appears only when policy actually ran and carries the
-whole context it ran on; a ledger pair appears only after an `allow`. A v1 document is
+that answered it; a `policy_decision` appears only when this invocation was decided, by the
+policy set or by the runtime on a rejected approval (marked with a `runtime.` rule), and
+carries the whole context; a ledger pair appears only after an `allow`. A v1 document is
 lifted under a `legacy` grammar that invents neither tool events nor policy evidence.
 `ledgergate verify <trace-or-journal>` runs the invariant registry and reports each
 invariant as `pass`, `fail` or `no_evidence`, never a pass by absence:
@@ -226,6 +229,7 @@ pass         runtime_decisions_are_verdicts
 pass         context_matches_decision
 pass         ledger_pairs_replay
 pass         books_balance_and_chain_verifies
+pass         read_observed_the_replayed_head
 no_evidence  legacy_carries_no_policy_evidence
 PASS: 8 intents, 3 ledger commands
 ```

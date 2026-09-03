@@ -129,8 +129,10 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
   `unknown` when the envelope kept none; its `attempted_digest` is the envelope's
   `input_digest`.
 - a standalone `message` carries the time the journal recorded it (kept in its row).
-- lifted v1 content: `intent_id` is `legacy-<v1 command_id>`, `operation_id` is the v1
-  `command_id`, and `attempted_digest` is the command's fingerprint recomputed on lift.
+- lifted v1 content: `intent_id` is `legacy-<v1 seq of the ledger_command>` (bounded by
+  position, since a v1 `command_id` may already use the whole identifier length),
+  `operation_id` is the v1 `command_id`, and `attempted_digest` is the command's fingerprint
+  recomputed on lift.
 
 `seq` is the dense enumeration of emitted events in anchored order: `(invocation
 journal_sequence, ordinal)` for runtime content, `(v1 seq, ordinal)` for lifted content,
@@ -151,8 +153,14 @@ replayer over the ledger pairs alone (`TraceV2.ledger_view()`); nothing else in 
 lifted) a v2 trace and runs the invariant registry (`ledgergate.invariants.REGISTRY`) over
 it. Each invariant is a pure function of the trace grounded in a named document, and reports
 `pass`, `fail`, or `no_evidence`: a trace that does not carry what an invariant would need
-(a lifted v1 trace for the policy invariants) is reported as such and never as a pass. The
-scorecard is the combined result; the process exits 0 only when nothing failed.
+(a lifted v1 trace for the policy invariants, a chartless trace for replay) is reported as
+such and never as a pass. Several registry rows restate rules the v2 model also enforces at
+load; a document violating them fails to load rather than failing a row, and the scorecard
+then records that the loaded document satisfies them. The registry is the statement of what
+is checked; the validator is one of its mechanisms. The read invariant is the one check of
+the projection a trace supports: every `read_result` head equals the most recent recorded
+`ledger_result` head (or genesis) and its cursor never exceeds an outcome recorded before it.
+The scorecard is the combined result; the process exits 0 only when nothing failed.
 
 ## Status
 

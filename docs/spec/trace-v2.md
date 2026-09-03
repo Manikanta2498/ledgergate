@@ -45,8 +45,12 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   the model enforces it: a `new` creates a fresh operation and a fresh outcome; a `replay`,
   `conflict` or `approval` names an operation an earlier `new` created; a `replay` or a
   failed-verdict `approval` names the outcome that was that operation's current one at the
-  time, a failed approval's being pending; a produced outcome is produced exactly once, in
-  allocation order).
+  time; an `approval`, whatever its verdict, is against an operation whose current outcome is
+  pending; a produced outcome is produced exactly once, in allocation order). The model also
+  ties every command intent to what it is about: the fingerprint of its `command` is its
+  `attempted_digest`, equals the operation's for `new`, `replay` and `approval` and differs
+  for `conflict`, and equals the command its `ledger_command` carries; and in a runtime trace
+  every `tool_call` and `tool_result` brackets an intent.
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
   names the operation's pending tip, the outcome that was *current* at the time (the latest

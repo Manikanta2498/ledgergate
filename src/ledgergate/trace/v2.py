@@ -192,8 +192,11 @@ class TraceV2(_Strict):
     the same call_id; events of one intent appear in ordinal order; seq is dense and
     strictly increasing; every ledger_command has exactly one ledger_result and command_id
     is unique; every operation and outcome reference resolves to one recorded earlier, a
-    replay or failed approval names the operation's outcome current at the time, and a
-    produced outcome is produced once, in allocation order; derived references
+    replay or failed approval names the operation's outcome current at the time, an
+    approval is against a pending operation, a produced outcome is produced once, in
+    allocation order; a command intent's fingerprint is its attempted_digest, matches the
+    operation's for new, replay and approval and differs for conflict, and equals its
+    ledger_command's; in a runtime trace every boundary event brackets an intent; derived references
     (outcome, presentation, consumption) follow their fixed grammars."""
 
     model_config = ConfigDict(
@@ -250,11 +253,19 @@ class TraceV2(_Strict):
                     raise ValueError(f"ledger_result {e.command_id} has no ledger_command")
                 by_intent[owner].append(e)
         positions = {id(e): i for i, e in enumerate(self.events)}
+        bracketing: set[int] = set()
         for r in resolutions:
             self._check_intent(r, by_intent[r.intent_id])
             if r.disposition != "legacy":
-                self._check_boundary(r, by_intent[r.intent_id], positions)
+                bracketing.update(self._check_boundary(r, by_intent[r.intent_id], positions))
+        if not any(r.disposition == "legacy" for r in resolutions):
+            # In a runtime trace every boundary event brackets an intent; a stray pair would
+            # be a call the journal never saw.
+            for e in self.events:
+                if isinstance(e, ToolCallEvent | ToolResultEvent) and id(e) not in bracketing:
+                    raise ValueError(f"{e.type} {e.call_id!r} brackets no intent")
         self._check_references(resolutions, by_intent)
+        self._check_commands(resolutions, by_intent)
         for intent_id, group in by_intent.items():
             if not any(isinstance(e, InvocationResolution) for e in group):
                 raise ValueError(f"intent {intent_id!r} has events but no resolution")
@@ -350,6 +361,10 @@ class TraceV2(_Strict):
                 operations.add(op)
             elif op not in operations:
                 raise ValueError(f"{r.intent_id}: {r.disposition} names an unknown operation")
+            if r.disposition == "approval" and not pending.get(op, False):
+                # An approval, whatever its verdict, is against an operation whose current
+                # outcome is pending; a terminal operation has nothing left to approve.
+                raise ValueError(f"{r.intent_id}: approval against a non-pending operation")
             if produced:
                 assert out is not None
                 if out in outcomes:
@@ -367,12 +382,48 @@ class TraceV2(_Strict):
                 # outcome at the time: the latest one produced before this resolution.
                 if current.get(op) != out:
                     raise ValueError(f"{r.intent_id}: outcome {out} was not {op}'s current outcome")
-                if r.disposition == "approval" and not pending[op]:
-                    raise ValueError(f"{r.intent_id}: approval against a non-pending outcome")
+
+    def _check_commands(
+        self, resolutions: list[InvocationResolution], by_intent: dict[str, list[AnyV2Event]]
+    ) -> None:
+        """The command an intent carries is the one its digest, its operation and its ledger
+        pair are about: the fingerprint of command_intent.command equals attempted_digest; a
+        new, replay or approval matches the operation's fingerprint and a conflict differs;
+        the owning ledger_command carries the same command."""
+        from ledgergate.ledger import command_fingerprint
+
+        registry = self.registry()
+        operation_fp: dict[str, str] = {}
+        for r in resolutions:
+            group = by_intent[r.intent_id]
+            intent = next((e for e in group if isinstance(e, CommandIntent)), None)
+            if intent is None:
+                continue
+            fp = command_fingerprint(intent.command.to_command(registry))
+            if fp != r.attempted_digest:
+                raise ValueError(
+                    f"{r.intent_id}: attempted_digest is not the command's fingerprint"
+                )
+            op = r.operation_id
+            assert op is not None
+            if r.disposition == "new":
+                operation_fp[op] = fp
+            elif r.disposition == "conflict":
+                if operation_fp.get(op) == fp:
+                    raise ValueError(
+                        f"{r.intent_id}: a conflict's command must differ from the operation's"
+                    )
+            elif operation_fp.get(op) != fp:
+                raise ValueError(
+                    f"{r.intent_id}: {r.disposition} carries a command other than the operation's"
+                )
+            pair = next((e for e in group if isinstance(e, LedgerCommandEvent)), None)
+            if pair is not None and pair.command != intent.command:
+                raise ValueError(f"{r.intent_id}: ledger_command differs from the intent's command")
 
     def _check_boundary(
         self, r: InvocationResolution, group: list[AnyV2Event], positions: dict[int, int]
-    ) -> None:
+    ) -> set[int]:
         """A runtime intent is bracketed by its own tool_call and tool_result: the event
         immediately before its first event is a tool_call, the event immediately after its
         last is a tool_result, and both carry the intent's call_id."""
@@ -388,6 +439,7 @@ class TraceV2(_Strict):
         call_id = getattr(first, "call_id", None)
         if call_id is not None and call_id != call.call_id:
             raise ValueError(f"{r.intent_id}: intent call_id differs from its tool_call")
+        return {id(call), id(result)}
 
     def _check_ledger_pairs(self) -> None:
         commands = [e.command_id for e in self.events if isinstance(e, LedgerCommandEvent)]

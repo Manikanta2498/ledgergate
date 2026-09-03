@@ -245,8 +245,7 @@ class TestGrammar:
             "at": self.AT,
             "intent_id": iid,
             "disposition": disposition,
-            "attempted_digest": "0" * 64,
-            **kw,
+            **{"attempted_digest": "0" * 64, **kw},
         }
 
     def _bracketed(self, *inner: dict[str, Any], call_id: str = "c") -> list[dict[str, Any]]:
@@ -287,7 +286,11 @@ class TestGrammar:
             self._validate(read, self._res("i", "invalid"))
 
     def test_new_requires_a_decision_and_replay_forbids_one(self) -> None:
+        from ledgergate.codec import decode_command
+        from ledgergate.ledger import CURRENCIES, command_fingerprint
+
         cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
+        fp = command_fingerprint(decode_command(cmd, CURRENCIES))
         intent = {
             "type": "command_intent",
             "seq": 1,
@@ -309,16 +312,23 @@ class TestGrammar:
         }
         with pytest.raises(ValidationError, match="exactly one policy_decision"):
             self._validate(
-                intent, self._res("i", "new", operation_id="op", outcome_ref="outcome-1")
+                intent,
+                self._res(
+                    "i", "new", operation_id="op", outcome_ref="outcome-1", attempted_digest=fp
+                ),
             )
         with pytest.raises(ValidationError, match="never carries a policy_decision"):
             self._validate(
                 intent,
-                self._res("i", "replay", operation_id="op", outcome_ref="outcome-1"),
+                self._res(
+                    "i", "replay", operation_id="op", outcome_ref="outcome-1", attempted_digest=fp
+                ),
                 decision,
             )
         self._validate(
-            intent, self._res("i", "new", operation_id="op", outcome_ref="outcome-1"), decision
+            intent,
+            self._res("i", "new", operation_id="op", outcome_ref="outcome-1", attempted_digest=fp),
+            decision,
         )
 
     def test_resolution_shape(self) -> None:
@@ -1160,3 +1170,142 @@ class TestFifthReviewFindings:
         conn.close()
         with pytest.raises(DerivationError, match="presentations"):
             derive(path)
+
+
+class TestSixthReviewFindings:
+    def _denied_then_approved(self, tmp_path: Path) -> dict[str, Any]:
+        """A doctored trace: the operation's only outcome is a policy deny, then an approval
+        intent claims to have applied it."""
+        path = str(tmp_path / "d.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(_open("big", "c2", 500, approval=_artefact(j, "big")))
+        j.close()
+        doc = derive(path).model_dump(mode="json")
+        first = next(e for e in doc["events"] if e["type"] == "policy_decision")
+        first["decision"] = "deny"
+        first["matched_rule"], first["reason"] = "p.deny_above", "too big"
+        return doc
+
+    def test_an_approval_against_a_denied_operation_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValidationError, match="non-pending operation"):
+            TraceV2.model_validate(self._denied_then_approved(tmp_path))
+
+    def test_denied_never_reaches_ledger_is_operation_scoped(self, tmp_path: Path) -> None:
+        """Through the registry alone (the grammar already refuses this shape at load): a deny
+        on an operation followed by a ledger command for that operation fails the row."""
+        from ledgergate.invariants import denied_never_reaches_ledger
+
+        doc = self._denied_then_approved(tmp_path)
+        # a model built without validation, so the invariant, not the grammar, must catch it
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        findings = denied_never_reaches_ledger(built)
+        assert any("operation that was denied" in f.message for f in findings)
+
+    def test_command_and_digest_must_agree(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        doc = t.model_dump(mode="json")
+        intent = next(e for e in doc["events"] if e["type"] == "command_intent")
+        pair = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "ledger_command" and e["command"] == intent["command"]
+        )
+        intent["command"]["draft"]["postings"][0]["money"]["amount"] = 1
+        intent["command"]["draft"]["postings"][1]["money"]["amount"] = 1
+        with pytest.raises(ValidationError, match="not the command's fingerprint"):
+            TraceV2.model_validate(doc)
+        doc = t.model_dump(mode="json")
+        pair = next(e for e in doc["events"] if e["type"] == "ledger_command")
+        pair["command"]["draft"]["postings"][0]["money"]["amount"] = 1
+        pair["command"]["draft"]["postings"][1]["money"]["amount"] = 1
+        with pytest.raises(ValidationError):
+            TraceV2.model_validate(doc)
+
+    def test_a_replay_must_carry_the_operations_command(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        doc = t.model_dump(mode="json")
+        replay_res = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        intent = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "command_intent" and e["intent_id"] == replay_res["intent_id"]
+        )
+        intent["command"]["draft"]["description"] = "changed"
+        with pytest.raises(ValidationError):
+            TraceV2.model_validate(doc)
+
+    def test_a_stray_boundary_pair_is_refused_in_a_runtime_trace(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        n = len(doc["events"])
+        at = doc["events"][-1]["at"]
+        doc["events"] += [
+            {
+                "type": "tool_call",
+                "seq": n + 1,
+                "at": at,
+                "call_id": "ghost",
+                "tool": "post",
+                "arguments": {"amount": 999999},
+            },
+            {
+                "type": "tool_result",
+                "seq": n + 2,
+                "at": at,
+                "call_id": "ghost",
+                "ok": True,
+                "result": {},
+            },
+        ]
+        with pytest.raises(ValidationError, match="brackets no intent"):
+            TraceV2.model_validate(doc)
+
+    def test_a_journal_without_a_response_row_is_a_derivation_error(
+        self, journal_path: str
+    ) -> None:
+        import sqlite3
+
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER invocation_responses_no_delete")
+        conn.execute(
+            "DELETE FROM invocation_responses WHERE journal_sequence ="
+            " (SELECT MAX(journal_sequence) FROM invocation_responses)"
+        )
+        conn.close()
+        with pytest.raises(DerivationError, match="no response row"):
+            derive(journal_path)
+
+    def test_one_decision_per_invocation_by_schema(self, journal_path: str) -> None:
+        import sqlite3
+
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("PRAGMA foreign_keys = ON")
+        (dec,) = conn.execute(
+            "SELECT * FROM decisions ORDER BY journal_sequence LIMIT 1"
+        ).fetchall()
+        conn.execute("BEGIN")
+        seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)", (seq, *dec[1:]))
+        conn.execute("ROLLBACK")
+        conn.close()
+
+
+def _to_event(doc: dict[str, Any]) -> Any:
+    from pydantic import TypeAdapter
+
+    from ledgergate.trace.v2 import V2Event
+
+    return TypeAdapter(V2Event).validate_python(doc)

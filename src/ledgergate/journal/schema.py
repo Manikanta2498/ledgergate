@@ -130,7 +130,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS decisions (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
-    invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence),
+    invocation INTEGER NOT NULL UNIQUE REFERENCES invocations(journal_sequence),
     operation INTEGER REFERENCES operations(journal_sequence),
     context TEXT NOT NULL,
     policy_set_version TEXT NOT NULL,

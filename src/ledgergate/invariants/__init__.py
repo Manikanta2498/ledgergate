@@ -120,17 +120,35 @@ def _decided(t: TraceV2) -> dict[str, PolicyDecision]:
 
 
 def denied_never_reaches_ledger(t: TraceV2) -> list[Finding]:
-    """A denied or approval-pending intent has no ledger pair (trace-v2 grammar, ordinal 4)."""
+    """A denied or approval-pending intent has no ledger pair, and once an operation was
+    denied no later ledger command is about it: a denied command never reaches the ledger."""
     out = []
     owners = _pair_owners(t)
-    for iid, d in _decided(t).items():
-        if d.decision != "allow" and iid in owners:
+    by_id = {r.intent_id: r for r in t.resolutions()}
+    denied_ops: set[str] = set()
+    for e in t.events:
+        if isinstance(e, PolicyDecision):
+            iid = e.intent_id
+            if e.decision != "allow" and iid in owners:
+                out.append(
+                    Finding(
+                        "denied_never_reaches_ledger",
+                        "error",
+                        f"{iid}: decision {e.decision} yet a ledger command was recorded",
+                        iid,
+                    )
+                )
+            # A runtime deny on a failed verdict leaves the operation pending; only the policy
+            # set's own deny is terminal for the operation.
+            if e.decision == "deny" and not e.runtime_written and by_id[iid].operation_id:
+                denied_ops.add(by_id[iid].operation_id or "")
+        elif isinstance(e, LedgerCommandEvent) and e.command_id in denied_ops:
             out.append(
                 Finding(
                     "denied_never_reaches_ledger",
                     "error",
-                    f"{iid}: decision {d.decision} yet a ledger command was recorded",
-                    iid,
+                    f"{e.command_id}: a ledger command for an operation that was denied",
+                    _owner_of(t, e.command_id),
                 )
             )
     return out

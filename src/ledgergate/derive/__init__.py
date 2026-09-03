@@ -157,6 +157,8 @@ class _Derivation:
         response = self.c.execute(
             "SELECT * FROM invocation_responses WHERE invocation = ?", (seq,)
         ).fetchone()
+        if response is None:
+            raise DerivationError(f"invocation {seq} has no response row")
         presentations = self.c.execute(
             "SELECT journal_sequence FROM approvals WHERE invocation = ?", (seq,)
         ).fetchall()

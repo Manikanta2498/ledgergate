@@ -40,9 +40,12 @@ named digests, both SHA-256 over canonical JSON (sorted keys, no whitespace, UTF
 `input_digest`, over the untyped input, is what the failure envelope records, because a
 malformed input has no `Request` to digest; `request_digest`, over the `Request`, is
 recorded on every admitted invocation. "Canonical JSON" means RFC 8785 (JSON
-Canonicalization Scheme): sorted keys, no whitespace, shortest round-trip number form,
-UTF-8, no ASCII escaping of non-ASCII, so two implementations digest identically and
-`5.0` is not `5`. Neither is the operation fingerprint (next
+Canonicalization Scheme): UTF-16 code-unit key order, ECMAScript number formatting, no
+whitespace, UTF-8. Under JCS `5.0` and `5` are the same number and serialize as `5`; the
+runtime's refusal of whole floats where an integer is required is model validation that
+runs *before* digesting, not a property of the digest. Python's `json.dumps` is not JCS
+(it emits `5.0` and `1e+16`, and sorts keys by code point), so M2b implements or vendors a
+JCS serializer and tests it against the RFC 8785 appendix vectors. Neither is the operation fingerprint (next
 paragraph), which is over the decoded *command*.
 
 ## Sequences
@@ -85,7 +88,7 @@ All strictly append-only. No row is ever updated or deleted.
 | `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row if check 4 succeeded. |
 | `approvals` | One row per *presentation* of an artefact (a presentation row's identity is its `journal_sequence`), referencing the presenting `invocation`: the logical `approval_id` from the artefact, approver principal, bound `fingerprint`, bound tokenized `key`, bound subject, bound amount and currency, `issued_at`, `expires_at`, signature, and the **check result** of the pure checks 1 to 3 (`checks_passed`, `approval_invalid`, `approval_expired`, `approval_scope_mismatch`, or `approval_not_applicable`). The *final verdict*, which also depends on check 4 (consumption), lives on the `decisions` row that considered this presentation; a row written before a check cannot carry that check's result. Presenting the same artefact twice appends two rows. |
 | `approval_consumptions` | logical `approval_id` (`UNIQUE`), the presentation row, the consuming `invocation`. The `UNIQUE` is on the logical id, so an artefact is consumable once however many times it is presented. The decision that used it references this row, not the reverse: the row is written during validation, before the decision exists. |
-| `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own single-row transaction and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
+| `events` | Boundary events, each with a nullable `invocation` (null only for standalone `message` rows, which are written by their own transaction, allocator row included, and belong to no invocation): the inbound `tool_call` (tool, admitted arguments after redaction, `call_id`), or the failure envelope written by admission step 3, or a message; and the outbound `tool_result` data the response is rendered from (`ok=true` with result, or `ok=false` with error type and message; a policy denial is `ok=false`, type `PolicyDenied`, message the rule and reason), keyed to their invocation. |
 | `reads` | For read tools: the `journal_sequence` and head the projection was at when served, and the result digest. |
 
 ## Invariants
@@ -148,7 +151,10 @@ they all passed and references that row. The final verdict is recorded on the `d
 row, which is written after check 4 and so can hold it. An invalid, expired or mis-scoped
 artefact never touches `approval_consumptions`.
 
-1. Signature verifies against the definition's key, else verdict `approval_invalid`.
+1. Signature verifies against the definition's key, else verdict `approval_invalid`. The
+   signature covers every field the artefact carries (`approval_id`, approver,
+   `fingerprint`, `key`, subject, amount, currency, `issued_at`, `expires_at`), serialized
+   per RFC 8785, so no field can be re-labelled after issuance.
 2. `expires_at` is after the injected evaluation time, else `approval_expired`.
 3. The artefact's `fingerprint` and `key` equal the pending operation's, else `approval_scope_mismatch`.
 4. **Consumption.** `INSERT INTO approval_consumptions (approval_id, presentation,
@@ -332,7 +338,10 @@ anything that references it, an operation before the invocation that references 
    *Outcome chain*. `invocation_responses` naming that outcome. Outbound `events`. Commit.
 10. Render and return the response.
 
-**Crash analysis.** Before commit: nothing exists; a retry runs afresh. After commit,
+**Crash analysis.** Before commit: nothing exists in the journal, and the process keeps
+the projection reference it held before the transaction; the `Ledger` value produced in
+step 8 is discarded (it is an immutable value, so nothing has to be undone). A retry runs
+afresh. After commit,
 before step 10: a complete invocation exists including its outbound event. A retry of a
 committed `new` resolves as `replay`. A retry of a committed `approval` resolves as `replay`
 if its verdict was `approval_valid` (the operation is now terminal) and as a fresh
@@ -392,8 +401,11 @@ snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable s
 `invocations` (`invalid`), the failure-envelope inbound event, `invocation_responses`
 (`invalid`, no outcome), the outbound event; commits; returns). 4. `invocations` (`read`).
 5. Inbound `events`; then, if an approval was presented, an `approvals` row with check result
-`approval_not_applicable`. 6. `decisions` if the read is policy-gated (its `PolicyContext.command_digest` is the
-invocation's `request_digest`; a read has no operation and no fingerprint). On `deny`: no `reads`
+`approval_not_applicable`. 6. `decisions` if the read is policy-gated. A read is policy-gated iff the configured
+policy set declares that read tool gated; the null policy set gates no reads, so M2b's
+audited reads write no `decisions` row and their trace carries no `policy_decision`. For a
+gated read, `PolicyContext.command_digest` is the invocation's `request_digest`; a read has
+no operation and no fingerprint. On `deny`: no `reads`
 row; disposition stays `read`; go to 8 with `ok=false`/`PolicyDenied` as the outbound
 event. 7. Serve from the projection; write `reads` with cursor, head and result digest.
 8. `invocation_responses` (`read`, no outcome); outbound `events`; commit; respond.

@@ -22,7 +22,8 @@ tool_call                        ordinal 0
                                        request_digest for reads, input_digest for invalid),
                                        approval presentation ref if one was presented
                                        disposition: new | replay | conflict | approval | read | invalid
-  [policy_decision]                3   iff disposition in {new, approval} or a policy-gated read
+  [policy_decision]                3   iff disposition in {new, approval}, or a read whose tool the
+                                       configured policy set declares gated (the null set gates none)
   [ledger_command                  4   iff a policy_decision == allow on a write intent
    ledger_result]                  5
   [read_result]                    6   iff disposition == read and no policy_decision == deny

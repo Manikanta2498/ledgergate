@@ -43,11 +43,14 @@ is an *operation* (immutable identity) with an appended history of *outcomes*; e
 attempt is an *invocation*. A retry is therefore visible in the trace as a retry and
 invisible to the books as an effect, which is the property the README leads with.
 
-The five invariants an implementation is held to are listed in
+The invariants an implementation is held to are listed in
 [spec/journal.md, *Invariants*](../spec/journal.md#invariants); the protocol that
-maintains them is the section after. One is worth naming here because it changed the
-design: the projection cursor is the global sequence, not the entry-chain head, because
-lifecycle commands change state without touching the chain.
+maintains them follows. Two are worth naming here because they changed the design. The
+projection cursor is the journal sequence of the latest *outcome* folded in, not the
+entry-chain head (lifecycle commands change state without touching the chain) and not the
+global maximum (most rows are audit, not state). And every invocation records the exact
+outcome that answered it, because "the operation's current outcome" is a different fact
+by the time the journal is read.
 
 *Trade-off:* audited reads serialize with writes. A balance query is cheap, and the
 alternative (a deferred read that upgrades to write) can fail after its snapshot is taken.

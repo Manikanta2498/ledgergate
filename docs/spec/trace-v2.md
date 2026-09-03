@@ -16,7 +16,9 @@ exactly one `invocation_resolution`; it yields an intent only if admission succe
 ```
 tool_call                        ordinal 0
   [command_intent | read_intent]   1   iff disposition != invalid
-  invocation_resolution            2   exactly one; disposition, operation ref, attempted digest
+  invocation_resolution            2   exactly one; disposition, operation ref, the exact outcome
+                                       that answered this invocation (from invocation_responses),
+                                       attempted digest
                                        disposition: new | replay | conflict | approval | read | invalid
   [policy_decision]                3   iff disposition in {new, approval} or a policy-gated read
   [ledger_command                  4   iff a policy_decision == allow on a write intent
@@ -33,8 +35,9 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
 `(event.journal_sequence, 0)`. `seq` is the dense enumeration over that order.
 
 - `replay` and `conflict`: no decision, no ledger pair; `invocation_resolution` names the
-  operation resolved to, whose original decision and pair appear earlier in the same
-  trace (a trace is derived from a whole journal; in a windowed export the reference is
+  operation resolved to and, for `replay`, the exact outcome that answered (so a retry
+  that was told `awaiting_approval` says so even if the operation was approved later),
+  whose original decision and pair appear earlier in the same trace (a trace is derived from a whole journal; in a windowed export the reference is
   marked `external`).
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval`: the decision carries the approval presentation reference and verdict; if

@@ -51,7 +51,7 @@ def journal_dump(args: argparse.Namespace) -> int:
     """Rows in ``journal_sequence`` order, one JSON object per line, read-only."""
     try:
         conn = sqlite3.connect(Path(args.path).resolve().as_uri() + "?mode=ro", uri=True)
-    except sqlite3.OperationalError as exc:
+    except sqlite3.Error as exc:
         print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
         return 2
     try:
@@ -63,7 +63,7 @@ def journal_dump(args: argparse.Namespace) -> int:
             rows.extend((int(r[0]), table, dict(zip(names, r, strict=True))) for r in cur)
         for _seq, table, row in sorted(rows, key=lambda r: (r[0], r[1] != "journal")):
             print(json.dumps({"table": table, **row}, sort_keys=True, ensure_ascii=False))
-    except sqlite3.OperationalError as exc:
+    except sqlite3.Error as exc:
         print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
         return 2
     finally:

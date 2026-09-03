@@ -170,3 +170,36 @@ def test_property_round_trip(amount: int, description: str, tags: dict[str, str]
     )
     command = Post("k", draft)
     assert decode_command(encode_command(command), REG) == command
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {"kind": "post", "key": "k", "draft": {"postings": [], "SECRET-FIELD": 1}},
+        {
+            "kind": "post",
+            "key": "k",
+            "draft": {"postings": [{"account": "a", "side": "SECRET", "money": {}}]},
+        },
+        {"kind": "advance", "key": "k", "transaction_id": "t", "event": "SECRET-EVENT"},
+        {"kind": "SECRET-KIND", "key": "k"},
+        {
+            "kind": "open_transaction",
+            "key": "k",
+            "transaction_id": "t",
+            "amount": {"amount": 1, "currency": "SECRET"},
+        },
+        {
+            "kind": "refund",
+            "key": "k",
+            "transaction_id": "t",
+            "money": {"amount": 1, "currency": "USD"},
+            "SECRET": 2,
+        },
+    ],
+)
+def test_codec_error_location_never_contains_document_values(doc: dict[str, object]) -> None:
+    """``CodecError.where`` is what admission records; it must be built from literals only."""
+    with pytest.raises(CodecError) as exc:
+        decode_command(doc, REG)
+    assert "SECRET" not in exc.value.where

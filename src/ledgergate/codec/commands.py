@@ -40,7 +40,15 @@ Registry = Mapping[str, Currency]
 
 
 class CodecError(ValueError):
-    """The document is not a well-formed command in this codec version."""
+    """The document is not a well-formed command in this codec version.
+
+    ``where`` is the structural location (a literal field path built by this module,
+    never from document values); ``detail`` says what was wrong there.
+    """
+
+    def __init__(self, where: str, detail: str) -> None:
+        self.where, self.detail = where, detail
+        super().__init__(f"{where}: {detail}")
 
 
 # ------------------------------------------------------------------- encoding
@@ -107,22 +115,22 @@ def encode_command(command: Command) -> dict[str, Any]:
 
 def _expect(doc: Any, kind: str) -> dict[str, Any]:
     if not isinstance(doc, dict):
-        raise CodecError(f"{kind}: must be an object")
+        raise CodecError(kind, "must be an object")
     return doc
 
 
 def _field(doc: dict[str, Any], name: str, typ: type, *, where: str) -> Any:
     if name not in doc:
-        raise CodecError(f"{where}: missing {name!r}")
+        raise CodecError(where, f"missing {name!r}")
     value = doc[name]
     if (typ is int and isinstance(value, bool)) or not isinstance(value, typ):
-        raise CodecError(f"{where}.{name}: expected {typ.__name__}, got {type(value).__name__}")
+        raise CodecError(f"{where}.{name}", f"expected {typ.__name__}, got {type(value).__name__}")
     return value
 
 
 def _only(doc: dict[str, Any], allowed: set[str], *, where: str) -> None:
     if extra := set(doc) - allowed:
-        raise CodecError(f"{where}: unknown fields {sorted(extra)}")
+        raise CodecError(where, f"unknown fields {sorted(extra)}")
 
 
 def _decode_money(doc: Any, registry: Registry, *, where: str) -> Money:
@@ -131,7 +139,7 @@ def _decode_money(doc: Any, registry: Registry, *, where: str) -> Money:
     amount = _field(m, "amount", int, where=where)
     code = _field(m, "currency", str, where=where)
     if code not in registry:
-        raise CodecError(f"{where}: currency {code!r} is not in the registry")
+        raise CodecError(where, f"currency {code!r} is not in the registry")
     return Money(amount, registry[code])
 
 
@@ -148,7 +156,7 @@ def decode_draft(doc: Any, registry: Registry, *, where: str = "draft") -> Entry
         try:
             side = Side(side_raw)
         except ValueError as exc:
-            raise CodecError(f"{pw}.side: {side_raw!r}") from exc
+            raise CodecError(f"{pw}.side", f"{side_raw!r}") from exc
         postings.append(
             Posting(
                 _field(pd, "account", str, where=pw),
@@ -158,12 +166,12 @@ def decode_draft(doc: Any, registry: Registry, *, where: str = "draft") -> Entry
         )
     description = d.get("description", "")
     if not isinstance(description, str):
-        raise CodecError(f"{where}.description: expected str")
+        raise CodecError(f"{where}.description", "expected str")
     tags_raw = d.get("tags", {})
     if not isinstance(tags_raw, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in tags_raw.items()
     ):
-        raise CodecError(f"{where}.tags: expected an object of strings")
+        raise CodecError(f"{where}.tags", "expected an object of strings")
     return EntryDraft(tuple(postings), description, tuple(sorted(tags_raw.items())))
 
 
@@ -180,7 +188,7 @@ def decode_command(doc: Any, registry: Registry) -> Command:
             _only(c, {"kind", "key", "entry_id", "description"}, where=where)
             description = c.get("description", "")
             if not isinstance(description, str):
-                raise CodecError(f"{where}.description: expected str")
+                raise CodecError(f"{where}.description", "expected str")
             return Reverse(key, _field(c, "entry_id", str, where=where), description)
         case "open_transaction":
             _only(c, {"kind", "key", "transaction_id", "amount"}, where=where)
@@ -195,7 +203,7 @@ def decode_command(doc: Any, registry: Registry) -> Command:
             try:
                 event = TransactionEvent(event_raw)
             except ValueError as exc:
-                raise CodecError(f"{where}.event: {event_raw!r}") from exc
+                raise CodecError(f"{where}.event", f"{event_raw!r}") from exc
             entry = (
                 None
                 if "entry" not in c
@@ -216,4 +224,4 @@ def decode_command(doc: Any, registry: Registry) -> Command:
                 entry,
             )
         case _:
-            raise CodecError(f"command: unknown kind {kind!r}")
+            raise CodecError("command", f"unknown kind {kind!r}")

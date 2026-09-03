@@ -38,7 +38,10 @@ wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `
 (JSON object), `call_id`, `principal`, `key` (idempotency key), optional `approval`. Two
 named digests, both SHA-256 over canonical JSON (sorted keys, no whitespace, UTF-8):
 `input_digest`, over the untyped input, is what the failure envelope records, because a
-malformed input has no `Request` to digest; `request_digest`, over the `Request`, is
+malformed input has no `Request` to digest. It is computed by the admitter (`digest_input`),
+so that under M2c it is *keyed* under the token key and a stored digest of rejected content
+is not a dictionary-reversible commitment to it; under M2b's identity admitter it is plain
+SHA-256 over JCS; `request_digest`, over the `Request`, is
 recorded on every admitted invocation. Neither is the operation fingerprint, defined under *Terms*, which is over the decoded *command*. "Canonical JSON" means RFC 8785 (JSON
 Canonicalization Scheme): UTF-16 code-unit key order, ECMAScript number formatting, no
 whitespace, UTF-8. Under JCS `5.0` and `5` are the same number and serialize as `5`; the
@@ -287,14 +290,15 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
-**Four redaction entry points, one seam.** The admitter sees `arguments` through
+**Five redaction entry points, one seam.** The admitter sees `arguments` through
 `admit`. Four kinds of free text bypass `admit`: the core's own error messages
 (`outcomes.error_message`, the outbound event's `error.message`), which can echo a
 caller-supplied identifier; the `content` of standalone message events; and account
 names in the definition; and the failure envelope's bounded payload, which is the whole
 rejected input serialized as an untyped blob. The `Admitter` protocol therefore also has
-`redact_text`, called at exactly those four sites, and `tokenize_identifier`, called on the
-envelope's recovered `call_id` (the one identifier a rejected request can still yield). The
+`redact_text`, called at exactly those four sites; `tokenize_identifier`, called on the
+envelope's recovered `call_id` (the one identifier a rejected request can still yield); and
+`digest_input`, the fifth site, which computes the envelope's `input_digest`. The
 admission error's `path` is never caller-controlled: it is a literal field path, and for an
 unknown member it is `$`, since the member name is the caller's and belongs in the redacted
 payload, not the error. From M2b the identity implementation returns its input. M2c changes the implementation, not the call sites. The admitter's

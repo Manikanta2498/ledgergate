@@ -285,6 +285,9 @@ class Ledger:
         except KeyError:
             raise UnknownEntryError(entry_id) from None
 
+    def has_entry(self, entry_id: str) -> bool:
+        return entry_id in self._by_id
+
     def entries_for(self, account_id: str) -> tuple[Entry, ...]:
         self.chart[account_id]
         return tuple(e for e in self.entries if account_id in e.draft.account_ids)

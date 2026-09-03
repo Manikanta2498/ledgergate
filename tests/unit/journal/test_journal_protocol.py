@@ -978,3 +978,32 @@ class TestRedactionSeam:
             Journal.open(
                 journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(), admitter=Other()
             )
+
+
+class TestCreateHardening:
+    def test_create_refuses_a_foreign_database_and_a_non_database(self, tmp_path: Path) -> None:
+        foreign = str(tmp_path / "foreign.sqlite")
+        conn = sqlite3.connect(foreign)
+        conn.execute("CREATE TABLE customers (id INTEGER)")
+        conn.close()
+        with pytest.raises(JournalError, match="not a journal"):
+            Journal.create(foreign, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        text = tmp_path / "text.sqlite"
+        text.write_text("hello")
+        with pytest.raises(JournalError, match="cannot create"):
+            Journal.create(str(text), CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+
+    def test_input_digest_goes_through_the_admitter(
+        self, journal_path: str, raw: sqlite3.Connection
+    ) -> None:
+        class Keyed(IdentityAdmitter):
+            def digest_input(self, value: object) -> str:
+                return "keyed:" + "0" * 58
+
+        j = Journal.create(
+            journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds(), admitter=Keyed()
+        )
+        j.handle("junk")
+        envelope = json.loads(rows(raw, "events")[0][3])
+        assert envelope["input_digest"].startswith("keyed:")
+        j.close()

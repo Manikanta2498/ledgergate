@@ -39,7 +39,7 @@ from ledgergate.journal.admission import (
     Request,
 )
 from ledgergate.journal.policy import NullPolicySet, PolicyContext, PolicySet
-from ledgergate.journal.schema import SCHEMA_VERSION, connect, create_schema
+from ledgergate.journal.schema import FACT_TABLES, SCHEMA_VERSION, connect, create_schema
 from ledgergate.ledger import (
     CURRENCIES,
     Account,
@@ -151,7 +151,7 @@ class _Effects:
             require_identifier(entry_id, "generated entry id")
         except InvalidIdentifierError as exc:
             raise EffectError(f"id generator produced an invalid id: {exc}") from exc
-        if any(e.entry_id == entry_id for e in self._ledger.entries):
+        if self._ledger.has_entry(entry_id):
             raise EffectError(
                 f"id generator produced {entry_id!r}, which this ledger already holds;"
                 " generators must be fresh across processes"
@@ -197,14 +197,29 @@ class Journal:
         policy: PolicySet | None = None,
     ) -> Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
-        self._conn = connect(path)
-        create_schema(self._conn)
-        if self._conn.execute("SELECT 1 FROM definition").fetchone():
-            self._conn.close()
-            raise JournalError("journal already has a definition; use open()")
         try:
+            self._conn = connect(path)
+        except sqlite3.Error as exc:
+            raise JournalError(f"cannot create journal at {path}: {exc}") from exc
+        try:
+            ours = {"journal", "sqlite_sequence", *FACT_TABLES}
+            tables = {
+                name
+                for (name,) in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            foreign = tables - ours
+            if foreign:
+                raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
+            create_schema(self._conn)
+            if self._conn.execute("SELECT 1 FROM definition").fetchone():
+                raise JournalError("journal already has a definition; use open()")
             return cls._define(self, chart, currencies)
-        except (JournalError, sqlite3.Error):
+        except sqlite3.Error as exc:
+            self._conn.close()
+            raise JournalError(f"cannot create journal at {path}: {exc}") from exc
+        except JournalError:
             self._conn.close()
             raise
 
@@ -599,7 +614,7 @@ class Journal:
         envelope = {
             "call_id": safe_call_id,
             "tool": tool if isinstance(tool, str) and tool in TOOLS else None,
-            "input_digest": digest(value),
+            "input_digest": self.admitter.digest_input(value),
             "error": {"code": exc.code, "path": exc.path or "$"},
             # The redactor runs over the whole serialized input as an untyped blob (the
             # identity admitter returns it unchanged); the byte bound applies after it.

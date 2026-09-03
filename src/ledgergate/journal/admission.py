@@ -108,6 +108,12 @@ class Admitter(Protocol):
         ``call_id``). Identity in M2b; keyed tokenization in M2c."""
         ...
 
+    def digest_input(self, value: Any) -> str:
+        """The envelope's ``input_digest`` over the raw, pre-admission input. Plain SHA-256
+        over JCS in M2b; keyed under the token key in M2c, so a stored digest of rejected
+        content is not a dictionary-reversible commitment to it."""
+        ...
+
 
 def _str_field(obj: dict[str, Any], name: str) -> str:
     if name not in obj:
@@ -150,6 +156,9 @@ class IdentityAdmitter:
     def tokenize_identifier(self, value: str) -> str:
         return value
 
+    def digest_input(self, value: Any) -> str:
+        return digest(value)
+
     def admit(self, value: Any, scope: AdmissionScope) -> Request:
         if not isinstance(value, dict):
             raise AdmissionError("not_an_object")
@@ -182,14 +191,9 @@ class IdentityAdmitter:
         try:
             command = decode_command(doc, scope.registry)
         except CodecError as exc:
-            raise AdmissionError("malformed_command", _codec_path(str(exc))) from exc
+            raise AdmissionError("malformed_command", exc.where) from exc
         except LedgerError as exc:
             # The codec is structural and lets the core's constructors raise. An unbalanced
             # draft is still malformed input; it is recorded as such, not lost.
             raise AdmissionError(f"malformed_command:{type(exc).__name__}", "arguments") from exc
         return Request(tool, arguments, call_id, scope.principal, key, None, command)
-
-
-def _codec_path(message: str) -> str:
-    # CodecError messages are "<where>: <detail>"; keep only the location.
-    return message.split(":", 1)[0].strip()

@@ -2,8 +2,11 @@
 
 Normative specification for M2c, decided in
 [ADR-0002](../adr/0002-runtime-surface-and-plan.md). Everything here happens **at
-admission, before the ledger hashes anything**, so every digest is computed over the
-stored form and a trace replays exactly.
+admission, before the ledger hashes anything**, so every digest of admitted content is
+computed over the stored form and a trace replays exactly. The one digest of *rejected*
+content, the failure envelope's `input_digest`, is necessarily over the raw input; it is
+therefore keyed under the token key (the admitter's `digest_input`), so it commits to the
+input without being reversible by dictionary.
 
 ## Three classes of field
 

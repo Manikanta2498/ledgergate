@@ -96,10 +96,9 @@ The artefact binds to exactly one pending operation, and every decision-to-outco
 a valid presentation leaves that operation terminal: `allow` runs the core (`applied` or
 `rejected`), `deny` appends `denied`. No path leaves the operation pending after a valid
 presentation, so no later attempt could use the artefact, and consuming it unconditionally
-is both simpler and exact. An earlier revision reserved it under a savepoint and released
-it on denial; that let a validated artefact outlive the operation it was bound to. A `deny`
-on a valid approval is recorded as a decision that consumed the approval and refused
-anyway, with the refusing rule as the reason. That is the audit fact.
+is both simpler and exact. A `deny` on a valid approval is recorded as a decision that
+consumed the approval and refused anyway, with the refusing rule as the reason. That is
+the audit fact.
 
 **Decision-to-outcome for a new operation** (first evaluation, disposition `new`):
 

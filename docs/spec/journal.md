@@ -537,8 +537,8 @@ though its row was written after the invocation row. `invocation_resolution` nam
 exact outcome from `invocation_responses`, never "the operation's current outcome", so a
 replay that answered `awaiting_approval` still says so after the operation was later
 approved. Standalone message events (rows with a null `invocation`) sit at their own row's sequence. Identifiers, the
-definition-derived top level, and whole-journal scope are specified in trace-v2. Not built
-in M2b.
+definition-derived top level, and whole-journal scope are specified in trace-v2. Built in
+M3 as `ledgergate.derive.trace`, a read-only, key-free derivation.
 
 ## Concurrency
 

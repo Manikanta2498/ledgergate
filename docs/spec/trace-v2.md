@@ -69,7 +69,7 @@ carries the inputs, not a summary of them:
 | `policy_set_version` | which rules ran (`none` for the M2b null policy) |
 | `decision` | `allow`, `deny`, `approval_required` |
 | `matched_rule`, `reason` | the rule that decided, and why. A `runtime.` prefix (`runtime.approval_rejected`) means the runtime wrote the decision without invoking the policy set, and a consumer must not attempt to recompute it from policy code |
-| `context` | the canonical serialized `PolicyContext`: principal, subject (nullable), command digest and `digest_kind`, evaluation time, and every historical aggregate value the rules read |
+| `context` | the canonical serialized `PolicyContext`, verbatim: principal, subject (nullable), command digest and `digest_kind`, evaluation time, `policy_set_version`, the command's kind, amount and currency (decimal string; nullable), every historical aggregate value the rules read, and the approval `{presentation, verdict}` if one was presented |
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
@@ -109,15 +109,41 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
 
 - `intent_id`: `intent-<invocation journal_sequence>`
 - `command_id`: `command-<operation journal_sequence>`
-- `call_id`: taken from the `events` row (tokenized).
+- `outcome_ref`: `outcome-<outcome journal_sequence>` (on `invocation_resolution`)
+- `presentation_ref`: `presentation-<approvals journal_sequence>` (on `invocation_resolution`
+  and `policy_decision.approval`)
+- `consumption_ref`: `consumption-<approval_consumptions journal_sequence>`
+- `call_id`: taken from the `events` row (tokenized). For an `invalid` invocation whose
+  `call_id` was not recoverable, `invalid-<invocation journal_sequence>`; its `tool` is
+  `unknown` when the envelope kept none; its `attempted_digest` is the envelope's
+  `input_digest`.
+- lifted v1 content: `intent_id` is `legacy-<v1 command_id>`, `operation_id` is the v1
+  `command_id`, and `attempted_digest` is the command's fingerprint recomputed on lift.
 
 `seq` is the dense enumeration of emitted events in anchored order: `(invocation
 journal_sequence, ordinal)` for runtime content, `(v1 seq, ordinal)` for lifted content,
 as defined in their grammars above. Top-level `chart` and `currencies` come from `definition`.
 
+## Ledger pairs and intents
+
+`ledger_command` and `ledger_result` keep v1's shape and carry no `intent_id`. A
+`ledger_command` belongs to the intent whose events immediately precede it in anchored
+order (its own invocation's, by construction of the ordinals); its `ledger_result` belongs
+to the same intent by `command_id`, however far away it sits (lifted v1 results may be
+separated from their commands by other v1 events). Replay of a v2 document is the v1
+replayer over the ledger pairs alone (`TraceV2.ledger_view()`); nothing else in v2 replays.
+
+## Invariants and verification
+
+`ledgergate verify <trace-or-journal>` derives (from a journal) or loads (a v1 document is
+lifted) a v2 trace and runs the invariant registry (`ledgergate.invariants.REGISTRY`) over
+it. Each invariant is a pure function of the trace grounded in a named document, and reports
+`pass`, `fail`, or `no_evidence`: a trace that does not carry what an invariant would need
+(a lifted v1 trace for the policy invariants) is reported as such and never as a pass. The
+scorecard is the combined result; the process exits 0 only when nothing failed.
+
 ## Status
 
-The v2 schema, models, lift, derivation and replayer are **M3** deliverables. M2b builds
-the journal without deriving traces from it; this document is the contract M3 is built to,
-and nothing in it exists in code yet. The runtime will read v1 and v2, derive v2 from the
-journal, and never derive v1.
+The v2 schema (`schema/trace/v2.json`, generated from the models and checked against them
+under test), models, lift, derivation, invariant registry and `ledgergate verify` ship in
+M3. The runtime reads v1 and v2, derives v2 from the journal, and never derives v1.

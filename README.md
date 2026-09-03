@@ -4,14 +4,14 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestone M3 in progress.** The deterministic ledger core (M1),
+> **Status: pre-alpha, milestones M0 to M3 complete.** The deterministic ledger core (M1),
 > the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
-> the tokenizing, redacting admitter (M2c) and the policy and approval layer (first half
-> of M3) are implemented and tested. An agent run can be recorded, validated against the published
+> the tokenizing, redacting admitter (M2c), the policy and approval layer, trace v2 with
+> journal derivation, and the invariant registry behind `ledgergate verify` (M3) are
+> implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
-> the answer it got the first time. The invariant suite, trace v2, corpus, adapters and
-> the runtime CLI are not built yet; `ledgergate journal dump`, `journal pending` and
-> `approve` exist. See
+> the answer it got the first time. The corpus, adapters and the MCP runtime are not
+> built yet. See
 > [Roadmap](#roadmap).
 
 ---
@@ -61,7 +61,7 @@ admissible; it does not itself move money on external rails (see ADR-0002).
 **What exists today:** the ledger core; the trace schema, recorder and replayer; the
 durable journal, so a process can be restarted and answer a retried key exactly as it did
 the first time; and the tokenizing, redacting admitter, so no caller identifier or free
-text has to reach disk. Invariants and trace v2 land in the rest of M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
+text has to reach disk. The MCP runtime lands in M4. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema
@@ -207,6 +207,28 @@ bound to that one operation in that one journal (`ledgergate journal pending`,
 `ledgergate approve`), and the retry presents it. A valid artefact is consumed exactly once;
 an invalid, expired, mis-scoped or reused one is refused by the runtime without invoking
 policy, and the operation stays pending for a correct one. Every verdict is a row.
+
+**Trace v2, derivation and `verify` (M3).** A journal derives, deterministically and with
+no key, into a schema v2 trace built around *intents* and *dispositions*: every invocation
+yields exactly one `invocation_resolution` naming what the runtime did and the exact outcome
+that answered it; a `policy_decision` appears only when policy actually ran and carries the
+whole context it ran on; a ledger pair appears only after an `allow`. A v1 document is
+lifted under a `legacy` grammar that invents neither tool events nor policy evidence.
+`ledgergate verify <trace-or-journal>` runs the invariant registry and reports each
+invariant as `pass`, `fail` or `no_evidence`, never a pass by absence:
+
+```text
+$ ledgergate verify ledger.journal
+pass         denied_never_reaches_ledger
+pass         replay_never_reevaluates
+pass         every_write_was_decided
+pass         runtime_decisions_are_verdicts
+pass         context_matches_decision
+pass         ledger_pairs_replay
+pass         books_balance_and_chain_verifies
+no_evidence  legacy_carries_no_policy_evidence
+PASS: 8 intents, 3 ledger commands
+```
 
 **Redaction and tokenization (M2c).** No caller identifier or free text has to reach disk.
 With a
@@ -357,8 +379,8 @@ These are enforced by CI gates, not by convention:
 | **M2a** | Trace schema v1, recorder, replay | **done** |
 | **M2b** | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use (per journal) approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an outcome cursor. Ships with a pass-through admitter and a null policy so the protocol is complete end to end; trace derivation follows in M3 | **done** |
 | **M2c** | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | **done** |
-| M3 | **Policy layer** over an explicit, persisted `PolicyContext` with validated, single-use (per journal) approvals: **done**. Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; invariant registry; scorecard; `ledgergate verify`: next | in progress |
-| M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
+| **M3** | **Policy layer** over an explicit, persisted `PolicyContext` with validated, single-use (per journal) approvals. Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; invariant registry; scorecard; `ledgergate verify` | **done** |
+| M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | next |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |

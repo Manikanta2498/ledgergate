@@ -52,21 +52,30 @@ no serialization at all. The admission input is therefore **I-JSON (RFC 7493) by
 contract**: every number is an integer in `[-(2^53-1), 2^53-1]` or a finite double, and
 every string is a sequence of Unicode scalar values (no unpaired surrogates). The transport
 enforces this at decode (`json.loads` with `parse_int`, `parse_float` **and
-`parse_constant`** hooks, the last rejecting `NaN`/`Infinity` unconditionally, plus a
+`parse_constant`** hooks; `parse_float` rejects anything that is not finite after
+conversion (`1e400` overflows to infinity without ever reaching `parse_constant`), and
+`parse_constant` rejects the `NaN`/`Infinity` literals unconditionally; plus a
 post-decode surrogate scan) *before* admission; a violation is a transport error with no
 journal row, listed under *Failures the journal cannot record*. M2b has no transport, so
 the JCS serializer itself is the enforcer of last resort: it raises on any contract
-violation, and that raise is the same unrecorded-failure class. Every `amount` the codec
-encodes, and the `amount` display field of an approval artefact, is bounded to the same
-range by the codec (for two-decimal currencies about ninety trillion units).
+violation, and that raise is the same unrecorded-failure class. The codec itself imposes
+no amount bound: its output is a storage form that nothing JCS-digests, the transport's
+I-JSON contract already bounds every amount a runtime command can carry, and the frozen v1
+trace path (`dump_trace`, `json.dumps`) must keep accepting any integer the schema accepts.
+The artefact's `amount` display field, which *is* JCS-signed, is a decimal string like
+every other digested amount (next paragraph). The JCS serializer lives in
+`ledgergate.codec`, the one layer both `journal` and M3's `approve`/`derive` may import.
 
 **Digests over values the core produces.** Balances, trial balances and policy aggregates
 are *sums* of bounded amounts and are not themselves bounded (`Money.amount` is an
 unbounded `int`). Any JCS-digested structure that contains a Money amount therefore
 serializes that amount as a **decimal string**, exactly as the core's own fingerprint
 already does (`str(amount)`); this applies to `reads.result_digest` and to the aggregate
-values inside a serialized `PolicyContext`. `reads.result_digest` is SHA-256 over the JCS
-serialization of the tool result with amounts so encoded.
+values inside a serialized `PolicyContext`. It also applies to **tool results as returned
+and as stored**: every Money amount in a `balance` or `trial_balance` result is a decimal
+string in the outbound `events` row and on the wire, so `reads.result_digest` is simply
+SHA-256 over the JCS serialization of the stored result, with no transformation a consumer
+would have to guess, and a JavaScript client never sees an integer it cannot represent.
 
 ## Sequences
 
@@ -160,9 +169,9 @@ validation and consumption code; M4 is only the transport that presents artefact
 with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation in exactly one journal, by the
 definition's `journal_id` and the operation's `fingerprint` and tokenized `key`; the artefact also
 carries subject, amount and currency as display fields for the approver, copied from the
-command at issuance and recorded for audit but not compared, since not every command has
-a single amount (`Post`, `Reverse`) and "subject" is defined by the policy set, not the
-core.
+command at issuance and recorded for audit but not compared. Each is nullable, since not
+every command has a single amount (`Post`, `Reverse`) and "subject" is defined by the
+policy set, not the core; a null is signed as JCS `null`, never as an empty string.
 
 **Validation and consumption**, performed inside the write transaction, after the
 invocation row exists (the presentation references it) and *before* the `PolicyContext`
@@ -187,7 +196,8 @@ artefact never touches `approval_consumptions`.
    invocation)`. A `UNIQUE` violation means an earlier *committed* transaction consumed
    this logical approval (writes are serialized, so there is no other way). Because writes
    are serialized, the check is exact as a `SELECT` before allocating a `journal` row, so a
-   used approval leaves no allocator row and no gap; the `UNIQUE` remains as the
+   used approval leaves no *consumption* allocator row and no gap (the presentation row and
+   its allocator row were already written by design); the `UNIQUE` remains as the
    constraint that makes the `SELECT` merely an optimization. Verdict
    `approval_already_used`. Success: verdict `approval_valid`; the approval is consumed.
 
@@ -352,8 +362,8 @@ anything that references it, an operation before the invocation that references 
    For `approval`:
    validate and consume per *Approval artefacts* (this writes the `approvals` presentation
    row, which references the invocation, hence its position here), then continue.
-7. **Decide.** Build the `PolicyContext`, reading aggregates from `outcomes` and
-   `decisions` in this transaction. Evaluate. Write `decisions`, referencing the
+7. **Decide.** Build the `PolicyContext`, reading aggregates from `outcomes`, `operations`
+   (for the amounts a monetary cap needs) and `decisions` in this transaction. Evaluate. Write `decisions`, referencing the
    consumption row if check 4 succeeded. If not `allow`: append outcome per the applicable
    decision-to-outcome table (new operation, or pending operation), **with
    `outcomes.decision` referencing this decision** and `previous_outcome` per *Outcome

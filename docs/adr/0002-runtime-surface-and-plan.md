@@ -64,7 +64,9 @@ lives inside `trace.models` (pydantic), which `journal` may not import. M2b ther
 extracts it into `ledgergate.codec`, a thin layer below both siblings that imports only
 the standard library and the core, and `trace.models` delegates to it. The codec is tested
 to one invariant: `command_fingerprint(decode(encode(c))) == command_fingerprint(c)` for
-every `c` whose amounts are within the I-JSON range; `encode` raises otherwise. The
+every `c` the core accepts. It imposes no bound of its own; the frozen v1 path keeps
+accepting every integer the schema accepts, and runtime inputs are bounded by the
+transport's I-JSON contract. The JCS serializer the journal digests with lives here too. The
 resulting contract, which M2b writes into import-linter and which is the final shape:
 
 ```

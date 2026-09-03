@@ -99,8 +99,13 @@ class Admitter(Protocol):
 
     def redact_text(self, text: str) -> str:
         """Free text the admitter does not see through ``admit``: the core's own error
-        messages (which can echo a caller identifier), standalone message content, and
-        account names in the definition."""
+        messages (which can echo a caller identifier), standalone message content, account
+        names in the definition, and the failure envelope's bounded payload."""
+        ...
+
+    def tokenize_identifier(self, value: str) -> str:
+        """A caller identifier recovered from a request ``admit`` rejected (the envelope's
+        ``call_id``). Identity in M2b; keyed tokenization in M2c."""
         ...
 
 
@@ -141,6 +146,9 @@ class IdentityAdmitter:
 
     def redact_text(self, text: str) -> str:
         return text
+
+    def tokenize_identifier(self, value: str) -> str:
+        return value
 
     def admit(self, value: Any, scope: AdmissionScope) -> Request:
         if not isinstance(value, dict):

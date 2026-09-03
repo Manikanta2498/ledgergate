@@ -291,9 +291,11 @@ rows of both tables are M3 tests.
 `admit`. Three kinds of free text bypass `admit`: the core's own error messages
 (`outcomes.error_message`, the outbound event's `error.message`), which can echo a
 caller-supplied identifier; the `content` of standalone message events; and account
-names in the definition. The `Admitter` protocol therefore also has `redact_text`, and the
-journal calls it at exactly those three sites from M2b, where the identity implementation
-returns its input. M2c changes the implementation, not the call sites. The admitter's
+names in the definition; and the failure envelope's bounded payload, which is the whole
+rejected input serialized as an untyped blob. The `Admitter` protocol therefore also has
+`redact_text`, called at exactly those four sites, and `tokenize_identifier`, called on the
+envelope's recovered `call_id` (the one identifier a rejected request can still yield). From
+M2b the identity implementation returns its input. M2c changes the implementation, not the call sites. The admitter's
 `token_domain` and `token_key_version` are written into the definition at creation and
 compared at open, so a journal is never read with a different token key.
 
@@ -389,8 +391,9 @@ anything that references it, an operation before the invocation that references 
 6. **Short paths.** For `replay`: `invocation_responses` (`replayed`, naming the
    operation's current outcome row); the outbound `events` row is a copy of the outbound
    event of the invocation that *produced* that outcome (the earliest response row naming
-   it), with `replayed` set, so a retry is told exactly what the first caller was told;
-   commit; return. For `conflict`:
+   it); a successful result is copied with `replayed` set, a failed one is copied as is
+   and the response row's `replayed` marks it; so a retry is told exactly what the first
+   caller was told; commit; return. For `conflict`:
    `invocation_responses` (`conflict`, no outcome); outbound `events` with the conflict
    error; commit; return. Neither writes a decision row: no policy evaluation happened.
    For `approval`:

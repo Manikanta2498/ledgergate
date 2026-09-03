@@ -780,7 +780,7 @@ class TestReviewFindings:
         # Hold a write lock from another connection so the journal's transaction cannot start.
         journal._conn.execute("PRAGMA busy_timeout = 50")  # keep the test fast
         raw.execute("BEGIN IMMEDIATE")
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(JournalError, match="unavailable"):
             journal.handle(post("k1"))
         raw.execute("ROLLBACK")
         assert journal.handle(post("k1")).response == "applied"  # the connection recovered
@@ -827,7 +827,7 @@ class TestReviewFindings:
 class TestEffectFaults:
     """A fault of this process's clock or id generator is never a verdict on the command."""
 
-    def test_stale_id_generator_in_a_second_process_is_unrecorded_and_spends_no_key(
+    def test_stale_id_generator_in_a_second_instance_is_unrecorded_and_spends_no_key(
         self, journal: Journal, journal_path: str, raw: sqlite3.Connection
     ) -> None:
         journal.handle(post("k1"))  # produces e-000001
@@ -841,16 +841,34 @@ class TestEffectFaults:
         other.close()
         fresh.close()
 
-    def test_naive_clock_is_an_effect_fault(self, journal_path: str) -> None:
+    def test_naive_clock_is_an_effect_fault_on_every_path(
+        self, journal_path: str, tmp_path: object
+    ) -> None:
+        """Not only when an entry is posted: every timestamp the journal stores comes from
+        the clock, and a naive one would be read in the host's zone."""
         from datetime import datetime
 
         class Naive:
             def now(self) -> datetime:
                 return datetime(2026, 1, 1)  # noqa: DTZ001 - the naive case is the point
 
-        j = Journal.create(journal_path, CHART, clock=Naive(), ids=SequentialIds())
-        with pytest.raises(EffectError, match="naive"):
-            j.handle(post("k1"))
+        with pytest.raises(EffectError, match="naive"):  # definition.created_at
+            Journal.create(f"{tmp_path}/naive.journal", CHART, clock=Naive(), ids=SequentialIds())
+
+        good = Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        good.close()
+        j = Journal.open(journal_path, clock=Naive(), ids=SequentialIds())
+        for request in (
+            post("k1"),  # posts an entry
+            open_txn("k2", "t2"),  # lifecycle only, no entry
+            balance("cash"),  # read
+            "junk",  # invalid
+        ):
+            with pytest.raises(EffectError, match="naive"):
+                j.handle(request)
+        raw = sqlite3.connect(journal_path)
+        assert raw.execute("SELECT COUNT(*) FROM invocations").fetchone()[0] == 0
+        raw.close()
         j.close()
 
     def test_invalid_generated_id_is_an_effect_fault(self, journal_path: str) -> None:
@@ -898,6 +916,38 @@ class TestRedactionSeam:
         assert json.loads(message[3])["content"] == "[redacted]"
         (out,) = rows(raw, "outcomes")
         assert out[3] == "rejected" and out[5] == "[redacted]"  # the core's message, redacted
+        j.close()
+
+    def test_failure_envelope_goes_through_the_seam(
+        self, journal_path: str, raw: sqlite3.Connection
+    ) -> None:
+        class Tokenizing(IdentityAdmitter):
+            def redact_text(self, text: str) -> str:
+                return "[redacted]"
+
+            def tokenize_identifier(self, value: str) -> str:
+                return "tok_" + str(len(value))
+
+        j = Journal.create(
+            journal_path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            admitter=Tokenizing(),
+        )
+        j.handle(
+            {
+                "tool": "post",
+                "call_id": "cust@example.com",
+                "key": "k",
+                "arguments": {"card": "4111"},
+            }
+        )
+        (inv,) = rows(raw, "invocations")
+        assert inv[8] == "tok_16"
+        envelope = json.loads(rows(raw, "events")[0][3])
+        assert envelope["call_id"] == "tok_16" and envelope["payload"] == "[redacted]"
+        assert "4111" not in json.dumps(envelope)
         j.close()
 
     def test_open_refuses_an_admitter_with_a_different_token_key(

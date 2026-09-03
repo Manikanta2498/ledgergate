@@ -4,11 +4,13 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestone M2 in progress.** The deterministic ledger core (M1)
-> and the trace schema that makes it framework-agnostic are implemented and tested. An
-> agent run can be recorded as a trace, validated against the published schema, and
-> replayed against the core to prove the recorded outcomes are the real ones. The
-> invariant suite, corpus, adapters and CLI are not built yet. See [Roadmap](#roadmap).
+> **Status: pre-alpha, milestone M2 in progress.** The deterministic ledger core (M1),
+> the trace schema that makes it framework-agnostic (M2a) and the durable journal (M2b)
+> are implemented and tested. An agent run can be recorded, validated against the published
+> schema, replayed against the core, and journaled so a retried key after a restart gets
+> the answer it got the first time. The invariant suite, policy layer, corpus, adapters and
+> the runtime CLI are not built yet; `ledgergate journal dump` inspects a journal. See
+> [Roadmap](#roadmap).
 
 ---
 
@@ -175,9 +177,10 @@ reopened.close()
 ```
 
 One invocation is one `BEGIN IMMEDIATE` transaction; the response is rendered only after
-commit. Every attempt the transport delivers as I-JSON is a row, including malformed
-input; only a value that cannot be digested at all (a non-finite number, an integer beyond
-2^53) is refused before any row, and that is stated rather than hidden. No row is ever
+commit. Every attempt is a row, including malformed input, with one stated exception: the
+unrecorded-failure class in the spec (input that is not I-JSON, a fault of the process's own
+clock or id generator, the database being unavailable, an integrity failure), where the
+transaction rolls back and the caller gets an error instead of a row. No row is ever
 updated or deleted (the database refuses, not the code). A rejected command spends its key: the
 rejection *is* the recorded result, and a retry replays it. Every digest is SHA-256 over
 RFC 8785 canonical JSON, and every amount inside a digested structure is a decimal string,

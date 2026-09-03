@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -130,6 +131,15 @@ class _Effects:
         self._clock, self._ids, self._ledger = clock, ids, ledger
         self._scripted: tuple[str, datetime] | None = None
 
+    @staticmethod
+    def aware_now(clock: Clock) -> datetime:
+        """The clock's reading, in UTC, or an :class:`EffectError` if it is naive.
+        ``astimezone`` on a naive value would consult the host's zone: a hidden input."""
+        at = clock.now()
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise EffectError("clock produced a naive datetime")
+        return at.astimezone(UTC)
+
     def script(self, entry_id: str, posted_at: datetime) -> None:
         self._scripted = (entry_id, posted_at)
 
@@ -153,10 +163,7 @@ class _Effects:
             at = self._scripted[1]
             self._scripted = None
             return at
-        at = self._clock.now()
-        if at.tzinfo is None or at.utcoffset() is None:
-            raise EffectError("clock produced a naive datetime")
-        return at
+        return self.aware_now(self._clock)
 
 
 @dataclass
@@ -195,6 +202,16 @@ class Journal:
         if self._conn.execute("SELECT 1 FROM definition").fetchone():
             self._conn.close()
             raise JournalError("journal already has a definition; use open()")
+        try:
+            return cls._define(self, chart, currencies)
+        except (JournalError, sqlite3.Error):
+            self._conn.close()
+            raise
+
+    @classmethod
+    def _define(
+        cls, self: Journal, chart: ChartOfAccounts, currencies: Mapping[str, Currency] | None
+    ) -> Journal:
         definition = Definition(
             journal_id=secrets.token_hex(16),
             chart=chart,
@@ -220,7 +237,7 @@ class Journal:
                     definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
-                    self.clock.now().astimezone(UTC).isoformat(),
+                    _Effects.aware_now(self.clock).isoformat(),
                 ),
             )
         self._definition = definition
@@ -344,7 +361,7 @@ class Journal:
         assert request.command is not None and request.key is not None
         command = request.command
         fingerprint = command_fingerprint(command)
-        now = self.clock.now().astimezone(UTC)
+        now = _Effects.aware_now(self.clock)
         encoded = json.dumps(encode_command(command), sort_keys=True)
         row = self._conn.execute(
             "SELECT journal_sequence, fingerprint FROM operations WHERE key = ?", (request.key,)
@@ -477,7 +494,7 @@ class Journal:
     # ----------------------------------------------------------------- read
 
     def _read(self, request: Request) -> Response:
-        now = self.clock.now().astimezone(UTC)
+        now = _Effects.aware_now(self.clock)
         inv_seq = self._alloc("invocations")
         self._conn.execute(
             "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?)",
@@ -548,10 +565,14 @@ class Journal:
     def _invalid(self, value: Any, exc: AdmissionError) -> Response:
         """Step 3 failure: an invocation with no operation and a bounded failure envelope
         in place of the request as received."""
-        now = self.clock.now().astimezone(UTC)
+        now = _Effects.aware_now(self.clock)
         call_id = value.get("call_id") if isinstance(value, dict) else None
         tool = value.get("tool") if isinstance(value, dict) else None
-        safe_call_id = call_id if isinstance(call_id, str) and _is_identifier(call_id) else None
+        safe_call_id = (
+            self.admitter.tokenize_identifier(call_id)
+            if isinstance(call_id, str) and _is_identifier(call_id)
+            else None
+        )
         inv_seq = self._alloc("invocations")
         self._conn.execute(
             "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?)",
@@ -572,9 +593,11 @@ class Journal:
             "tool": tool if isinstance(tool, str) and tool in TOOLS else None,
             "input_digest": digest(value),
             "error": {"code": exc.code, "path": exc.path or "$"},
-            # The identity admitter passes this through; M2c's redactor runs over it as an
-            # untyped blob. The byte bound applies from M2b either way.
-            "payload": _bounded_utf8(json.dumps(value, sort_keys=True, ensure_ascii=False)),
+            # The redactor runs over the whole serialized input as an untyped blob (the
+            # identity admitter returns it unchanged); the byte bound applies after it.
+            "payload": _bounded_utf8(
+                self.admitter.redact_text(json.dumps(value, sort_keys=True, ensure_ascii=False))
+            ),
         }
         self._event(inv_seq, "inbound", envelope)
         response = Response(
@@ -651,14 +674,19 @@ class Journal:
     @contextmanager
     def _txn(self) -> Iterator[None]:
         self._pending_projection = None
-        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.Error as exc:  # SQLITE_BUSY past the timeout, or a locked file
+            raise JournalError(f"journal unavailable: {exc}") from exc
         try:
             yield
             self._conn.execute("COMMIT")
-        except BaseException:
+        except BaseException as exc:
             self._pending_projection = None
             if self._conn.in_transaction:
                 self._conn.execute("ROLLBACK")
+            if isinstance(exc, sqlite3.Error):
+                raise JournalError(f"journal write failed: {exc}") from exc
             raise
         self._advance_projection()
 

@@ -18,7 +18,9 @@ from pathlib import Path
 
 # ruff: noqa: S608 - table names are interpolated from FACT_TABLES, a module constant, never input
 
-SCHEMA_VERSION = 2  # 2: definition.token_check
+SCHEMA_VERSION = (
+    3  # 2: definition.token_check; 3: definition.policy_config, approvals identity fields nullable
+)
 
 FACT_TABLES = (
     "definition",
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS definition (
     token_domain TEXT NOT NULL,
     token_key_version TEXT NOT NULL,
     token_check TEXT NOT NULL,
+    policy_config TEXT NOT NULL,
     approval_key TEXT NOT NULL,
     chart TEXT NOT NULL,
     currencies TEXT NOT NULL,
@@ -83,19 +86,27 @@ CREATE TABLE IF NOT EXISTS approvals (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
     invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence),
     journal_id TEXT NOT NULL,
-    approval_id TEXT NOT NULL,
-    approver TEXT NOT NULL,
+    approval_id TEXT,
+    approver TEXT,
     fingerprint TEXT NOT NULL,
-    key TEXT NOT NULL,
+    key TEXT,
     subject TEXT,
     amount TEXT,
     currency TEXT,
     issued_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     signature TEXT NOT NULL,
+    verified INTEGER NOT NULL CHECK (verified IN (0, 1)),
     check_result TEXT NOT NULL CHECK (check_result IN (
         'checks_passed','approval_invalid','approval_expired',
-        'approval_scope_mismatch','approval_not_applicable'))
+        'approval_scope_mismatch','approval_not_applicable')),
+    -- Identity and display fields are the approver's words only once the signature
+    -- verified; an unverified presentation keeps fixed-grammar bindings and the signature.
+    CHECK (verified = 1 OR (approval_id IS NULL AND approver IS NULL AND key IS NULL
+                            AND subject IS NULL AND amount IS NULL AND currency IS NULL)),
+    CHECK (verified = 0 OR (approval_id IS NOT NULL AND approver IS NOT NULL AND key IS NOT NULL)),
+    CHECK (check_result <> 'approval_invalid' OR verified = 0),
+    CHECK (verified = 1 OR check_result IN ('approval_invalid', 'approval_not_applicable'))
 );
 
 CREATE TABLE IF NOT EXISTS approval_consumptions (
@@ -104,6 +115,19 @@ CREATE TABLE IF NOT EXISTS approval_consumptions (
     presentation INTEGER NOT NULL REFERENCES approvals(journal_sequence),
     invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence)
 );
+
+CREATE TRIGGER IF NOT EXISTS consumptions_only_after_checks_passed
+BEFORE INSERT ON approval_consumptions
+BEGIN
+    SELECT RAISE(ABORT, 'a consumption must reference a presentation whose checks passed')
+    WHERE (SELECT check_result FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT 'checks_passed';
+    SELECT RAISE(ABORT, 'a consumption must match its presentation''s approval id and invocation')
+    WHERE (SELECT approval_id FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT NEW.approval_id
+       OR (SELECT invocation FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT NEW.invocation;
+END;
 
 CREATE TABLE IF NOT EXISTS decisions (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
@@ -118,9 +142,22 @@ CREATE TABLE IF NOT EXISTS decisions (
     approval_verdict TEXT CHECK (approval_verdict IS NULL OR approval_verdict IN (
         'approval_valid','approval_already_used','approval_not_applicable',
         'approval_invalid','approval_expired','approval_scope_mismatch')),
-    consumption INTEGER REFERENCES approval_consumptions(journal_sequence),
-    CHECK ((presentation IS NULL) = (approval_verdict IS NULL))
+    consumption INTEGER UNIQUE REFERENCES approval_consumptions(journal_sequence),
+    CHECK ((presentation IS NULL) = (approval_verdict IS NULL)),
+    CHECK ((consumption IS NOT NULL) = (approval_verdict IS 'approval_valid'))
 );
+
+CREATE TRIGGER IF NOT EXISTS decisions_presentation_is_own
+BEFORE INSERT ON decisions
+BEGIN
+    SELECT RAISE(ABORT, 'a decision must reference a presentation of its own invocation')
+    WHERE NEW.presentation IS NOT NULL
+      AND (SELECT invocation FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT NEW.invocation;
+    SELECT RAISE(ABORT, 'a decision must reference the presentation its invocation made')
+    WHERE NEW.presentation IS NULL
+      AND EXISTS (SELECT 1 FROM approvals WHERE invocation = NEW.invocation);
+END;
 
 CREATE TABLE IF NOT EXISTS outcomes (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),

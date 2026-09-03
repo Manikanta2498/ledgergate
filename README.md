@@ -4,12 +4,14 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestone M2 complete.** The deterministic ledger core (M1),
+> **Status: pre-alpha, milestone M3 in progress.** The deterministic ledger core (M1),
 > the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
-> the tokenizing, redacting admitter (M2c) are implemented and tested. An agent run can be recorded, validated against the published
+> the tokenizing, redacting admitter (M2c) and the policy and approval layer (first half
+> of M3) are implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
-> the answer it got the first time. The invariant suite, policy layer, corpus, adapters and
-> the runtime CLI are not built yet; `ledgergate journal dump` inspects a journal. See
+> the answer it got the first time. The invariant suite, trace v2, corpus, adapters and
+> the runtime CLI are not built yet; `ledgergate journal dump`, `journal pending` and
+> `approve` exist. See
 > [Roadmap](#roadmap).
 
 ---
@@ -59,7 +61,7 @@ admissible; it does not itself move money on external rails (see ADR-0002).
 **What exists today:** the ledger core; the trace schema, recorder and replayer; the
 durable journal, so a process can be restarted and answer a retried key exactly as it did
 the first time; and the tokenizing, redacting admitter, so no caller identifier or free
-text has to reach disk. Invariants and policy land in M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
+text has to reach disk. Invariants and trace v2 land in the rest of M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema
@@ -189,9 +191,22 @@ and argument amounts are the I-JSON integers the caller sent, so a JavaScript cl
 this runtime agree byte for byte. `input_digest`, the one digest of *rejected* input, is
 keyed under the token key when a tokenizing admitter is in use (see
 [`docs/spec/identifiers-and-redaction.md`](docs/spec/identifiers-and-redaction.md)). The operation
-fingerprint and the hash chain are the core's own length-prefixed encoding. The shipped policy set is the
-null set (`none`), which allows everything and still writes a complete decision row; real
-policy arrives in M3 behind the same interface.
+fingerprint and the hash chain are the core's own length-prefixed encoding. Two policy sets ship: the null set
+(`none`), which allows everything and still writes a complete decision row, and
+`ThresholdPolicySet` (see *Policy and approvals*).
+
+**Policy and approvals (M3).** A policy set is a deterministic, versioned function of an
+explicit `PolicyContext`: principal, subject, the command's kind and amount, every
+historical aggregate the rules read (as decimal strings, so the decision replays without
+live state), and the verdict on any approval presented. The whole context is persisted with
+the decision. `ThresholdPolicySet` is declarative: amounts above one line need a human,
+above another are refused, and a subject cannot receive more than a cap within a window
+however the requests are split. Approval is a two-step protocol: a request that needs one
+is told so (`awaiting_approval`, key kept), the operator issues an Ed25519-signed artefact
+bound to that one operation in that one journal (`ledgergate journal pending`,
+`ledgergate approve`), and the retry presents it. A valid artefact is consumed exactly once;
+an invalid, expired, mis-scoped or reused one is refused by the runtime without invoking
+policy, and the operation stays pending for a correct one. Every verdict is a row.
 
 **Redaction and tokenization (M2c).** No caller identifier or free text has to reach disk.
 With a
@@ -342,7 +357,7 @@ These are enforced by CI gates, not by convention:
 | **M2a** | Trace schema v1, recorder, replay | **done** |
 | **M2b** | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use (per journal) approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an outcome cursor. Ships with a pass-through admitter and a null policy so the protocol is complete end to end; trace derivation follows in M3 | **done** |
 | **M2c** | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | **done** |
-| M3 | Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; **policy layer** over an explicit, persisted `PolicyContext` carried in every decision event, with validated, single-use (per journal) approvals; invariant registry; scorecard; `ledgergate verify` | next |
+| M3 | **Policy layer** over an explicit, persisted `PolicyContext` with validated, single-use (per journal) approvals: **done**. Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; invariant registry; scorecard; `ledgergate verify`: next | in progress |
 | M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |

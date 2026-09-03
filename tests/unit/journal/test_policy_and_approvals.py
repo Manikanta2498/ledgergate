@@ -777,3 +777,62 @@ class TestWindowTimeBase:
         (dec,) = [d for d in table(j.path, "decisions") if d[6] == "w1.window_cap"]
         assert json.loads(dec[3])["aggregates"] == {"applied.refund.USD.3600s": "2500"}
         j.close()
+
+
+class TestNoPolicyCodeOnFailedVerdict:
+    def test_subject_and_aggregates_are_not_computed_and_a_raising_set_cannot_lose_the_presentation(
+        self, tmp_path: Path
+    ) -> None:
+        calls: list[str] = []
+
+        class Spy(ThresholdPolicySet):
+            def subject_of(self, command: Any) -> str | None:
+                calls.append("subject_of")
+                return super().subject_of(command)
+
+            def aggregates_for(self, command: Any, now: Any, history: Any) -> dict[str, Any]:
+                calls.append("aggregates_for")
+                if calls.count("aggregates_for") > 1:
+                    raise RuntimeError("would have lost the presentation")
+                return super().aggregates_for(command, now, history)
+
+            def evaluate(self, context: PolicyContext) -> Decision:
+                calls.append("evaluate")
+                return super().evaluate(context)
+
+        j = Journal.create(
+            str(tmp_path / "spy.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=Spy(version=POLICY.version, approve_above=POLICY.approve_above),
+            approval_key=verification_key_text(SIGNER),
+        )
+        pending(j, "k1")
+        calls.clear()
+        r = present(j, "k1", artefact(j, "k1", expires_at=EPOCH + timedelta(seconds=1)))
+        assert r.error_type == "ApprovalRejected" and calls == []
+        (dec,) = [d for d in table(j.path, "decisions") if d[6] == "runtime.approval_rejected"]
+        ctx = json.loads(dec[3])
+        assert ctx["subject"] is None and ctx["aggregates"] == {}
+        assert len(table(j.path, "approvals")) == 1  # the presentation is kept
+        j.close()
+
+    def test_schema_ties_consumption_to_a_valid_verdict(self, gated: Journal) -> None:
+        pending(gated, "k1")
+        present(gated, "k1", artefact(gated, "k1"))
+        conn = sqlite3.connect(gated.path, isolation_level=None)
+        try:
+            (pres,) = [r for r in rows(conn, "approvals") if r[14] == "checks_passed"]
+            conn.execute("BEGIN")
+            seq = conn.execute(
+                "INSERT INTO journal (kind) VALUES ('approval_consumptions')"
+            ).lastrowid
+            with pytest.raises(sqlite3.IntegrityError):  # UNIQUE on approval_id, or the trigger
+                conn.execute(
+                    "INSERT INTO approval_consumptions VALUES (?,?,?,?)",
+                    (seq, "other-id", pres[0] + 1000, pres[1]),
+                )
+            conn.execute("ROLLBACK")
+        finally:
+            conn.close()

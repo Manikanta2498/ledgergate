@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS approval_consumptions (
     invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence)
 );
 
+CREATE TRIGGER IF NOT EXISTS consumptions_only_after_checks_passed
+BEFORE INSERT ON approval_consumptions
+BEGIN
+    SELECT RAISE(ABORT, 'a consumption must reference a presentation whose checks passed')
+    WHERE (SELECT check_result FROM approvals WHERE journal_sequence = NEW.presentation)
+          IS NOT 'checks_passed';
+END;
+
 CREATE TABLE IF NOT EXISTS decisions (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
     invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence),
@@ -130,7 +138,8 @@ CREATE TABLE IF NOT EXISTS decisions (
         'approval_valid','approval_already_used','approval_not_applicable',
         'approval_invalid','approval_expired','approval_scope_mismatch')),
     consumption INTEGER REFERENCES approval_consumptions(journal_sequence),
-    CHECK ((presentation IS NULL) = (approval_verdict IS NULL))
+    CHECK ((presentation IS NULL) = (approval_verdict IS NULL)),
+    CHECK ((consumption IS NOT NULL) = (approval_verdict IS 'approval_valid'))
 );
 
 CREATE TABLE IF NOT EXISTS outcomes (

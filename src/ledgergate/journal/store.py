@@ -542,9 +542,18 @@ class Journal:
             None if verdict is None else {"presentation": presentation, "verdict": verdict}
         )
         money = command_amount(command)
+        failed_verdict = verdict is not None and verdict not in (
+            "approval_valid",
+            "approval_not_applicable",
+        )
+        # On a failed verdict no policy code runs at all, not even subject derivation or
+        # aggregate reads: the runtime decides from the verdict alone, and the persisted
+        # context says so with a null subject and no aggregates.
         context = PolicyContext(
             principal=self.principal,
-            subject=self.policy.subject_of(command),
+            subject=None
+            if failed_verdict
+            else self._guarded(lambda: self.policy.subject_of(command)),
             command_digest=fingerprint,
             digest_kind="fingerprint",
             evaluated_at=now,
@@ -552,14 +561,10 @@ class Journal:
             command_kind=command_kind(command),
             amount=None if money is None else str(money.amount),
             currency=None if money is None else money.currency.code,
-            aggregates=self._guarded(
-                lambda: self.policy.aggregates_for(command, now, _History(self))
-            ),
+            aggregates={}
+            if failed_verdict
+            else self._guarded(lambda: self.policy.aggregates_for(command, now, _History(self))),
             approval=approval_ctx,
-        )
-        failed_verdict = verdict is not None and verdict not in (
-            "approval_valid",
-            "approval_not_applicable",
         )
         if failed_verdict:
             # A failed verdict: the runtime decides; the policy set never sees it.

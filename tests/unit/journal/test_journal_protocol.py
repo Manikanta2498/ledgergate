@@ -1126,3 +1126,40 @@ class TestRegistryBinding:
         with pytest.raises(ValueError, match="role"):
             journal.record_message("cust@example.com", "hi")
         assert journal.record_message("assistant", "hi") > 0
+
+
+class TestForeignFilesWithOverlappingNames:
+    """A stranger's database whose table names overlap the journal's must be refused
+    untouched on both paths; a subset of our names is not ours."""
+
+    @staticmethod
+    def _foreign(path: Path, table: str) -> bytes:
+        conn = sqlite3.connect(str(path))
+        conn.execute(f"CREATE TABLE {table} (id INTEGER, payload TEXT)")
+        conn.execute(f"INSERT INTO {table} VALUES (1, 'theirs')")
+        conn.commit()
+        conn.close()
+        return path.read_bytes()
+
+    @pytest.mark.parametrize("table", ["events", "definition", "journal"])
+    def test_create_refuses(self, tmp_path: Path, table: str) -> None:
+        target = tmp_path / "theirs.sqlite"
+        before = self._foreign(target, table)
+        with pytest.raises(JournalError, match="not a journal"):
+            Journal.create(str(target), CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert target.read_bytes() == before
+
+    @pytest.mark.parametrize("table", ["events", "definition", "journal"])
+    def test_open_refuses(self, tmp_path: Path, table: str) -> None:
+        target = tmp_path / "theirs.sqlite"
+        before = self._foreign(target, table)
+        with pytest.raises(JournalError, match="not a journal"):
+            Journal.open(str(target), clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert target.read_bytes() == before
+
+    def test_an_empty_database_file_may_become_a_journal(self, tmp_path: Path) -> None:
+        target = tmp_path / "empty.sqlite"
+        sqlite3.connect(str(target)).close()
+        j = Journal.create(str(target), CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert j.handle(post("k")).response == "applied"
+        j.close()

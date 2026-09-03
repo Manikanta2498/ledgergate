@@ -3,8 +3,9 @@
 """The journal's SQLite schema, exactly as ``docs/spec/journal.md`` specifies it.
 
 Everything the specification says the schema enforces is enforced here, not in Python:
-one global sequence through the ``journal`` allocator table; immediate foreign keys so the
-protocol's write order is the only legal one; the outcome chain (one root per operation,
+one global sequence through the ``journal`` allocator table; immediate foreign keys, so no
+row can precede a row it references and the protocol's write order is one linearization of
+that partial order; the outcome chain (one root per operation,
 no forks, same-operation predecessor, only ``awaiting_approval`` has successors); the
 ``invocation_responses`` shape; single-use approvals; and no ``UPDATE`` or ``DELETE`` on
 any fact table, ever.
@@ -238,11 +239,17 @@ def tables_of(path: str) -> set[str]:
         conn.close()
 
 
+JOURNAL_TABLES = frozenset({"journal", *FACT_TABLES})
+
+
 def probe(path: str) -> None:
-    """Confirm, read-only, that ``path`` is a journal. Raises ``ValueError`` if it is a
-    database without a ``definition`` table, ``sqlite3.Error`` if it is not a database."""
-    if "definition" not in tables_of(path):
-        raise ValueError("not a journal: no definition table")
+    """Confirm, read-only, that ``path`` is a complete journal: every journal table and no
+    other. A database missing any of them, or holding a stranger's table, is refused
+    untouched. Raises ``ValueError`` for a database that is not a journal and
+    ``sqlite3.Error`` for a file that is not a database."""
+    tables = tables_of(path) - {"sqlite_sequence"}
+    if tables != JOURNAL_TABLES:
+        raise ValueError("not a journal: table set differs from the journal schema")
 
 
 def connect(path: str, *, create: bool = True) -> sqlite3.Connection:

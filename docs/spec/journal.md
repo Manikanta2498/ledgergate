@@ -122,7 +122,7 @@ All strictly append-only. No row is ever updated or deleted.
 
 | Table | Holds |
 | :--- | :--- |
-| `definition` | Written once: `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
+| `definition` | Written once: `schema_version` and `created_at`, `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. Opening a journal whose `schema_version`, codec version, policy set version or token key differs from the running process is refused, read-only, before any pragma touches the file; a file whose table set is not exactly the journal's is likewise refused untouched. |
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, `command` as encoded by the codec (a storage form, not a digest input; identity is `fingerprint`). |
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message (present iff `rejected`; a `denied` or `awaiting_approval` outcome's explanation is its decision's rule and reason), `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
@@ -291,20 +291,19 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
-**Five redaction entry points, one seam.** The admitter sees `arguments` through
-`admit`. Four kinds of free text bypass `admit`: the core's own error messages
-(`outcomes.error_message`, the outbound event's `error.message`), which can echo a
-caller-supplied identifier; the `content` of standalone message events; and account
-names in the definition; and the failure envelope's bounded payload, which is the whole
-rejected input serialized as an untyped blob. The `Admitter` protocol therefore also has
-`redact_text`, called at exactly those four sites; `tokenize_identifier`, called on the
-envelope's recovered `call_id` (the one identifier a rejected request can still yield); and
-`digest_input`, the fifth site, which computes the envelope's `input_digest`. The
-admission error's `path` is never caller-controlled: it is a literal field path, and for an
-unknown member it is `$`, since the member name is the caller's and belongs in the redacted
-payload, not the error. From M2b the identity implementation returns its input. M2c changes the implementation, not the call sites. The admitter's
-`token_domain` and `token_key_version` are written into the definition at creation and
-compared at open, so a journal is never read with a different token key.
+**One seam, seven calls.** The `Admitter` protocol is the only place caller content is
+transformed, and the journal calls it at exactly these sites: `admit` (the request);
+`redact_text` on the four kinds of free text that bypass `admit` (the core's own error
+messages, which can echo a caller identifier; standalone message content; account names in
+the definition; the failure envelope's bounded payload, which is the whole rejected input
+serialized as an untyped blob); `tokenize_identifier` on the envelope's recovered
+`call_id` (the one identifier a rejected request can still yield); and `digest_input` for
+the envelope's `input_digest`. The admission error's `path` is never caller-controlled: it
+is a literal field path, and for an unknown member it is `$`, since the member name is the
+caller's and belongs in the redacted payload, not the error. From M2b the identity
+implementation returns its input; M2c changes the implementation, not the call sites. The
+admitter's `token_domain` and `token_key_version` are written into the definition at
+creation and compared at open, so a journal is never read with a different token key.
 
 ## What M2b ships, and what it stubs
 

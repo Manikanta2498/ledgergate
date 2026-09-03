@@ -6,8 +6,8 @@ This module implements the write and read protocols of ``docs/spec/journal.md`` 
 step. The in-memory :class:`~ledgergate.ledger.Ledger` is a projection rebuilt from
 ``outcomes``; the journal is the only durable truth. One invocation is one
 ``BEGIN IMMEDIATE`` transaction, the response is rendered only after commit, and every
-row is written after every row it references, so the protocol's order is the only order
-the foreign keys accept.
+row is written after every row it references; the foreign keys fix that partial order and
+the protocol's step order is one linearization of it.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from ledgergate.journal.admission import (
 )
 from ledgergate.journal.policy import NullPolicySet, PolicyContext, PolicySet
 from ledgergate.journal.schema import (
-    FACT_TABLES,
+    JOURNAL_TABLES,
     SCHEMA_VERSION,
     connect,
     create_schema,
@@ -218,13 +218,14 @@ class Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
         target = Path(path)
         if target.exists() and target.stat().st_size > 0:
-            # Inspect read-only before any pragma touches the file: a database that is not
-            # a journal is refused byte-for-byte unchanged.
+            # Inspect read-only before any pragma touches the file. Only an empty database
+            # or a complete journal may proceed; anything else, including a database whose
+            # table names merely overlap the journal's, is refused byte-for-byte unchanged.
             try:
-                foreign = tables_of(path) - {"journal", "sqlite_sequence", *FACT_TABLES}
+                tables = tables_of(path) - {"sqlite_sequence"}
             except sqlite3.Error as exc:
                 raise JournalError(f"cannot create journal at {path}: {exc}") from exc
-            if foreign:
+            if tables and tables != JOURNAL_TABLES:
                 raise JournalError(f"{path} is a database but not a journal; refusing to add to it")
         try:
             self._conn = connect(path)
@@ -292,22 +293,16 @@ class Journal:
         self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
         try:
             probe(path)  # read-only: a foreign file is refused before any pragma touches it
-            self._conn = connect(path, create=False)
+            row = _read_definition_row(path)  # also read-only
         except (sqlite3.Error, ValueError) as exc:
             raise JournalError(f"cannot open journal at {path}: {exc}") from exc
+        if row is None:
+            raise JournalError(f"cannot open journal at {path}: no definition; use create()")
         try:
-            # Read the definition before touching the file: a journal from another schema
-            # version must be refused, not upgraded in place.
-            try:
-                row = self._conn.execute(
-                    "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-                    " token_key_version, approval_key, chart, currencies, schema_version"
-                    " FROM definition"
-                ).fetchone()
-            except sqlite3.Error as exc:
-                raise JournalError(f"not a journal: {exc}") from exc
-            if row is None:
-                raise JournalError("no definition; use create()")
+            self._conn = connect(path, create=False)
+        except sqlite3.Error as exc:
+            raise JournalError(f"cannot open journal at {path}: {exc}") from exc
+        try:
             if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
                 raise ConfigurationError(
                     f"journal is schema {row[8]}/codec {row[1]!r};"
@@ -921,6 +916,21 @@ def _decode_chart(doc: list[dict[str, Any]], currencies: Mapping[str, Currency])
         )
         for a in doc
     )
+
+
+def _read_definition_row(path: str) -> tuple[Any, ...] | None:
+    """The definition row over a read-only connection, so version checks happen before any
+    pragma is applied to the file."""
+    conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT journal_id, codec_version, policy_set_version, token_domain,"
+            " token_key_version, approval_key, chart, currencies, schema_version"
+            " FROM definition"
+        ).fetchone()
+        return None if row is None else tuple(row)
+    finally:
+        conn.close()
 
 
 def _is_identifier(value: str) -> bool:

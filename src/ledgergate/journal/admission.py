@@ -7,6 +7,11 @@ Admission's output on success is a :class:`Request`. On failure it raises
 :class:`AdmissionError` with a code and the failing field path and *no values*, because
 the failure envelope the journal writes must not carry the input it could not decode.
 
+Every way a request can be unusable is an admission failure, so that it is recorded: an
+unknown tool, a malformed shape, an identifier the core would refuse, a command document
+the codec cannot decode, and a command the core's own constructors reject (an unbalanced
+draft, a zero posting). Nothing caller-controlled escapes the journal unrecorded.
+
 M2b ships the :class:`IdentityAdmitter`: identifiers are validated by the core's
 ``require_identifier`` and passed through, free text is passed through, and an approval
 artefact is refused with ``approval_unsupported`` because the artefact format is an M3
@@ -20,7 +25,13 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ledgergate.codec import CodecError, decode_command, digest
-from ledgergate.ledger import Command, Currency, InvalidIdentifierError
+from ledgergate.ledger import (
+    ChartOfAccounts,
+    Command,
+    Currency,
+    InvalidIdentifierError,
+    LedgerError,
+)
 from ledgergate.ledger.identifiers import require_identifier
 
 WRITE_TOOLS = frozenset({"post", "reverse", "open_transaction", "advance", "refund"})
@@ -29,7 +40,7 @@ TOOLS = WRITE_TOOLS | READ_TOOLS
 
 
 class AdmissionError(Exception):
-    """The input is not an admissible request. Carries no input values."""
+    """The input is not an admissible request. Carries a code and a path, never a value."""
 
     def __init__(self, code: str, path: str = "") -> None:
         self.code, self.path = code, path
@@ -43,6 +54,7 @@ class Request:
     tool: str
     arguments: dict[str, Any]
     call_id: str
+    principal: str
     key: str | None  # None for read tools
     approval: dict[str, Any] | None = None
     command: Command | None = field(default=None, compare=False)  # decoded, write tools only
@@ -57,6 +69,7 @@ class Request:
             "tool": self.tool,
             "arguments": self.arguments,
             "call_id": self.call_id,
+            "principal": self.principal,
         }
         if self.key is not None:
             body["key"] = self.key
@@ -65,15 +78,22 @@ class Request:
         return digest(body)
 
 
+@dataclass(frozen=True, slots=True)
+class AdmissionScope:
+    """What an admitter may consult: the definition's registry and chart, and who asks."""
+
+    registry: dict[str, Currency]
+    chart: ChartOfAccounts
+    principal: str
+
+
 class Admitter(Protocol):
-    def admit(self, value: Any, registry: dict[str, Currency]) -> Request: ...
+    def admit(self, value: Any, scope: AdmissionScope) -> Request: ...
 
 
-def _str_field(obj: dict[str, Any], name: str, *, required: bool = True) -> str | None:
+def _str_field(obj: dict[str, Any], name: str) -> str:
     if name not in obj:
-        if required:
-            raise AdmissionError("missing_field", name)
-        return None
+        raise AdmissionError("missing_field", name)
     v = obj[name]
     if not isinstance(v, str):
         raise AdmissionError("wrong_type", name)
@@ -87,39 +107,56 @@ def _identifier(value: str, path: str) -> str:
         raise AdmissionError("invalid_identifier", path) from exc
 
 
+def _read_arguments(tool: str, arguments: dict[str, Any], chart: ChartOfAccounts) -> None:
+    if tool == "balance":
+        if set(arguments) != {"account"}:
+            raise AdmissionError("wrong_shape", "arguments")
+        account = arguments["account"]
+        if not isinstance(account, str):
+            raise AdmissionError("wrong_type", "arguments.account")
+        if account not in set(chart):
+            raise AdmissionError("unknown_account", "arguments.account")
+    elif arguments:
+        raise AdmissionError("wrong_shape", "arguments")
+
+
 class IdentityAdmitter:
     """Validate shape and identifiers; change nothing. Refuses approval artefacts."""
 
-    def admit(self, value: Any, registry: dict[str, Currency]) -> Request:
+    def admit(self, value: Any, scope: AdmissionScope) -> Request:
         if not isinstance(value, dict):
             raise AdmissionError("not_an_object")
         if extra := set(value) - {"tool", "arguments", "call_id", "key", "approval"}:
             raise AdmissionError("unknown_field", sorted(extra)[0])
         tool = _str_field(value, "tool")
-        assert tool is not None
         if tool not in TOOLS:
             raise AdmissionError("unknown_tool", "tool")
-        call_id = _identifier(_str_field(value, "call_id") or "", "call_id")
+        call_id = _identifier(_str_field(value, "call_id"), "call_id")
         arguments = value.get("arguments", {})
         if not isinstance(arguments, dict):
             raise AdmissionError("wrong_type", "arguments")
-        if "approval" in value and value["approval"] is not None:
+        if value.get("approval") is not None:
             raise AdmissionError("approval_unsupported", "approval")
 
         if tool in READ_TOOLS:
             if "key" in value:
                 raise AdmissionError("unexpected_field", "key")
-            return Request(tool, arguments, call_id, None)
+            _read_arguments(tool, arguments, scope.chart)
+            return Request(tool, arguments, call_id, scope.principal, None)
 
-        key = _identifier(_str_field(value, "key") or "", "key")
+        key = _identifier(_str_field(value, "key"), "key")
         if "kind" in arguments or "key" in arguments:
             raise AdmissionError("unexpected_field", "arguments.kind")
         doc = {"kind": tool, "key": key, **arguments}
         try:
-            command = decode_command(doc, registry)
+            command = decode_command(doc, scope.registry)
         except CodecError as exc:
             raise AdmissionError("malformed_command", _codec_path(str(exc))) from exc
-        return Request(tool, arguments, call_id, key, None, command)
+        except LedgerError as exc:
+            # The codec is structural and lets the core's constructors raise. An unbalanced
+            # draft is still malformed input; it is recorded as such, not lost.
+            raise AdmissionError(f"malformed_command:{type(exc).__name__}", "arguments") from exc
+        return Request(tool, arguments, call_id, scope.principal, key, None, command)
 
 
 def _codec_path(message: str) -> str:

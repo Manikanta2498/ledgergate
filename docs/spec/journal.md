@@ -120,7 +120,7 @@ All strictly append-only. No row is ever updated or deleted.
 | :--- | :--- |
 | `definition` | Written once: `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry, codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, `command` as encoded by the codec (a storage form, not a digest input; identity is `fingerprint`). |
-| `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
+| `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message (present iff `rejected`; a `denied` or `awaiting_approval` outcome's explanation is its decision's rule and reason), `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
 | `decisions` | `invocation`, `operation`, canonical serialized `PolicyContext` including the aggregate values read, policy set version, decision, matched rule, reason, the approval presentation row considered, its `approval_verdict` (`approval_valid`, `approval_already_used`, `approval_not_applicable`, or the failing check's result `approval_invalid` / `approval_expired` / `approval_scope_mismatch`; null when no artefact was presented), the `presentation` reference (non-null whenever any presentation row exists for this invocation), and the `consumption` row if check 4 succeeded. |
@@ -287,6 +287,13 @@ core's own verdict does. The `allow` row of the new-operation table is an M2b te
 with a property test that the null policy returns `allow` for every context; the other
 rows of both tables are M3 tests.
 
+**Two redaction entry points M2c must cover.** The admitter sees `arguments`; it does not
+see the core's own error messages (`outcomes.error_message`, the outbound event's
+`error.message`), which can echo caller-supplied identifiers such as an unknown account
+id, nor the `content` of standalone message events written by `record_message`. M2c's
+admitter interface therefore also exposes `redact_text` for both, and the journal calls it
+at those two sites.
+
 ## What M2b ships, and what it stubs
 
 The protocol below names admission (tokenization and redaction), policy, and trace
@@ -342,7 +349,10 @@ anything that references it, an operation before the invocation that references 
    unchanged.
 3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
-   identifier invalid after tokenization): write `invocations` (`invalid`, no operation),
+   identifier invalid after tokenization, a command document the codec cannot decode, a
+   command the core's own constructors reject such as an unbalanced draft or a zero
+   posting, or a read naming an account the chart does not have): write `invocations`
+   (`invalid`, no operation),
    then the inbound `events` row holding a **failure envelope** rather than the request's
    raw structural form: the tokenized `call_id` if one was recoverable; the tool name only if it is a
    known operator-defined tool; `input_digest` as defined under *Admission input and

@@ -308,11 +308,12 @@ class TestReads:  # family 5
         assert count(raw, "decisions") == 1  # the write's; the null policy gates no reads
         assert count(raw, "operations") == 1 and count(raw, "outcomes") == 1
 
-    def test_read_of_unknown_account_is_a_recorded_failure_not_a_crash(
+    def test_read_of_unknown_account_is_an_admission_failure(
         self, journal: Journal, raw: sqlite3.Connection
     ) -> None:
         r = journal.handle(balance("nope"))
-        assert (r.response, r.ok, r.error_type) == ("read", False, "UnknownAccountError")
+        assert (r.disposition, r.response, r.ok) == ("invalid", "invalid", False)
+        assert r.error_message == "unknown_account at arguments.account"
         assert count(raw, "reads") == 0 and count(raw, "invocation_responses") == 1
 
     def test_trial_balance_amounts_are_decimal_strings(self, journal: Journal) -> None:
@@ -558,7 +559,7 @@ class TestDefinition:
         self, journal: Journal, journal_path: str, raw: sqlite3.Connection
     ) -> None:
         (d,) = rows(raw, "definition")
-        assert len(d[1]) == 32 and d[4] == "none" and d[7] == "none"
+        assert d[1] == 1 and len(d[2]) == 32 and d[5] == "none" and d[8] == "none"
         journal.close()
         with pytest.raises(JournalError, match="already has a definition"):
             Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
@@ -666,3 +667,148 @@ class TestAdmissionEdges:
         r = journal.handle(value)
         assert r.response == "invalid" and r.error_message == f"{code} at {path}"
         assert "k" not in (r.error_message or "").split(" at ")[0]  # the code, not the value
+
+
+class TestReviewFindings:
+    """Regressions for the review of the first M2b implementation."""
+
+    @pytest.mark.parametrize(
+        ("postings", "error"),
+        [
+            ([("cash", "debit", 2), ("revenue", "credit", 1)], "UnbalancedEntryError"),
+            ([("cash", "debit", 0), ("revenue", "credit", 0)], "InvalidAmountError"),
+            ([("cash", "debit", -5), ("revenue", "credit", -5)], "InvalidAmountError"),
+        ],
+    )
+    def test_commands_the_core_constructors_reject_are_recorded_as_invalid(
+        self,
+        journal: Journal,
+        raw: sqlite3.Connection,
+        postings: list[tuple[str, str, int]],
+        error: str,
+    ) -> None:
+        """An unbalanced or non-positive draft must not escape the journal unrecorded."""
+        draft = {
+            "postings": [
+                {"account": a, "side": s, "money": {"amount": n, "currency": "USD"}}
+                for a, s, n in postings
+            ]
+        }
+        r = journal.handle(
+            {"tool": "post", "call_id": "c", "key": "k", "arguments": {"draft": draft}}
+        )
+        assert (r.disposition, r.response) == ("invalid", "invalid")
+        assert r.error_message == f"malformed_command:{error} at arguments"
+        assert count(raw, "invocations") == 1 and count(raw, "operations") == 0
+        # and the key is not spent by a malformed attempt
+        ok = journal.handle(post("k", call_id="c2"))
+        assert ok.response == "applied"
+
+    def test_envelope_payload_is_bounded_in_bytes_not_characters(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        journal.handle({"tool": "post", "call_id": "c", "key": "k", "arguments": {"x": "€" * 5000}})
+        inbound = rows(raw, "events")[0]
+        payload = json.loads(inbound[3])["payload"]
+        assert len(payload.encode("utf-8")) <= 4096
+
+    def test_replay_answers_exactly_what_the_first_invocation_was_told(
+        self, journal: Journal
+    ) -> None:
+        first = journal.handle(open_txn("k1", "t1"))
+        again = journal.handle({**open_txn("k1", "t1"), "call_id": "again"})
+        assert {**first.result, "replayed": True} == again.result  # transaction, head, sequence
+        assert again.result["transaction"] == {"id": "t1", "status": "pending"}
+
+    def test_replay_of_a_rejection_answers_the_original_error(self, journal: Journal) -> None:
+        req = {
+            "tool": "refund",
+            "call_id": "c",
+            "key": "k",
+            "arguments": {"transaction_id": "ghost", "money": {"amount": 1, "currency": "USD"}},
+        }
+        first = journal.handle(req)
+        again = journal.handle({**req, "call_id": "c2"})
+        assert (again.error_type, again.error_message) == (first.error_type, first.error_message)
+
+    def test_non_i_json_input_is_refused_before_any_row(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        before = count(raw, "journal")
+        with pytest.raises(JournalError, match="not I-JSON"):
+            journal.handle({"tool": "post", "call_id": "c", "key": "k", "arguments": {"n": 2**60}})
+        with pytest.raises(JournalError, match="not I-JSON"):
+            journal.handle(
+                {"tool": "post", "call_id": "c", "key": "k", "arguments": {"f": float("nan")}}
+            )
+        assert count(raw, "journal") == before
+
+    def test_chain_self_check_refuses_a_broken_journal(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.handle(open_txn("k1", "t1"))
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for trig in ("outcomes_no_update", "outcomes_no_insert"):
+            conn.execute(f"DROP TRIGGER IF EXISTS {trig}")
+        conn.execute("DROP TRIGGER outcomes_successor_of_pending")
+        (op,) = conn.execute("SELECT journal_sequence FROM operations").fetchone()
+        (tip,) = conn.execute("SELECT MAX(journal_sequence) FROM outcomes").fetchone()
+        seq = conn.execute("INSERT INTO journal (kind) VALUES ('outcomes')").lastrowid
+        conn.execute(  # a successor of a terminal (applied) outcome: forbidden by the chain rules
+            "INSERT INTO outcomes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (seq, op, tip, "denied", None, None, None, None, "h", "h", 0, None),
+        )
+        conn.close()
+        with pytest.raises(JournalError, match="chain"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+
+    def test_commit_failure_rolls_back_and_leaves_a_usable_connection(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        # Hold a write lock from another connection so the journal's transaction cannot start.
+        journal._conn.execute("PRAGMA busy_timeout = 50")  # keep the test fast
+        raw.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError):
+            journal.handle(post("k1"))
+        raw.execute("ROLLBACK")
+        assert journal.handle(post("k1")).response == "applied"  # the connection recovered
+
+    def test_open_refuses_a_journal_from_another_schema_or_codec_version(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET codec_version = '99'")
+        conn.close()
+        with pytest.raises(ConfigurationError, match="codec"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+
+    def test_definition_is_a_singleton_by_constraint(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        (d,) = rows(raw, "definition")
+        raw.execute("BEGIN")
+        seq = raw.execute("INSERT INTO journal (kind) VALUES ('definition')").lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            raw.execute("INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:]))
+        raw.execute("ROLLBACK")
+
+    def test_request_digest_covers_the_principal(
+        self, journal: Journal, raw: sqlite3.Connection
+    ) -> None:
+        journal.handle(balance("cash"))
+        (inv,) = rows(raw, "invocations")
+        from ledgergate.codec import digest
+
+        expected = digest(
+            {
+                "tool": "balance",
+                "arguments": {"account": "cash"},
+                "call_id": "call-read",
+                "principal": "local",
+            }
+        )
+        assert inv[7] == expected

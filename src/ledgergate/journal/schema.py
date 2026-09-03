@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS journal (
 
 CREATE TABLE IF NOT EXISTS definition (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
+    singleton INTEGER NOT NULL UNIQUE CHECK (singleton = 1),
     journal_id TEXT NOT NULL,
     schema_version INTEGER NOT NULL,
     codec_version TEXT NOT NULL,

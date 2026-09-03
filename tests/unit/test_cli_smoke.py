@@ -30,3 +30,47 @@ def test_unimplemented_command_exits_nonzero(capsys: pytest.CaptureFixture[str])
 def test_every_documented_subcommand_parses(command: str) -> None:
     args = build_parser().parse_args([command])
     assert args.command == command
+
+
+def test_journal_dump_prints_every_row_in_order(
+    tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    from ledgergate.journal import Journal
+    from ledgergate.ledger import (
+        EPOCH,
+        USD,
+        Account,
+        AccountType,
+        ChartOfAccounts,
+        SequentialIds,
+        SteppingClock,
+    )
+
+    path = f"{tmp_path}/j.journal"
+    chart = ChartOfAccounts([Account("cash", AccountType.ASSET, USD)])
+    j = Journal.create(path, chart, clock=SteppingClock(EPOCH), ids=SequentialIds())
+    j.handle({"tool": "balance", "call_id": "c", "arguments": {"account": "cash"}})
+    j.close()
+
+    assert main(["journal", "dump", path]) == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    tables = [line["table"] for line in lines]
+    assert tables[0] == "journal" and "definition" in tables and "reads" in tables
+    seqs = [line["journal_sequence"] for line in lines]
+    assert seqs == sorted(seqs)
+
+    assert main(["journal", "dump", path, "--table", "reads"]) == 0
+    only = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {line["table"] for line in only} == {"reads"}
+
+
+def test_journal_dump_on_a_missing_file_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["journal", "dump", "/nonexistent/journal.sqlite"]) == 2
+    assert "cannot read journal" in capsys.readouterr().err
+
+
+def test_journal_without_subcommand_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["journal"])

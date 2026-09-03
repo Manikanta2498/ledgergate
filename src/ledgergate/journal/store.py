@@ -22,12 +22,16 @@ from typing import Any
 
 from ledgergate.codec import (
     CODEC_VERSION,
+    IJsonError,
     decode_command,
     digest,
     encode_command,
+    require_ijson,
 )
 from ledgergate.journal.admission import (
+    TOOLS,
     AdmissionError,
+    AdmissionScope,
     Admitter,
     IdentityAdmitter,
     Request,
@@ -43,14 +47,16 @@ from ledgergate.ledger import (
     Clock,
     Currency,
     IdGenerator,
+    InvalidIdentifierError,
     Ledger,
     LedgerError,
     Money,
     command_fingerprint,
 )
+from ledgergate.ledger.identifiers import require_identifier
 
 LOCAL_PRINCIPAL = "local"
-ENVELOPE_BOUND = 4096
+ENVELOPE_BOUND = 4096  # bytes of UTF-8, per the specification
 
 
 class JournalError(Exception):
@@ -63,7 +69,8 @@ class IntegrityError(JournalError):
 
 
 class ConfigurationError(JournalError):
-    """The policy set behaved in a way the protocol forbids."""
+    """The journal and this process disagree about a version, or the policy set behaved in
+    a way the protocol forbids."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,12 +178,14 @@ class Journal:
             currencies=dict(currencies or {}),
             policy_set_version=self.policy.version,
         )
+        registry = definition.registry
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
+                    1,
                     definition.journal_id,
                     SCHEMA_VERSION,
                     definition.codec_version,
@@ -185,9 +194,7 @@ class Journal:
                     definition.token_key_version,
                     definition.approval_key,
                     json.dumps(_encode_chart(chart), sort_keys=True),
-                    json.dumps(
-                        {c: cur.exponent for c, cur in definition.registry.items()}, sort_keys=True
-                    ),
+                    json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
                     self.clock.now().astimezone(UTC).isoformat(),
                 ),
             )
@@ -211,25 +218,28 @@ class Journal:
         create_schema(self._conn)
         row = self._conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-            " token_key_version, approval_key, chart, currencies FROM definition"
+            " token_key_version, approval_key, chart, currencies, schema_version FROM definition"
         ).fetchone()
-        if row is None:
-            self._conn.close()
-            raise JournalError("no definition; use create()")
-        currencies = {code: Currency(code, exp) for code, exp in json.loads(row[7]).items()}
-        chart = _decode_chart(json.loads(row[6]), currencies)
-        self._definition = Definition(
-            row[0], chart, currencies, row[1], row[2], row[3], row[4], row[5]
-        )
-        if self._definition.policy_set_version != self.policy.version:
-            self._conn.close()
-            raise ConfigurationError(
-                f"journal was defined with policy set {row[2]!r};"
-                f" this process runs {self.policy.version!r}"
-            )
-        self._ledger = Ledger.empty(chart)
-        self._cursor = 0
         try:
+            if row is None:
+                raise JournalError("no definition; use create()")
+            if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
+                raise ConfigurationError(
+                    f"journal is schema {row[8]}/codec {row[1]!r};"
+                    f" this process is schema {SCHEMA_VERSION}/codec {CODEC_VERSION!r}"
+                )
+            if row[2] != self.policy.version:
+                raise ConfigurationError(
+                    f"journal was defined with policy set {row[2]!r};"
+                    f" this process runs {self.policy.version!r}"
+                )
+            currencies = {code: Currency(code, exp) for code, exp in json.loads(row[7]).items()}
+            chart = _decode_chart(json.loads(row[6]), currencies)
+            self._definition = Definition(
+                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[5]
+            )
+            self._ledger = Ledger.empty(chart)
+            self._cursor = 0
             self._rebuild()
         except JournalError:
             self._conn.close()
@@ -255,11 +265,21 @@ class Journal:
     # -------------------------------------------------------------- protocol
 
     def handle(self, value: Any) -> Response:
-        """One invocation, one transaction. ``value`` is an already-decoded I-JSON value."""
+        """One invocation, one transaction. ``value`` is an already-decoded I-JSON value.
+
+        A value that is not I-JSON cannot be digested faithfully; that is the transport's
+        contract, so it is refused before any row is written and raised as
+        :class:`JournalError`, the stated unrecorded-failure class.
+        """
+        try:
+            require_ijson(value)
+        except IJsonError as exc:
+            raise JournalError(f"input is not I-JSON: {exc}") from exc
+        scope = AdmissionScope(self._definition.registry, self._definition.chart, self.principal)
         with self._txn():
             self._ensure_current()  # step 2
             try:
-                request = self.admitter.admit(value, self._definition.registry)  # step 3
+                request = self.admitter.admit(value, scope)  # step 3
             except AdmissionError as exc:
                 return self._invalid(value, exc)
             if request.is_read:
@@ -288,6 +308,7 @@ class Journal:
         command = request.command
         fingerprint = command_fingerprint(command)
         now = self.clock.now().astimezone(UTC)
+        encoded = json.dumps(encode_command(command), sort_keys=True)
         row = self._conn.execute(
             "SELECT journal_sequence, fingerprint FROM operations WHERE key = ?", (request.key,)
         ).fetchone()
@@ -297,23 +318,13 @@ class Journal:
             op_seq = self._alloc("operations")
             self._conn.execute(
                 "INSERT INTO operations VALUES (?,?,?,?)",
-                (
-                    op_seq,
-                    request.key,
-                    fingerprint,
-                    json.dumps(encode_command(command), sort_keys=True),
-                ),
+                (op_seq, request.key, fingerprint, encoded),
             )
             disposition = "new"
         elif row[1] == fingerprint:
-            op_seq = row[0]
-            current = self._current_outcome(op_seq)
-            disposition = "replay"  # approvals are refused at admission in M2b
-            if current is None:  # pragma: no cover - invariant 2 forbids this
-                raise IntegrityError("operation without an outcome")
+            op_seq, disposition = row[0], "replay"  # approvals are refused at admission in M2b
         else:
-            op_seq = row[0]
-            disposition = "conflict"
+            op_seq, disposition = row[0], "conflict"
 
         inv_seq = self._alloc("invocations")
         self._conn.execute(
@@ -325,22 +336,19 @@ class Journal:
                 self.principal,
                 disposition,
                 fingerprint,
-                json.dumps(encode_command(command), sort_keys=True),
+                encoded,
                 request.request_digest(),
                 request.call_id,
             ),
         )
-        self._event(
-            inv_seq,
-            "inbound",
-            {"tool": request.tool, "arguments": request.arguments, "call_id": request.call_id},
-        )  # step 5
+        self._inbound(inv_seq, request)  # step 5
 
         # step 6: short paths
         if disposition == "replay":
             outcome_seq = self._current_outcome(op_seq)
-            assert outcome_seq is not None
-            response = self._render_outcome(inv_seq, outcome_seq, "replayed", disposition)
+            if outcome_seq is None:  # pragma: no cover - invariant 2 forbids this
+                raise IntegrityError(f"operation {op_seq} has no outcome")
+            response = self._render_replay(inv_seq, outcome_seq)
             self._respond(inv_seq, disposition, outcome_seq, "replayed", response)
             return response
         if disposition == "conflict":
@@ -365,51 +373,21 @@ class Journal:
             policy_set_version=self.policy.version,
         )
         decision = self.policy.evaluate(context)
-        dec_seq = self._alloc("decisions")
-        self._conn.execute(
-            "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                dec_seq,
-                inv_seq,
-                op_seq,
-                json.dumps(context.serialized(), sort_keys=True),
-                self.policy.version,
-                decision.decision,
-                decision.matched_rule,
-                decision.reason,
-                None,
-                None,
-                None,
-            ),
-        )
+        dec_seq = self._decision(inv_seq, op_seq, context, decision)
         head = self._ledger.head
-        if decision.decision == "deny":
-            outcome_seq = self._outcome(op_seq, None, "denied", dec_seq, head, head, None, None)
+        if decision.decision != "allow":
+            kind = "denied" if decision.decision == "deny" else "awaiting_approval"
+            outcome_seq = self._outcome(op_seq, kind, dec_seq, head, head)
             response = Response(
                 inv_seq,
                 disposition,
-                "denied",
+                kind,
                 False,
-                error_type="PolicyDenied",
+                error_type="PolicyDenied" if kind == "denied" else "ApprovalRequired",
                 error_message=f"{decision.matched_rule}: {decision.reason}",
                 outcome=outcome_seq,
             )
-            self._respond(inv_seq, disposition, outcome_seq, "denied", response)
-            return response
-        if decision.decision == "approval_required":
-            outcome_seq = self._outcome(
-                op_seq, None, "awaiting_approval", dec_seq, head, head, None, None
-            )
-            response = Response(
-                inv_seq,
-                disposition,
-                "awaiting_approval",
-                False,
-                error_type="ApprovalRequired",
-                error_message=f"{decision.matched_rule}: {decision.reason}",
-                outcome=outcome_seq,
-            )
-            self._respond(inv_seq, disposition, outcome_seq, "awaiting_approval", response)
+            self._respond(inv_seq, disposition, outcome_seq, kind, response)
             return response
 
         # step 8: execute through the pure core
@@ -418,15 +396,7 @@ class Journal:
             applied = self._ledger.execute(command, clock=effects, ids=effects)
         except LedgerError as exc:
             outcome_seq = self._outcome(
-                op_seq,
-                None,
-                "rejected",
-                dec_seq,
-                head,
-                head,
-                None,
-                None,
-                error=(type(exc).__name__, str(exc)),
+                op_seq, "rejected", dec_seq, head, head, error=(type(exc).__name__, str(exc))
             )
             response = Response(
                 inv_seq,
@@ -444,13 +414,12 @@ class Journal:
         entry = applied.entry
         outcome_seq = self._outcome(
             op_seq,
-            None,
             "applied",
             dec_seq,
             head,
             applied.ledger.head,
-            None if entry is None else entry.entry_id,
-            None if entry is None else entry.posted_at,
+            entry_id=None if entry is None else entry.entry_id,
+            posted_at=None if entry is None else entry.posted_at,
             ledger_sequence=applied.ledger.sequence,
         )
         response = Response(
@@ -462,8 +431,7 @@ class Journal:
             outcome=outcome_seq,
         )
         self._respond(inv_seq, disposition, outcome_seq, "applied", response)
-        # The projection advances only when the transaction commits; _txn handles rollback.
-        self._pending_projection = (applied.ledger, outcome_seq)
+        self._pending_projection = (applied.ledger, outcome_seq)  # advances on commit
         return response
 
     # ----------------------------------------------------------------- read
@@ -485,33 +453,13 @@ class Journal:
                 request.call_id,
             ),
         )
-        self._event(
-            inv_seq,
-            "inbound",
-            {"tool": request.tool, "arguments": request.arguments, "call_id": request.call_id},
-        )
+        self._inbound(inv_seq, request)
         if self.policy.gates_read(request.tool):
             context = PolicyContext(
                 self.principal, None, request.request_digest(), "request", now, self.policy.version
             )
             decision = self.policy.evaluate(context)
-            dec_seq = self._alloc("decisions")
-            self._conn.execute(
-                "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    dec_seq,
-                    inv_seq,
-                    None,
-                    json.dumps(context.serialized(), sort_keys=True),
-                    self.policy.version,
-                    decision.decision,
-                    decision.matched_rule,
-                    decision.reason,
-                    None,
-                    None,
-                    None,
-                ),
-            )
+            self._decision(inv_seq, None, context, decision)
             if decision.decision != "allow":
                 response = Response(
                     inv_seq,
@@ -523,19 +471,7 @@ class Journal:
                 )
                 self._respond(inv_seq, "read", None, "denied", response)
                 return response
-        try:
-            result = self._serve(request)
-        except (LedgerError, AdmissionError) as exc:
-            response = Response(
-                inv_seq,
-                "read",
-                "read",
-                False,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-            )
-            self._respond(inv_seq, "read", None, "read", response)
-            return response
+        result = self._serve(request)  # arguments were validated at admission
         rd_seq = self._alloc("reads")
         self._conn.execute(
             "INSERT INTO reads VALUES (?,?,?,?,?)",
@@ -547,11 +483,12 @@ class Journal:
 
     def _serve(self, request: Request) -> dict[str, Any]:
         if request.tool == "balance":
-            account = request.arguments.get("account")
-            if not isinstance(account, str):
-                raise AdmissionError("missing_field", "arguments.account")
-            money = self._ledger.balance(account)
-            return {"account": account, "balance": _money_str(money), "cursor": self._cursor}
+            account = request.arguments["account"]
+            return {
+                "account": account,
+                "balance": _money_str(self._ledger.balance(account)),
+                "cursor": self._cursor,
+            }
         tb = self._ledger.trial_balance()
         return {
             "rows": [
@@ -569,9 +506,12 @@ class Journal:
     # -------------------------------------------------------------- invalid
 
     def _invalid(self, value: Any, exc: AdmissionError) -> Response:
+        """Step 3 failure: an invocation with no operation and a bounded failure envelope
+        in place of the request as received."""
         now = self.clock.now().astimezone(UTC)
         call_id = value.get("call_id") if isinstance(value, dict) else None
         tool = value.get("tool") if isinstance(value, dict) else None
+        safe_call_id = call_id if isinstance(call_id, str) and _is_identifier(call_id) else None
         inv_seq = self._alloc("invocations")
         self._conn.execute(
             "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?)",
@@ -584,16 +524,17 @@ class Journal:
                 None,
                 None,
                 None,
-                call_id if isinstance(call_id, str) and _is_identifier(call_id) else None,
+                safe_call_id,
             ),
         )
-        blob = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)[:ENVELOPE_BOUND]
         envelope = {
-            "call_id": call_id if isinstance(call_id, str) and _is_identifier(call_id) else None,
-            "tool": tool if isinstance(tool, str) and tool in _known_tools() else None,
-            "input_digest": _input_digest(value),
+            "call_id": safe_call_id,
+            "tool": tool if isinstance(tool, str) and tool in TOOLS else None,
+            "input_digest": digest(value),
             "error": {"code": exc.code, "path": exc.path or "$"},
-            "payload": blob,  # identity admitter: pass-through; M2c redacts
+            # The identity admitter passes this through; M2c's redactor runs over it as an
+            # untyped blob. The byte bound applies from M2b either way.
+            "payload": _bounded_utf8(json.dumps(value, sort_keys=True, ensure_ascii=False)),
         }
         self._event(inv_seq, "inbound", envelope)
         response = Response(
@@ -610,19 +551,22 @@ class Journal:
     # -------------------------------------------------------------- rebuild
 
     def _ensure_current(self) -> None:
-        latest = self._conn.execute(
+        (latest,) = self._conn.execute(
             "SELECT COALESCE(MAX(journal_sequence), 0) FROM outcomes"
-        ).fetchone()[0]
+        ).fetchone()
         if latest != self._cursor:
             self._rebuild()
 
     def _rebuild(self) -> None:
+        """Fold every outcome in order. ``applied`` outcomes re-execute the recorded command
+        with the recorded effects fed back; nothing is re-decided. Any other outcome is a
+        no-op on the books that still advances the cursor."""
+        self._check_chains()
         ledger = Ledger.empty(self._definition.chart)
         registry = self._definition.registry
         rows = self._conn.execute(
             "SELECT o.journal_sequence, o.outcome, op.command, o.entry_id, o.posted_at,"
-            " o.head_after"
-            " FROM outcomes o JOIN operations op ON op.journal_sequence = o.operation"
+            " o.head_after FROM outcomes o JOIN operations op ON op.journal_sequence = o.operation"
             " ORDER BY o.journal_sequence"
         ).fetchall()
         cursor = 0
@@ -638,10 +582,29 @@ class Journal:
                     raise IntegrityError(f"applied outcome {seq} does not replay: {exc}") from exc
                 if ledger.head != head_after:
                     raise IntegrityError(
-                        f"outcome {seq}: head {ledger.head} != recorded {head_after}"
+                        f"outcome {seq}: head {ledger.head} differs from recorded {head_after}"
                     )
             cursor = seq
         self._ledger, self._cursor = ledger, cursor
+
+    def _check_chains(self) -> None:
+        """The path property the schema implies, asserted as a self-check on rebuild."""
+        rows = self._conn.execute(
+            "SELECT operation, journal_sequence, previous_outcome, outcome"
+            " FROM outcomes ORDER BY operation, journal_sequence"
+        ).fetchall()
+        tip: dict[int, tuple[int, str]] = {}
+        for operation, seq, previous, outcome in rows:
+            if operation not in tip:
+                if previous is not None:
+                    raise IntegrityError(
+                        f"outcome {seq}: first outcome of {operation} is not a root"
+                    )
+            else:
+                prev_seq, prev_kind = tip[operation]
+                if previous != prev_seq or prev_kind != "awaiting_approval":
+                    raise IntegrityError(f"outcome {seq}: chain of operation {operation} is broken")
+            tip[operation] = (seq, outcome)
 
     # -------------------------------------------------------------- helpers
 
@@ -651,11 +614,12 @@ class Journal:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             yield
+            self._conn.execute("COMMIT")
         except BaseException:
-            self._conn.execute("ROLLBACK")
             self._pending_projection = None
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
             raise
-        self._conn.execute("COMMIT")
         self._advance_projection()
 
     def _advance_projection(self) -> None:
@@ -669,23 +633,43 @@ class Journal:
         return int(cur.lastrowid)
 
     def _current_outcome(self, op_seq: int) -> int | None:
-        row = self._conn.execute(
+        (value,) = self._conn.execute(
             "SELECT MAX(journal_sequence) FROM outcomes WHERE operation = ?", (op_seq,)
         ).fetchone()
-        value = row[0]
         return None if value is None else int(value)
+
+    def _decision(
+        self, inv_seq: int, op_seq: int | None, context: PolicyContext, decision: Any
+    ) -> int:
+        seq = self._alloc("decisions")
+        self._conn.execute(
+            "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                seq,
+                inv_seq,
+                op_seq,
+                json.dumps(context.serialized(), sort_keys=True),
+                self.policy.version,
+                decision.decision,
+                decision.matched_rule,
+                decision.reason,
+                None,
+                None,
+                None,
+            ),
+        )
+        return seq
 
     def _outcome(
         self,
         op_seq: int,
-        previous: int | None,
         outcome: str,
         dec_seq: int,
         head_before: str,
         head_after: str,
-        entry_id: str | None,
-        posted_at: datetime | None,
         *,
+        entry_id: str | None = None,
+        posted_at: datetime | None = None,
         ledger_sequence: int | None = None,
         error: tuple[str, str] | None = None,
     ) -> int:
@@ -695,7 +679,7 @@ class Journal:
             (
                 seq,
                 op_seq,
-                previous,
+                self._current_outcome(op_seq),  # the tip, read under the write lock
                 outcome,
                 None if error is None else error[0],
                 None if error is None else error[1],
@@ -707,9 +691,8 @@ class Journal:
                 dec_seq,
             ),
         )
-        # A non-applied outcome still advances the cursor on commit.
         if outcome != "applied":
-            self._pending_projection = (self._ledger, seq)
+            self._pending_projection = (self._ledger, seq)  # cursor advances, books do not
         return seq
 
     def _respond(
@@ -727,6 +710,13 @@ class Journal:
         )
         self._event(inv_seq, "outbound", response.as_tool_result())
 
+    def _inbound(self, inv_seq: int, request: Request) -> None:
+        self._event(
+            inv_seq,
+            "inbound",
+            {"tool": request.tool, "arguments": request.arguments, "call_id": request.call_id},
+        )
+
     def _event(self, inv_seq: int | None, direction: str, body: dict[str, Any]) -> int:
         seq = self._alloc("events")
         self._conn.execute(
@@ -735,45 +725,34 @@ class Journal:
         )
         return seq
 
-    def _render_outcome(
-        self, inv_seq: int, outcome_seq: int, response_kind: str, disposition: str
-    ) -> Response:
+    def _render_replay(self, inv_seq: int, outcome_seq: int) -> Response:
+        """A replay answers exactly what the invocation that produced the outcome was told,
+        rendered from that invocation's stored outbound event, with ``replayed`` set."""
         row = self._conn.execute(
-            "SELECT o.outcome, o.error_type, o.error_message, o.entry_id, o.head_after,"
-            " o.ledger_sequence, d.matched_rule, d.reason"
-            " FROM outcomes o LEFT JOIN decisions d ON d.journal_sequence = o.decision"
-            " WHERE o.journal_sequence = ?",
+            "SELECT e.body FROM invocation_responses r"
+            " JOIN events e ON e.invocation = r.invocation AND e.direction = 'outbound'"
+            " WHERE r.outcome = ? ORDER BY r.journal_sequence LIMIT 1",
             (outcome_seq,),
         ).fetchone()
-        outcome, error_type, error_message, entry_id, head_after, ledger_sequence, rule, reason = (
-            row
-        )
-        if outcome in ("denied", "awaiting_approval"):
-            error_message = f"{rule}: {reason}"
-        if outcome == "applied":
+        if row is None:  # pragma: no cover - every outcome is produced by an invocation
+            raise IntegrityError(f"outcome {outcome_seq} has no producing invocation")
+        body = json.loads(row[0])
+        if body["ok"]:
             return Response(
                 inv_seq,
-                disposition,
-                response_kind,
+                "replay",
+                "replayed",
                 True,
-                result={
-                    "replayed": True,
-                    "entry_id": entry_id,
-                    "head": head_after,
-                    "sequence": ledger_sequence,
-                },
+                result={**body["result"], "replayed": True},
                 outcome=outcome_seq,
             )
-        etype = {"denied": "PolicyDenied", "awaiting_approval": "ApprovalRequired"}.get(
-            outcome, error_type
-        )
         return Response(
             inv_seq,
-            disposition,
-            response_kind,
+            "replay",
+            "replayed",
             False,
-            error_type=etype,
-            error_message=error_message or outcome,
+            error_type=body["error"]["type"],
+            error_message=body["error"]["message"],
             outcome=outcome_seq,
         )
 
@@ -825,9 +804,6 @@ def _decode_chart(doc: list[dict[str, Any]], currencies: Mapping[str, Currency])
 
 
 def _is_identifier(value: str) -> bool:
-    from ledgergate.ledger import InvalidIdentifierError
-    from ledgergate.ledger.identifiers import require_identifier
-
     try:
         require_identifier(value, "call_id")
     except InvalidIdentifierError:
@@ -835,14 +811,7 @@ def _is_identifier(value: str) -> bool:
     return True
 
 
-def _known_tools() -> frozenset[str]:
-    from ledgergate.journal.admission import TOOLS
-
-    return TOOLS
-
-
-def _input_digest(value: Any) -> str:
-    try:
-        return digest(value)
-    except Exception:  # not I-JSON; the transport should have refused it
-        return digest(json.dumps(value, sort_keys=True, default=str))
+def _bounded_utf8(text: str, limit: int = ENVELOPE_BOUND) -> str:
+    """Truncate to at most ``limit`` UTF-8 bytes without splitting a character."""
+    data = text.encode("utf-8")
+    return text if len(data) <= limit else data[:limit].decode("utf-8", errors="ignore")

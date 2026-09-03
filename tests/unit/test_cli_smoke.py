@@ -159,7 +159,7 @@ def test_journal_pending_and_approve_round_trip(
     assert (
         artefact["amount"] == "500"
         and artefact["currency"] == "USD"
-        and artefact["subject"] is None
+        and artefact["subject"] == "t"  # copied from the stored command
     )
 
     class WallClock:

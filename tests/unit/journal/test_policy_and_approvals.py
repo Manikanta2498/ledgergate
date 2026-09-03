@@ -727,3 +727,53 @@ class TestSignedTimestampsAndValidation:
             j.handle(open_txn("k", "t", amount=1))
         assert len(table(j.path, "journal")) == before
         j.close()
+
+
+class TestWindowTimeBase:
+    def test_an_approved_operation_counts_at_approval_time(self, tmp_path: Path) -> None:
+        """The window's time base is the producing invocation's requested_at: for an approved
+        operation that is the approval, not the original request."""
+        policy = ThresholdPolicySet(
+            version="w1",
+            approve_above=[Threshold("refund", "USD", 1_000)],
+            window_caps=[WindowCap("refund", "USD", 3_000, timedelta(hours=1))],
+        )
+        clock = SteppingClock(EPOCH, step=timedelta(minutes=1))
+        j = Journal.create(
+            str(tmp_path / "w.journal"),
+            CHART,
+            clock=clock,
+            ids=SequentialIds(),
+            policy=policy,
+            approval_key=verification_key_text(SIGNER),
+        )
+        assert j.handle(open_txn("o", "t", amount=10_000)).response == "applied"
+        assert j.handle(_advance("a", "authorize")).response == "applied"
+        assert (
+            j.handle(_advance("s", "settle", _entry(10_000, "cash", "revenue"))).response
+            == "applied"
+        )
+        big = _refund("r-big", 2_500)  # above the approval line
+        assert j.handle(big).response == "awaiting_approval"
+        # two hours pass before the approval lands
+        clock2 = SteppingClock(EPOCH + timedelta(hours=2), step=timedelta(minutes=1))
+        j.close()
+        j = Journal.open(
+            str(tmp_path / "w.journal"), clock=clock2, ids=SequentialIds(start=50), policy=policy
+        )
+        art = artefact(
+            j,
+            "r-big",
+            subject="t",
+            amount="2500",
+            issued_at=EPOCH + timedelta(hours=2),
+            expires_at=EPOCH + timedelta(hours=3),
+        )
+        assert j.handle({**big, "call_id": "c-appr", "approval": art}).response == "applied"
+        # a refund a few minutes after the approval sees 2_500 in the window, though the
+        # original request was two hours ago
+        r = j.handle(_refund("r-next", 800))
+        assert r.response == "denied" and "window_cap" in (r.error_message or "")
+        (dec,) = [d for d in table(j.path, "decisions") if d[6] == "w1.window_cap"]
+        assert json.loads(dec[3])["aggregates"] == {"applied.refund.USD.3600s": "2500"}
+        j.close()

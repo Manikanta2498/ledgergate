@@ -17,12 +17,12 @@ import json
 import secrets
 import sqlite3
 import warnings
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from ledgergate.codec import (
     CODEC_VERSION,
@@ -84,6 +84,7 @@ from ledgergate.ledger import (
 )
 from ledgergate.ledger.identifiers import require_identifier
 
+T = TypeVar("T")
 LOCAL_PRINCIPAL = "local"
 ENVELOPE_BOUND = 4096  # bytes of UTF-8, per the specification
 MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
@@ -551,7 +552,9 @@ class Journal:
             command_kind=command_kind(command),
             amount=None if money is None else str(money.amount),
             currency=None if money is None else money.currency.code,
-            aggregates=self.policy.aggregates_for(command, now, _History(self)),
+            aggregates=self._guarded(
+                lambda: self.policy.aggregates_for(command, now, _History(self))
+            ),
             approval=approval_ctx,
         )
         failed_verdict = verdict is not None and verdict not in (
@@ -563,14 +566,7 @@ class Journal:
             assert verdict is not None
             decision = Decision("deny", "runtime.approval_rejected", verdict)
         else:
-            try:
-                decision = self.policy.evaluate(context)
-            except Exception as exc:
-                # A policy set is a pure function of its context; raising is a bug in the
-                # set, an unrecorded failure, and named as such.
-                raise ConfigurationError(
-                    f"policy set {self.policy.version!r} raised: {exc}"
-                ) from exc
+            decision = self._guarded(lambda: self.policy.evaluate(context))
             if decision.decision == "approval_required" and verdict == "approval_valid":
                 raise ConfigurationError(
                     "policy set asked for approval after a valid approval was consumed;"
@@ -699,7 +695,7 @@ class Journal:
                 if verdict is None
                 else {"presentation": presentation, "verdict": verdict},
             )
-            decision = self.policy.evaluate(context)
+            decision = self._guarded(lambda: self.policy.evaluate(context))
             self._decision(inv_seq, None, context, decision, presentation, verdict)
             if decision.decision != "allow":
                 response = Response(
@@ -921,6 +917,14 @@ class Journal:
             ),
         )
         return seq
+
+    def _guarded(self, call: Callable[[], T]) -> T:
+        """A policy set is a pure function of its context; raising is a bug in the set, an
+        unrecorded failure, and named as such on every path that invokes it."""
+        try:
+            return call()
+        except Exception as exc:
+            raise ConfigurationError(f"policy set {self.policy.version!r} raised: {exc}") from exc
 
     def _current_outcome_kind(self, op_seq: int) -> str | None:
         row = self._conn.execute(

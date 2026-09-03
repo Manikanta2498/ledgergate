@@ -116,8 +116,10 @@ and a `settle` would miss the transaction its `open` stored. The label alone can
 that; the check value does.
 
 **Approval artefact fields.** An artefact is issued by the approver against what the
-journal already holds, so its `key` and `subject` are the stored tokens, and admission does
-not transform them again (re-tokenizing would break the equality check 3 depends on). Every
+journal already holds: `ledgergate approve` copies `key` and `subject` (the command's
+stored `transaction_id`, if it has one) from the pending operation's row and accepts
+neither from the operator, so both are the stored tokens by construction, and admission
+does not transform them again (re-tokenizing would break the equality check 3 depends on). Every
 field is bounded at admission: `journal_id` 32 hex, `fingerprint` 64 hex, `signature` 86
 base64url characters, `amount` a decimal string of at most 40 digits, `currency` three
 capitals, `approval_id`, `approver`, `key` and `subject` identifiers (at most 256

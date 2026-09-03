@@ -214,10 +214,13 @@ class ThresholdPolicySet:
             {
                 "set": type(self).__qualname__,
                 "version": self.version,
-                "deny_above": [asdict(x) for x in self.deny_above],
-                "approve_above": [asdict(x) for x in self.approve_above],
+                "deny_above": [{**asdict(x), "amount": str(x.amount)} for x in self.deny_above],
+                "approve_above": [
+                    {**asdict(x), "amount": str(x.amount)} for x in self.approve_above
+                ],
                 "window_caps": [
-                    {**asdict(c), "window": int(c.window.total_seconds())} for c in self.window_caps
+                    {**asdict(c), "amount": str(c.amount), "window": int(c.window.total_seconds())}
+                    for c in self.window_caps
                 ],
                 "gated_reads": sorted(self.gated_reads),
             }
@@ -254,6 +257,10 @@ class ThresholdPolicySet:
         return out
 
     def evaluate(self, context: PolicyContext) -> Decision:
+        if context.digest_kind == "request":
+            return Decision(
+                "allow", f"{self.version}.read_recorded", "this set gates reads for evidence only"
+            )
         if context.amount is None or context.currency is None or context.command_kind is None:
             return Decision("allow", f"{self.version}.no_amount", "command carries no amount")
         amount, kind, ccy = int(context.amount), context.command_kind, context.currency

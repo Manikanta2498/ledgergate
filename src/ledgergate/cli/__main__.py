@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ledgergate import __version__
-from ledgergate.journal import FACT_TABLES
+from ledgergate.journal import FACT_TABLES, SCHEMA_VERSION
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,14 +63,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="file holding the 32-byte Ed25519 private key (raw or hex)",
     )
     approve.add_argument("--valid-hours", type=float, default=24.0)
-    approve.add_argument(
-        "--subject",
-        default=None,
-        help=(
-            "display text for the approver's record, signed but never compared; under a"
-            " tokenizing admitter pass the stored token, not the raw subject"
-        ),
-    )
     approve.set_defaults(handler=journal_approve)
 
     return parser
@@ -127,12 +119,14 @@ def journal_approve(args: argparse.Namespace) -> int:
     try:
         require_identifier(args.approver, "--approver")
         require_identifier(args.approval_id, "--approval-id")
-        if args.subject is not None:
-            require_identifier(args.subject, "--subject")
     except InvalidIdentifierError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    raw = args.signing_key.read_bytes()
+    try:
+        raw = args.signing_key.read_bytes()
+    except OSError as exc:
+        print(f"cannot read signing key: {exc}", file=sys.stderr)
+        return 2
     try:
         # 32 raw bytes as written, or 64 hex characters (whitespace around the hex ignored;
         # raw bytes are never stripped, since a key byte may itself be whitespace).
@@ -148,11 +142,21 @@ def journal_approve(args: argparse.Namespace) -> int:
         print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
         return 2
     try:
+        (schema_version,) = conn.execute("SELECT schema_version FROM definition").fetchone()
+        if schema_version != SCHEMA_VERSION:
+            print(
+                f"journal is schema {schema_version}; this build is {SCHEMA_VERSION}",
+                file=sys.stderr,
+            )
+            return 2
         match = [r for r in _pending_rows(conn) if r[0] == args.key]
         (approval_key,) = conn.execute("SELECT approval_key FROM definition").fetchone()
         used = conn.execute(
             "SELECT 1 FROM approval_consumptions WHERE approval_id = ?", (args.approval_id,)
         ).fetchone()
+    except sqlite3.Error as exc:
+        print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
+        return 2
     finally:
         conn.close()
     if approval_key != verification_key_text(private):
@@ -177,7 +181,7 @@ def journal_approve(args: argparse.Namespace) -> int:
         key=key,
         issued_at=now,
         expires_at=now + timedelta(hours=args.valid_hours),
-        subject=args.subject,
+        subject=command.get("transaction_id"),  # the stored token, never operator-typed
         amount=None if money is None else str(money["amount"]),
         currency=None if money is None else money["currency"],
     )

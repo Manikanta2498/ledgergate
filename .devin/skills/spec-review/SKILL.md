@@ -64,4 +64,10 @@ whether the next milestone can be built without further document changes. Then, 
 separate final line, state which model you believe you are running as, prefixed `MODEL:`
 (write `unknown` if you cannot tell).
 
-The specific review target and any extra context follow below, supplied by the caller.
+**Review target.** The caller cannot pass arguments to this skill, so the target is
+supplied by file. If `.devin/review-target.md` exists in the repository root, read it
+first: it names the branch, commit, scope, and any prior findings to verify; treat it as
+part of this brief. If it does not exist, default to: review `README.md`, `docs/adr/*.md`
+and `docs/spec/*.md` as they stand at HEAD, plus everything in `git diff main...HEAD`,
+cross-checked against `src/`, `schema/` and the test suite, and state that you used the
+default. Do not stop to ask; the caller is another agent and cannot answer.

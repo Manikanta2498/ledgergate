@@ -63,7 +63,8 @@ above the core. Both need to encode a `Command` to JSON and back, and today that
 lives inside `trace.models` (pydantic), which `journal` may not import. M2b therefore
 extracts it into `ledgergate.codec`, a thin layer below both siblings that imports only
 the standard library and the core, and `trace.models` delegates to it. The codec is tested
-to one invariant: `command_fingerprint(decode(encode(c))) == command_fingerprint(c)`. The
+to one invariant: `command_fingerprint(decode(encode(c))) == command_fingerprint(c)` for
+every `c` whose amounts are within the I-JSON range; `encode` raises otherwise. The
 resulting contract, which M2b writes into import-linter and which is the final shape:
 
 ```

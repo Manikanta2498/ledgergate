@@ -232,6 +232,7 @@ class TestGrammar:
     def _base(self, events: list[Any]) -> dict[str, Any]:
         return {
             "trace_id": "t",
+            "journal_id": "0" * 32,
             "started_at": self.AT,
             "ended_at": self.AT,
             "policy_set_version": "none",
@@ -512,6 +513,7 @@ def test_ledger_command_owner_grammar_rejects_orphan_pairs() -> None:
         TraceV2.model_validate(
             {
                 "trace_id": "t",
+                "journal_id": "0" * 32,
                 "started_at": EPOCH.isoformat(),
                 "ended_at": EPOCH.isoformat(),
                 "policy_set_version": "none",
@@ -685,7 +687,13 @@ class TestEveryDispositionTheSpecSinglesOut:
 class TestBoundaryGrammar:
     def test_a_runtime_intent_without_its_tool_call_is_refused(self) -> None:
         at = EPOCH.isoformat()
-        base = {"trace_id": "t", "started_at": at, "ended_at": at, "policy_set_version": "none"}
+        base = {
+            "trace_id": "t",
+            "journal_id": "0" * 32,
+            "started_at": at,
+            "ended_at": at,
+            "policy_set_version": "none",
+        }
         res = {
             "type": "invocation_resolution",
             "seq": 2,
@@ -1148,7 +1156,7 @@ class TestFifthReviewFindings:
         doc = t.model_dump(mode="json")
         res = [e for e in doc["events"] if e["type"] == "invocation_resolution"]
         res[1]["outcome_ref"], res[1]["seq"] = res[2]["outcome_ref"], res[1]["seq"]
-        with pytest.raises(ValidationError):  # a failed approval cannot name a later outcome
+        with pytest.raises(ValidationError, match="current outcome"):
             TraceV2.model_validate(doc)
 
     def test_derivation_refuses_a_journal_with_two_presentations_for_one_invocation(
@@ -1369,10 +1377,10 @@ class TestSeventhReviewFindings:
                 "sequence": 0,
             },
         ]
-        with pytest.raises(ValidationError, match=r"no legacy content|never share"):
+        with pytest.raises(ValidationError, match="no legacy content"):
             TraceV2.model_validate(doc)
         doc.pop("journal_id")
-        with pytest.raises(ValidationError, match="never share a document"):
+        with pytest.raises(ValidationError, match="only legacy dispositions"):
             TraceV2.model_validate(doc)
 
     def test_ledger_pair_is_tied_to_its_operation_and_call(self, journal_path: str) -> None:
@@ -1433,5 +1441,95 @@ class TestSeventhReviewFindings:
         ]
         assert len(approvals) == 2
         approvals[1]["consumption_ref"] = approvals[0]["consumption_ref"]
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+
+class TestEighthReviewFindings:
+    def test_a_v1_document_with_tool_events_and_no_ledger_command_lifts(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rec = Recorder("t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds())
+        rec.message("user", "what is my balance")
+        rec.tool_call("c1", "balance", {"account": "cash"})
+        rec.tool_result("c1", True, {"balance": "0"})
+        lifted = lift(rec.trace())
+        assert [e.type for e in lifted.events] == ["message", "tool_call", "tool_result"]
+        only_messages = Recorder(
+            "t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds()
+        )
+        only_messages.message("user", "hi")
+        assert len(lift(only_messages.trace()).events) == 1
+        p = tmp_path / "obs.json"
+        p.write_text(dump_trace(rec.trace()))
+        assert main(["verify", str(p), "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["intents"] == 0
+
+    def test_a_runtime_document_must_carry_its_journal_id(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        doc.pop("journal_id")
+        with pytest.raises(ValidationError, match="only legacy dispositions"):
+            TraceV2.model_validate(doc)
+
+    def test_an_approval_that_consumed_nothing_fails_verify(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "nc.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(_open("big", "c2", 500, approval=_artefact(j, "big")))
+        j.close()
+        t = derive(path)
+        doc = t.model_dump(mode="json")
+        d = next(
+            e for e in doc["events"] if e["type"] == "policy_decision" and e.get("consumption_ref")
+        )
+        d["approval"]["verdict"] = "approval_not_applicable"
+        d["context"]["approval"]["verdict"] = "approval_not_applicable"
+        d.pop("consumption_ref")
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+        # and a `new` cannot claim to have consumed a valid artefact
+        doc = t.model_dump(mode="json")
+        new = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["decision"] == "approval_required"
+        )
+        res = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["intent_id"] == new["intent_id"]
+        )
+        res["presentation_ref"] = "presentation-3"
+        new["approval"] = {"presentation_ref": "presentation-3", "verdict": "approval_valid"}
+        new["context"]["approval"] = {"presentation": 3, "verdict": "approval_valid"}
+        new["consumption_ref"] = "consumption-4"
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+    def test_a_consumption_before_its_presentation_fails(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "order.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(_open("big", "c2", 500, approval=_artefact(j, "big")))
+        j.close()
+        doc = derive(path).model_dump(mode="json")
+        d = next(
+            e for e in doc["events"] if e["type"] == "policy_decision" and e.get("consumption_ref")
+        )
+        d["consumption_ref"] = "consumption-1"
         card = check(TraceV2.model_validate(doc))
         assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"

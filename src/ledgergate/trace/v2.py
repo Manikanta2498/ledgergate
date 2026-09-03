@@ -197,8 +197,9 @@ class TraceV2(_Strict):
     allocation order; a command intent's fingerprint is its attempted_digest, matches the
     operation's for new, replay and approval and differs for conflict, and equals its
     ledger_command's, whose command_id is the operation and whose call_id is the intent's;
-    in a runtime trace every boundary event brackets an intent; a document is either wholly
-    lifted (legacy, no journal) or wholly derived (no legacy), never both; derived
+    in a derived document every boundary event brackets an intent; a document is derived iff
+    it carries a journal_id, and then has no legacy resolution, or lifted, and then has no
+    journal_id and only legacy resolutions; derived
     references (outcome, presentation, consumption) follow their fixed grammars."""
 
     model_config = ConfigDict(
@@ -256,18 +257,22 @@ class TraceV2(_Strict):
                 by_intent[owner].append(e)
         # A document is either lifted (every resolution legacy, no journal) or derived (no
         # legacy at all); the two grammars never mix, since neither producer mixes them.
+        # The partition is by producer, not by content: a derived document carries a
+        # journal_id and no legacy resolution; a lifted one carries no journal_id and only
+        # legacy resolutions (possibly none: a v1 document may hold tool events alone).
         legacy = [r for r in resolutions if r.disposition == "legacy"]
-        if legacy and self.journal_id is not None:
+        derived = self.journal_id is not None
+        if derived and legacy:
             raise ValueError("a journal-derived trace carries no legacy content")
-        if legacy and len(legacy) != len(resolutions):
-            raise ValueError("legacy and runtime dispositions never share a document")
+        if not derived and len(legacy) != len(resolutions):
+            raise ValueError("a lifted document carries only legacy dispositions")
         positions = {id(e): i for i, e in enumerate(self.events)}
         bracketing: set[int] = set()
         for r in resolutions:
             self._check_intent(r, by_intent[r.intent_id])
             if r.disposition != "legacy":
                 bracketing.update(self._check_boundary(r, by_intent[r.intent_id], positions))
-        if not any(r.disposition == "legacy" for r in resolutions):
+        if derived:
             # In a runtime trace every boundary event brackets an intent; a stray pair would
             # be a call the journal never saw.
             for e in self.events:

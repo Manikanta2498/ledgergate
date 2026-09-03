@@ -52,7 +52,9 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   for `conflict`, and equals the command its `ledger_command` carries, whose `command_id`
   is the operation and whose `call_id` is the intent's; and in a runtime trace every
   `tool_call` and `tool_result` brackets an intent. The registry additionally requires each
-  presentation and each consumption to be referenced by at most one decision.
+  presentation and each consumption to be referenced by at most one decision, an `approval`
+  the policy set decided to have consumed a valid artefact, any other disposition's verdict to
+  be `approval_not_applicable`, and a consumption to be recorded after its presentation.
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
   names the operation's pending tip, the outcome that was *current* at the time (the latest
@@ -106,9 +108,11 @@ v1 tool events and ledger pairs are not one-to-one: one `tool_call` may be follo
 several ledger commands, or by none. Lifting each ledger pair into a full runtime
 invocation would require inventing `tool_call`/`tool_result` events that never happened.
 Lifted content therefore uses its own grammar and never synthesizes boundary events. A
-document is either wholly lifted (every resolution `legacy`, no `journal_id`) or wholly
-derived (no `legacy` at all); the model refuses a mixture, since neither producer makes one,
-and a runtime document's grammar can therefore never be switched off by lifted rows:
+document is *derived* iff it carries a `journal_id`, and then has no `legacy` resolution and
+every boundary event brackets an intent; otherwise it is *lifted*, carries only `legacy`
+resolutions (possibly none: a v1 document may hold tool events or messages alone) and is not
+bracketed. The partition is by producer, not by content, so a runtime document's grammar can
+never be switched off by lifted rows:
 
 ```
 legacy_intent              intent_id, command, optional call_id from the v1 ledger_command

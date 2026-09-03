@@ -193,7 +193,10 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
     """Over every decision: it references the presentation its own invocation made and none
     otherwise; a ``runtime.``-prefixed decision is a deny on an ``approval`` intent with a
     failed verdict as its reason and no consumption; every failed verdict was decided by the
-    runtime; a consumption is kept exactly for a valid verdict."""
+    runtime; an approval the policy set decided consumed a valid artefact, and no other
+    disposition carries a verdict but not-applicable; a consumption is kept exactly for a
+    valid verdict, recorded after its presentation, and each presentation and consumption is
+    referenced by at most one decision."""
     out = []
     by_id = {r.intent_id: r for r in t.resolutions()}
     failed = {
@@ -235,6 +238,44 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
                     "error",
                     f"{iid}: decision presentation {mine!r} differs from the invocation's"
                     f" {r.presentation_ref!r}",
+                    iid,
+                )
+            )
+        # The verdict fits the disposition: an approval that the policy set decided consumed a
+        # valid artefact; any other disposition can only have found an artefact not applicable.
+        if (
+            r.disposition == "approval"
+            and not d.runtime_written
+            and (verdict != "approval_valid" or d.consumption_ref is None)
+        ):
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: an approval the policy set decided must have consumed a valid"
+                    " artefact",
+                    iid,
+                )
+            )
+        if r.disposition != "approval" and verdict not in (None, "approval_not_applicable"):
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: verdict {verdict} is only reachable on an approval disposition",
+                    iid,
+                )
+            )
+        if (
+            d.consumption_ref is not None
+            and d.approval is not None
+            and _ref_number(d.consumption_ref) <= _ref_number(d.approval.presentation_ref)
+        ):
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: a consumption is recorded after its presentation",
                     iid,
                 )
             )

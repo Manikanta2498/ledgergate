@@ -210,8 +210,9 @@ artefact never touches `approval_consumptions`.
    constraint that makes the `SELECT` merely an optimization. Verdict
    `approval_already_used`. Success: verdict `approval_valid`; the approval is consumed.
    Note for test authors: by invariant 3 every consumption leaves its operation terminal,
-   so an honest re-presentation of a consumed artefact resolves as `replay` (verdict
-   `approval_not_applicable`) or fails check 3 before reaching check 4. This verdict is
+   so an honest re-presentation of a consumed artefact resolves as `replay`, `conflict` or
+   `new` (each recording `approval_not_applicable`) or, against another pending operation,
+   fails check 3 on `key` before reaching check 4. This verdict is
    reachable only when a *distinct* artefact reuses an `approval_id`; it is a defensive
    constraint, and the test for it constructs exactly that.
 

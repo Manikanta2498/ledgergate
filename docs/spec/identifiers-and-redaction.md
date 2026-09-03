@@ -43,8 +43,8 @@ means a new journal, and cross-journal correlation is an explicit operation.
 ## Scope
 
 M2c covers schema v1 documents and the journal's admission `Request`. In a `Request`,
-`arguments` is a structured command document, not free text: it is redacted field by
-field under the command's own classes (amounts, currencies, sides and account references
+`arguments` is class-1 content whose allowlist is the command's own field classes: it is
+redacted field by field (amounts, currencies, sides and account references
 in the clear; `description` and tag values redacted; caller identifiers tokenized), which
 are the same classes v1 command documents have. v2's intent and policy fields are designed
 under the same three classes in M3.

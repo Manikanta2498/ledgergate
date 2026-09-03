@@ -91,7 +91,7 @@ offline consumer holding the same policy set re-runs the same code on the same i
 without it verifies the recorded evidence and says so.
 
 Approvals are signed artefacts bound to one pending operation and validated before they
-enter the context; single use is a database constraint, not a flag. A validated approval
+enter the context; single use is a database constraint within a journal and a signed journal identity across journals, not a flag. A validated approval
 is consumed whatever policy then decides, because every decision on a valid presentation
 leaves its operation terminal, so there is nothing left for the artefact to serve. Details
 in [spec/journal.md, *Approval artefacts*](../spec/journal.md#approval-artefacts).

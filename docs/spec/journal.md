@@ -45,7 +45,17 @@ whitespace, UTF-8. Under JCS `5.0` and `5` are the same number and serialize as 
 runtime's refusal of whole floats where an integer is required is model validation that
 runs *before* digesting, not a property of the digest. Python's `json.dumps` is not JCS
 (it emits `5.0` and `1e+16`, and sorts keys by code point), so M2b implements or vendors a
-JCS serializer and tests it against the RFC 8785 appendix vectors. Neither is the operation fingerprint (next
+JCS serializer and tests it against the RFC 8785 appendix vectors.
+
+JCS numbers are IEEE-754 doubles, so integers beyond 2^53 lose identity and huge ones have
+no serialization at all. The admission input is therefore **I-JSON (RFC 7493) by
+contract**: every number is an integer in `[-(2^53-1), 2^53-1]` or a finite double. The
+transport enforces this at decode (`json.loads` with `parse_int`/`parse_float` hooks that
+reject out-of-range or non-finite values) *before* admission; a violation is a transport
+error with no journal row, listed under *Failures the journal cannot record*. Every
+`amount` the codec encodes, and the `amount` display field of an approval artefact, is
+bounded to the same range by the codec and the definition, which for two-decimal
+currencies is about ninety trillion units and is stated rather than assumed. Neither is the operation fingerprint (next
 paragraph), which is over the decoded *command*.
 
 ## Sequences
@@ -80,8 +90,8 @@ All strictly append-only. No row is ever updated or deleted.
 
 | Table | Holds |
 | :--- | :--- |
-| `definition` | Written once: chart, currency registry, codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
-| `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, canonical `command`. |
+| `definition` | Written once: `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry, codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. |
+| `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, `command` as encoded by the codec (a storage form, not a digest input; identity is `fingerprint`). |
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message, `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
 | `invocation_responses` | `invocation` (`UNIQUE`), `outcome` (the exact outcome row this invocation's response was rendered from), `disposition` (copied from the invocation row at insert; an intra-row `CHECK` requires `outcome` non-null iff `disposition IN ('new','replay','approval')`, and a `BEFORE INSERT` trigger rejects a row whose `disposition` differs from its invocation's, since SQLite `CHECK` cannot look at another table), `response` (the disposition-level result: `applied`, `rejected`, `denied`, `awaiting_approval`, `replayed`, `conflict`, `invalid`, `read`; the `tool_result` error type, such as `ApprovalRejected` or `PolicyDenied`, lives in the outbound `events` row, so `response` is what happened to the operation and the event is what the caller was told). Written after the outcome it names exists, so a `new` invocation's response row follows its first outcome. This is what binds a replay to the outcome that answered it *at the time*, rather than to whatever the operation's current outcome is when the journal is later read. |
@@ -95,8 +105,9 @@ All strictly append-only. No row is ever updated or deleted.
 
 1. Every row a response depends on is committed before the response is rendered.
 2. Every operation has at least one outcome in the same transaction that created it.
-3. An approval is consumed at most once, enforced by `approval_consumptions.approval_id
-   UNIQUE`, and only after every validation check passed. A consumed approval's operation
+3. An approval is consumed at most once *per artefact*: `approval_consumptions.approval_id
+   UNIQUE` within a journal, and the signed `journal_id` binding an artefact to one journal
+   across journals; and only after every validation check passed. A consumed approval's operation
    leaves `awaiting_approval` in the same transaction (to `applied`, `rejected` or
    `denied`), so a consumed artefact never has a live operation to attach to.
 4. A `tool_call` row never exists without the data for its `tool_result`.
@@ -135,8 +146,8 @@ that violates any rule above cannot exist in the journal, so rebuild needs no re
 
 Issued out of band by the operator via `ledgergate approve` (delivered in M3 with the
 validation and consumption code; M4 is only the transport that presents artefacts), signed
-with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation by its
-`fingerprint` and tokenized `key`, which together identify it uniquely; the artefact also
+with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation in exactly one journal, by the
+definition's `journal_id` and the operation's `fingerprint` and tokenized `key`; the artefact also
 carries subject, amount and currency as display fields for the approver, copied from the
 command at issuance and recorded for audit but not compared, since not every command has
 a single amount (`Post`, `Reverse`) and "subject" is defined by the policy set, not the
@@ -152,11 +163,14 @@ row, which is written after check 4 and so can hold it. An invalid, expired or m
 artefact never touches `approval_consumptions`.
 
 1. Signature verifies against the definition's key, else verdict `approval_invalid`. The
-   signature covers every field the artefact carries (`approval_id`, approver,
-   `fingerprint`, `key`, subject, amount, currency, `issued_at`, `expires_at`), serialized
-   per RFC 8785, so no field can be re-labelled after issuance.
+   signature covers every field the artefact carries (`journal_id`, `approval_id`,
+   approver, `fingerprint`, `key`, subject, amount, currency, `issued_at`, `expires_at`),
+   serialized per RFC 8785, so no field can be re-labelled after issuance. `journal_id` is
+   what makes single use hold *per artefact* rather than per database: a spent artefact
+   presented to a successor journal that reuses the same keys fails check 3, because the
+   successor has a different `journal_id`.
 2. `expires_at` is after the injected evaluation time, else `approval_expired`.
-3. The artefact's `fingerprint` and `key` equal the pending operation's, else `approval_scope_mismatch`.
+3. The artefact's `journal_id` equals the definition's and its `fingerprint` and `key` equal the pending operation's, else `approval_scope_mismatch`.
 4. **Consumption.** `INSERT INTO approval_consumptions (approval_id, presentation,
    invocation)`. A `UNIQUE` violation means an earlier *committed* transaction consumed
    this logical approval (writes are serialized, so there is no other way). Because writes
@@ -352,7 +366,9 @@ is a fresh read. None of these apply anything twice. Every path from step 4 onwa
 outcome in the same transaction (invariant 2).
 
 **Failures the journal cannot record.** `SQLITE_BUSY` past the retry budget, a constraint
-violation other than the approval consumption `UNIQUE`, an integrity failure at step 2, a policy set returning `approval_required` against a consumed approval, or a
+violation other than the approval consumption `UNIQUE`, an integrity failure at step 2, a
+transport-level I-JSON violation (a number outside the JCS-safe range never reaches
+admission), a policy set returning `approval_required` against a consumed approval, or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the
@@ -407,8 +423,9 @@ audited reads write no `decisions` row and their trace carries no `policy_decisi
 gated read, `PolicyContext.command_digest` is the invocation's `request_digest`; a read has
 no operation and no fingerprint. On `deny`: no `reads`
 row; disposition stays `read`; go to 8 with `ok=false`/`PolicyDenied` as the outbound
-event. 7. Serve from the projection; write `reads` with cursor, head and result digest.
-8. `invocation_responses` (`read`, no outcome); outbound `events`; commit; respond.
+event and `response = denied` on the response row, so a consumer of `invocation_responses`
+alone sees that nothing was served. 7. Serve from the projection; write `reads` with cursor, head and result digest.
+8. `invocation_responses` (`read`, or `denied` for a denied gated read; no outcome); outbound `events`; commit; respond.
 
 Unaudited reads of the projection by the process itself are snapshot reads and write
 nothing.

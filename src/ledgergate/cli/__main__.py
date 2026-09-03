@@ -66,7 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument(
         "--subject",
         default=None,
-        help="display subject for the approver (the policy set defines what a subject is)",
+        help=(
+            "display text for the approver's record, signed but never compared; under a"
+            " tokenizing admitter pass the stored token, not the raw subject"
+        ),
     )
     approve.set_defaults(handler=journal_approve)
 

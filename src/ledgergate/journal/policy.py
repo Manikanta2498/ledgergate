@@ -194,6 +194,18 @@ class ThresholdPolicySet:
         require_identifier(self.version, "policy set version")
         if self.version == "none":
             raise ValueError("'none' names the null policy set")
+        lines: list[Threshold | WindowCap] = [
+            *self.deny_above,
+            *self.approve_above,
+            *self.window_caps,
+        ]
+        for line in lines:
+            if type(line.amount) is not int or line.amount < 0:
+                raise ValueError(f"{line!r}: amount must be a non-negative int of minor units")
+        for cap in self.window_caps:
+            seconds = cap.window.total_seconds()
+            if seconds <= 0 or seconds != int(seconds):
+                raise ValueError(f"{cap!r}: window must be a positive whole number of seconds")
 
     def configuration_digest(self) -> str:
         from ledgergate.codec import digest

@@ -161,7 +161,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 | :--- | :--- |
 | M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
 | M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
-| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, replacing the null policy; invariant registry; scorecard; `ledgergate verify` |
+| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, alongside the null policy; invariant registry; scorecard; `ledgergate verify` |
 | M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call |
 | M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
 | M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |

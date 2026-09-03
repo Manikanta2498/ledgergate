@@ -671,3 +671,59 @@ class TestConfigurationBinding:
         gated.handle({**open_txn("k9", "t-new", amount=10), "approval": artefact_free(gated)})
         (pres,) = table(gated.path, "approvals")
         assert pres[13] == 1 and pres[3] == "free" and pres[14] == "approval_not_applicable"
+
+
+class TestSignedTimestampsAndValidation:
+    def test_any_rendering_of_the_same_instant_verifies(self) -> None:
+        from datetime import timezone
+
+        a = issue(
+            SIGNER,
+            journal_id=JID,
+            approval_id="a",
+            approver="x",
+            fingerprint=FP,
+            key="k",
+            issued_at=EPOCH,
+            expires_at=EPOCH + timedelta(hours=1),
+        )
+        doc = a.to_json()
+        plus_one = (EPOCH + timedelta(hours=1)).astimezone(timezone(timedelta(hours=1))).isoformat()
+        zulu = doc["issued_at"].replace("+00:00", "Z")
+        represented = Approval.from_json({**doc, "expires_at": plus_one, "issued_at": zulu})
+        public = verification_key(verification_key_text(SIGNER))
+        assert (
+            check(represented, public=public, now=EPOCH, journal_id=JID, fingerprint=FP, key="k")
+            == "checks_passed"
+        )
+        assert doc["issued_at"].endswith("+00:00")
+
+    def test_rules_are_validated_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="whole number of seconds"):
+            ThresholdPolicySet(
+                version="v", window_caps=[WindowCap("refund", "USD", 1, timedelta(seconds=1.5))]
+            )
+        with pytest.raises(ValueError, match="non-negative int"):
+            ThresholdPolicySet(version="v", deny_above=[Threshold("refund", "USD", 10.0)])  # type: ignore[arg-type]
+
+    def test_a_raising_policy_set_is_a_configuration_error_and_unrecorded(
+        self, tmp_path: Path
+    ) -> None:
+        class Broken(NullPolicySet):
+            version = "broken"
+
+            def evaluate(self, context: PolicyContext) -> Decision:
+                raise RuntimeError("boom")
+
+        j = Journal.create(
+            str(tmp_path / "b.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=Broken(),
+        )
+        before = len(table(j.path, "journal"))
+        with pytest.raises(ConfigurationError, match="raised"):
+            j.handle(open_txn("k", "t", amount=1))
+        assert len(table(j.path, "journal")) == before
+        j.close()

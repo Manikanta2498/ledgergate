@@ -563,7 +563,14 @@ class Journal:
             assert verdict is not None
             decision = Decision("deny", "runtime.approval_rejected", verdict)
         else:
-            decision = self.policy.evaluate(context)
+            try:
+                decision = self.policy.evaluate(context)
+            except Exception as exc:
+                # A policy set is a pure function of its context; raising is a bug in the
+                # set, an unrecorded failure, and named as such.
+                raise ConfigurationError(
+                    f"policy set {self.policy.version!r} raised: {exc}"
+                ) from exc
             if decision.decision == "approval_required" and verdict == "approval_valid":
                 raise ConfigurationError(
                     "policy set asked for approval after a valid approval was consumed;"

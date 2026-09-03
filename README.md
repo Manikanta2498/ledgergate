@@ -10,7 +10,8 @@ deployment.**
 > of M3) are implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
 > the answer it got the first time. The invariant suite, trace v2, corpus, adapters and
-> the runtime CLI are not built yet; `ledgergate journal dump` inspects a journal. See
+> the runtime CLI are not built yet; `ledgergate journal dump`, `journal pending` and
+> `approve` exist. See
 > [Roadmap](#roadmap).
 
 ---

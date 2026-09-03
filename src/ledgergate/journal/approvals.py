@@ -17,7 +17,7 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from cryptography.exceptions import InvalidSignature
@@ -162,9 +162,11 @@ class Approval:
 
 
 def _aware(at: datetime) -> datetime:
+    """Signed timestamps are normalised to UTC (`+00:00`), so any rendering of the same
+    instant (`Z`, another offset) verifies against the same bytes."""
     if at.tzinfo is None or at.utcoffset() is None:
         raise ValueError("naive timestamp")
-    return at
+    return at.astimezone(UTC)
 
 
 # --------------------------------------------------------------------- keys

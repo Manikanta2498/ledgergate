@@ -65,8 +65,9 @@ class TestGlobalSequenceAndAppendOnly:  # family 12
     ) -> None:
         journal.handle(post("k1"))
         journal.handle(balance("cash"))
-        if not count(raw, table):  # triggers fire per row; approvals stay empty in M2b
-            pytest.skip(f"{table} has no rows to mutate under the null policy")
+        if table in ("approvals", "approval_consumptions"):
+            _seed_approval_rows(raw)
+        assert count(raw, table), f"{table} must have a row for the trigger to fire"
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             raw.execute(f"DELETE FROM {table}")
         if count(raw, table):
@@ -1232,3 +1233,34 @@ class TestSchemaVersionRefusal:
             Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
         with pytest.raises(JournalError):  # create() on it is also a clean refusal
             Journal.create(journal_path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+
+
+def _seed_approval_rows(raw: sqlite3.Connection) -> None:
+    """Hand-written presentation and consumption rows, shaped as the protocol writes them,
+    so the append-only triggers on both tables are exercised."""
+    (inv,) = [r for r in rows(raw, "invocations") if r[4] == "new"]
+    raw.execute("BEGIN")
+    pres = raw.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
+    raw.execute(
+        "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            pres,
+            inv[0],
+            "0" * 32,
+            "a1",
+            "cfo",
+            "f" * 64,
+            "k",
+            None,
+            None,
+            None,
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-02T00:00:00+00:00",
+            "A" * 86,
+            1,
+            "checks_passed",
+        ),
+    )
+    cons = raw.execute("INSERT INTO journal (kind) VALUES ('approval_consumptions')").lastrowid
+    raw.execute("INSERT INTO approval_consumptions VALUES (?,?,?,?)", (cons, "a1", pres, inv[0]))
+    raw.execute("COMMIT")

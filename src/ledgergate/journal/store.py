@@ -48,6 +48,7 @@ from ledgergate.journal.approvals import (
     CheckResult,
     Verdict,
     check,
+    signature_verifies,
     verification_key,
 )
 from ledgergate.journal.policy import (
@@ -922,14 +923,17 @@ class Journal:
         ).fetchone()
         return None if row is None else str(row[0])
 
-    def _present(self, inv_seq: int, request: Request, result: CheckResult) -> int:
+    def _present(
+        self, inv_seq: int, request: Request, result: CheckResult, verified: bool | None = None
+    ) -> int:
         """The approvals presentation row: one per presentation, carrying the pure-check
         result; the verdict lives on the decision. Identity and display fields are stored
         only once the signature verified: until then they are the presenter's words, and a
         presentation row holds nothing but fixed-grammar bindings and the signature."""
         assert request.approval is not None
         a = Approval.from_json(request.approval)
-        verified = self._signature_verifies(a)
+        if verified is None:
+            verified = self._signature_verifies(a)
         seq = self._alloc("approvals")
         self._conn.execute(
             "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -956,17 +960,7 @@ class Journal:
     def _signature_verifies(self, artefact: Approval) -> bool:
         if self._definition.approval_key == "none":
             return False
-        return (
-            check(
-                artefact,
-                public=verification_key(self._definition.approval_key),
-                now=artefact.expires_at,  # only check 1 matters here: expiry and scope are
-                journal_id=artefact.journal_id,  # satisfied trivially by construction
-                fingerprint=artefact.fingerprint,
-                key=artefact.key,
-            )
-            != "approval_invalid"
-        )
+        return signature_verifies(artefact, verification_key(self._definition.approval_key))
 
     def _validate_approval(
         self, inv_seq: int, request: Request, now: datetime, fingerprint: str
@@ -985,7 +979,7 @@ class Journal:
                 fingerprint=fingerprint,
                 key=request.key,
             )
-        presentation = self._present(inv_seq, request, result)
+        presentation = self._present(inv_seq, request, result, result != "approval_invalid")
         if result != "checks_passed":
             return presentation, result, None
         used = self._conn.execute(

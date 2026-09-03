@@ -229,6 +229,15 @@ def issue(
 # ------------------------------------------------------------------ checking
 
 
+def signature_verifies(approval: Approval, public: Ed25519PublicKey) -> bool:
+    """Check 1 alone."""
+    try:
+        public.verify(_unb64(approval.signature), canonical_bytes(approval.signed_payload()))
+    except (InvalidSignature, ValueError):
+        return False
+    return True
+
+
 def check(
     approval: Approval,
     *,
@@ -239,9 +248,7 @@ def check(
     key: str,
 ) -> CheckResult:
     """Checks 1 to 3, in order, short-circuiting: the first failure is the result."""
-    try:
-        public.verify(_unb64(approval.signature), canonical_bytes(approval.signed_payload()))
-    except (InvalidSignature, ValueError):
+    if not signature_verifies(approval, public):
         return "approval_invalid"
     if approval.expires_at <= now:
         return "approval_expired"

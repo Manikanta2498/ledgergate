@@ -122,7 +122,7 @@ All strictly append-only. No row is ever updated or deleted.
 
 | Table | Holds |
 | :--- | :--- |
-| `definition` | Written once: `schema_version` and `created_at`, the policy set's configuration digest (a digest of its rules, compared at open, so the version label alone never binds a journal to rules it was not defined with), `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), token check value (identifies the token key without revealing it; compared at open), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. Opening a journal whose `schema_version`, codec version, policy set version or token key differs from the running process is refused, read-only, before any pragma touches the file; a file whose table set (SQLite's own `sqlite_*` tables aside) is not exactly the journal's is likewise refused untouched. Creation proceeds only on a missing or zero-byte path, an empty database, or a complete journal that has no definition yet; a database with any other table set, or a complete journal that already has a definition, is refused untouched, however its names overlap the journal's. Schema creation is one transaction, so a file is either empty or a complete journal. |
+| `definition` | Written once: `schema_version` and `created_at`, the policy set's configuration digest (a digest of its class name and declarative rules, compared at open, so the version label alone never binds a journal to a configuration it was not defined with; the set's *code* is bound by the package version, as every other component's is), `journal_id` (128 random bits generated at creation, never derived from anything reusable), chart, currency registry (the bundled table folded in *once*, at creation; a later build's additions never reach an old journal, so every process on a journal accepts the same currencies), token check value (identifies the token key without revealing it; compared at open), codec version, policy set version, identifier token domain and key version, approval verification key. Free text in the definition (account names) passes the same redactor as everything else. A journal is bound to one definition; changing it means a new journal. Opening a journal whose `schema_version`, codec version, policy set version or token key differs from the running process is refused, read-only, before any pragma touches the file; a file whose table set (SQLite's own `sqlite_*` tables aside) is not exactly the journal's is likewise refused untouched. Creation proceeds only on a missing or zero-byte path, an empty database, or a complete journal that has no definition yet; a database with any other table set, or a complete journal that already has a definition, is refused untouched, however its names overlap the journal's. Schema creation is one transaction, so a file is either empty or a complete journal. |
 | `operations` | `key` (tokenized, `UNIQUE`), `fingerprint`, `command` as encoded by the codec (a storage form, not a digest input; identity is `fingerprint`). |
 | `outcomes` | `operation`, `previous_outcome` (null for the first outcome of an operation, else the operation's latest outcome at the time of appending), `outcome` (`applied`, `rejected`, `denied`, `awaiting_approval`), error type and message (present iff `rejected`; a `denied` or `awaiting_approval` outcome's explanation is its decision's rule and reason), `entry_id`/`posted_at` when appended, `head_before`, `head_after`, `ledger_sequence`, `decision`. The chain constraints are in *Outcome chain*. |
 | `invocations` | `operation` (null for reads and invalid calls), `requested_at`, `principal`, `disposition` (`new`, `replay`, `conflict`, `approval`, `read`, `invalid`), `attempted_fingerprint`, `attempted_command` (what *this* attempt asked, so a conflict shows both sides), `request_digest` (null for `invalid`, which has `input_digest` in its envelope instead), `call_id`. |
@@ -198,7 +198,10 @@ artefact never touches `approval_consumptions`.
 1. Signature verifies against the definition's key, else verdict `approval_invalid`. The
    signature covers every field the artefact carries (`journal_id`, `approval_id`,
    approver, `fingerprint`, `key`, subject, amount, currency, `issued_at`, `expires_at`),
-   serialized per RFC 8785, so no field can be re-labelled after issuance. `journal_id` is
+   serialized per RFC 8785, so no field can be re-labelled after issuance. The two
+   timestamps are signed as RFC 3339 strings with an explicit offset exactly as Python's
+   `datetime.isoformat()` renders them; a presented value is parsed and re-rendered before
+   verification, so any equivalent rendering (`Z`, a different offset) verifies. `journal_id` is
    what makes single use hold *per artefact* rather than per database: a spent artefact
    presented to a successor journal that reuses the same signing key and idempotency keys
    fails check 3, because the
@@ -417,8 +420,13 @@ anything that references it, an operation before the invocation that references 
    For `approval`:
    validate and consume per *Approval artefacts* (this writes the `approvals` presentation
    row, which references the invocation, hence its position here), then continue.
-7. **Decide.** Build the `PolicyContext`, reading aggregates from `outcomes`, `operations`
-   (for the amounts a monetary cap needs) and `decisions` in this transaction. Evaluate. Write `decisions`, referencing the
+7. **Decide.** Build the `PolicyContext`, reading aggregates in this transaction from
+   `outcomes` (which outcomes were `applied`), `operations` (the command, for kind, subject
+   and amount) and the producing `invocations` row (reached through `invocation_responses`
+   with disposition `new` or `approval`, so a replay never counts twice), whose
+   `requested_at` is the time base of every window: an approved operation counts at the
+   time the approval applied it, not the time it was first requested. The scan is linear in
+   applied outcomes and runs under the write lock; it is correct and not optimized. Evaluate. Write `decisions`, referencing the
    consumption row if check 4 succeeded. If not `allow`: append outcome per the applicable
    decision-to-outcome table (new operation, or pending operation), **with
    `outcomes.decision` referencing this decision** and `previous_outcome` per *Outcome

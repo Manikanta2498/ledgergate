@@ -76,7 +76,8 @@ class History(Protocol):
 
     def applied_total(self, *, subject: str, kind: str, currency: str, since: datetime) -> int:
         """Sum of minor units applied for ``subject`` by commands of ``kind`` in
-        ``currency`` whose outcome was appended at or after ``since``."""
+        ``currency`` whose producing invocation (the ``new`` or ``approval`` one) was
+        requested at or after ``since``; that ``requested_at`` is the window's time base."""
         ...
 
 
@@ -199,6 +200,7 @@ class ThresholdPolicySet:
 
         return digest(
             {
+                "set": type(self).__qualname__,
                 "version": self.version,
                 "deny_above": [asdict(x) for x in self.deny_above],
                 "approve_above": [asdict(x) for x in self.approve_above],

@@ -9,7 +9,7 @@ deployment.**
 > the tokenizing, redacting admitter (M2c) and the policy and approval layer (first half
 > of M3) are implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
-> the answer it got the first time. The invariant suite, policy layer, corpus, adapters and
+> the answer it got the first time. The invariant suite, trace v2, corpus, adapters and
 > the runtime CLI are not built yet; `ledgergate journal dump` inspects a journal. See
 > [Roadmap](#roadmap).
 
@@ -60,7 +60,7 @@ admissible; it does not itself move money on external rails (see ADR-0002).
 **What exists today:** the ledger core; the trace schema, recorder and replayer; the
 durable journal, so a process can be restarted and answer a retried key exactly as it did
 the first time; and the tokenizing, redacting admitter, so no caller identifier or free
-text has to reach disk. Invariants and policy land in M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
+text has to reach disk. Invariants and trace v2 land in the rest of M3, the MCP runtime in M4. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema
@@ -190,9 +190,9 @@ and argument amounts are the I-JSON integers the caller sent, so a JavaScript cl
 this runtime agree byte for byte. `input_digest`, the one digest of *rejected* input, is
 keyed under the token key when a tokenizing admitter is in use (see
 [`docs/spec/identifiers-and-redaction.md`](docs/spec/identifiers-and-redaction.md)). The operation
-fingerprint and the hash chain are the core's own length-prefixed encoding. The shipped policy set is the
-null set (`none`), which allows everything and still writes a complete decision row; real
-policy arrives in M3 behind the same interface.
+fingerprint and the hash chain are the core's own length-prefixed encoding. Two policy sets ship: the null set
+(`none`), which allows everything and still writes a complete decision row, and
+`ThresholdPolicySet` (see *Policy and approvals*).
 
 **Policy and approvals (M3).** A policy set is a deterministic, versioned function of an
 explicit `PolicyContext`: principal, subject, the command's kind and amount, every

@@ -211,9 +211,9 @@ These are enforced by CI gates, not by convention:
 | **M0** | Repo, licensing, toolchain, gates, ADR-0001 | **done** |
 | **M1** | Deterministic ledger core, property and stateful tests | **done** |
 | **M2a** | Trace schema v1, recorder, replay | **done** |
-| M2b | Durable log of *operations* (one per idempotency key) and *invocations* (one per attempt): one attempt, one transaction, result returned only after commit. Ledger is a projection with an explicit cursor; traces are a deterministic function of the log | next |
+| M2b | Strictly append-only journal with one global sequence: operations (one per key), outcomes (appended, never edited), invocations (one per attempt), decisions, single-use approvals, boundary events. One attempt, one transaction, response returned only after commit. Ledger is a projection with an explicit cursor; traces are a deterministic function of the journal | next |
 | M2c | Redaction *at admission*: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | |
-| M3 | Trace schema v2 built around *intents* (a denied command never reaches the ledger and the schema says so); **policy layer** over an explicit, persisted `PolicyContext`; invariant registry; scorecard; `ledgergate verify` | |
+| M3 | Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, and the schema says both); **policy layer** over an explicit, persisted `PolicyContext`; invariant registry; scorecard; `ledgergate verify` | |
 | M4 | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log | |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation; thin framework wrappers; recorded cassettes | |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |

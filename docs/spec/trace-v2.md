@@ -124,10 +124,15 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
 
 - `intent_id`: `intent-<invocation journal_sequence>`
 - `command_id`: `command-<operation journal_sequence>`
-- `outcome_ref`: `outcome-<outcome journal_sequence>` (on `invocation_resolution`)
+- `outcome_ref`: `outcome-<outcome journal_sequence>` (on `invocation_resolution`); the model
+  enforces this grammar and, for produced outcomes, allocation order (each produced outcome's
+  number exceeds the previous one's)
 - `presentation_ref`: `presentation-<approvals journal_sequence>` (on `invocation_resolution`
-  and `policy_decision.approval`)
-- `consumption_ref`: `consumption-<approval_consumptions journal_sequence>`
+  and `policy_decision.approval`; required on an `approval` disposition, which is defined by a
+  presented artefact); model-enforced grammar
+- `consumption_ref`: `consumption-<approval_consumptions journal_sequence>`; model-enforced
+  grammar, present exactly when the verdict is `approval_valid` (a registry row checks it,
+  and that every failed verdict was decided by the runtime)
 - `call_id`: taken from the `events` row (tokenized). For an `invalid` invocation whose
   `call_id` was not recoverable, `invalid-<invocation journal_sequence>`; its `tool` is
   `unknown` when the envelope kept none; its `attempted_digest` is the envelope's

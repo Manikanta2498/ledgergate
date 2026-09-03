@@ -227,7 +227,13 @@ def verify_command(args: argparse.Namespace) -> int:
         # express is reported, not tracebacked
         print(f"cannot verify {source}: {exc}", file=sys.stderr)
         return 2
-    card = check(trace)
+    try:
+        card = check(trace)
+    except Exception as exc:  # an invariant that raises is a bug in the registry, not a verdict
+        print(
+            f"cannot verify {source}: invariant raised {type(exc).__name__}: {exc}", file=sys.stderr
+        )
+        return 2
     if args.emit_trace is not None:
         args.emit_trace.write_text(dump_v2(trace), encoding="utf-8")
     if args.json:

@@ -308,12 +308,18 @@ class TestGrammar:
             "context": {},
         }
         with pytest.raises(ValidationError, match="exactly one policy_decision"):
-            self._validate(intent, self._res("i", "new", operation_id="op", outcome_ref="o"))
+            self._validate(
+                intent, self._res("i", "new", operation_id="op", outcome_ref="outcome-1")
+            )
         with pytest.raises(ValidationError, match="never carries a policy_decision"):
             self._validate(
-                intent, self._res("i", "replay", operation_id="op", outcome_ref="o"), decision
+                intent,
+                self._res("i", "replay", operation_id="op", outcome_ref="outcome-1"),
+                decision,
             )
-        self._validate(intent, self._res("i", "new", operation_id="op", outcome_ref="o"), decision)
+        self._validate(
+            intent, self._res("i", "new", operation_id="op", outcome_ref="outcome-1"), decision
+        )
 
     def test_resolution_shape(self) -> None:
         with pytest.raises(ValidationError, match="carries no operation"):
@@ -332,7 +338,7 @@ class TestGrammar:
                 intent_id="i",
                 disposition="conflict",
                 operation_id="op",
-                outcome_ref="o",
+                outcome_ref="outcome-1",
                 attempted_digest="0" * 64,
             )
 
@@ -708,7 +714,13 @@ class TestBoundaryGrammar:
             "call_id": "c",
             "command": cmd,
         }
-        new = {**res, "seq": 3, "disposition": "new", "operation_id": "op", "outcome_ref": "o"}
+        new = {
+            **res,
+            "seq": 3,
+            "disposition": "new",
+            "operation_id": "op",
+            "outcome_ref": "outcome-1",
+        }
         decision = {
             "type": "policy_decision",
             "seq": 4,
@@ -971,3 +983,84 @@ class TestThirdReviewFindings:
         d["context"]["digest_kind"] = "request"
         card = check(TraceV2.model_validate(doc))
         assert {r.name: r.status for r in card.results}["context_matches_decision"] == "fail"
+
+
+class TestFourthReviewFindings:
+    def test_malformed_derived_references_are_refused_at_load_not_tracebacked(
+        self, journal_path: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        replay = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        replay["outcome_ref"] = "garbage"
+        p = tmp_path / "bad.json"
+        p.write_text(json.dumps(doc))
+        assert main(["verify", str(p)]) == 2
+        assert "outcome_ref" in capsys.readouterr().err
+
+    def test_produced_outcomes_must_follow_allocation_order(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        news = [
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "new"
+        ]
+        news[-1]["outcome_ref"] = "outcome-1"  # a fresh number below everything produced before
+        with pytest.raises(ValidationError, match="allocation order"):
+            TraceV2.model_validate(doc)
+
+    def test_read_ahead_of_the_books_fails(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        next(e for e in doc["events"] if e["type"] == "read_result")["cursor"] = 10_000
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["read_observed_the_recorded_head"] == "fail"
+
+    def test_a_failed_verdict_decided_by_policy_fails_verify(self, tmp_path: Path) -> None:
+        j = Journal.create(
+            str(tmp_path / "f.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(
+            _open(
+                "big",
+                "c2",
+                500,
+                approval=_artefact(j, "big", expires_at=EPOCH + timedelta(seconds=1)),
+            )
+        )
+        j.close()
+        doc = derive(str(tmp_path / "f.journal")).model_dump(mode="json")
+        d = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["matched_rule"].startswith("runtime.")
+        )
+        d["matched_rule"] = "p.deny_above"  # pretend the set decided it ...
+        res = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["intent_id"] == d["intent_id"]
+        )
+        res["outcome_ref"] = "outcome-999999"  # ... and produced a fresh outcome, so it loads
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+    def test_an_approval_without_a_presentation_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="defined by a presented artefact"):
+            InvocationResolution(
+                seq=1,
+                at=EPOCH,
+                intent_id="i",
+                disposition="approval",
+                operation_id="op",
+                outcome_ref="outcome-1",
+                attempted_digest="0" * 64,
+            )

@@ -162,9 +162,7 @@
       "additionalProperties": false,
       "properties": {
         "presentation_ref": {
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "pattern": "^presentation-[1-9][0-9]*$",
           "title": "Presentation Ref",
           "type": "string"
         },
@@ -392,9 +390,7 @@
         "outcome_ref": {
           "anyOf": [
             {
-              "maxLength": 256,
-              "minLength": 1,
-              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "pattern": "^outcome-[1-9][0-9]*$",
               "type": "string"
             },
             {
@@ -407,9 +403,7 @@
         "presentation_ref": {
           "anyOf": [
             {
-              "maxLength": 256,
-              "minLength": 1,
-              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "pattern": "^presentation-[1-9][0-9]*$",
               "type": "string"
             },
             {
@@ -845,9 +839,7 @@
         "consumption_ref": {
           "anyOf": [
             {
-              "maxLength": 256,
-              "minLength": 1,
-              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "pattern": "^consumption-[1-9][0-9]*$",
               "type": "string"
             },
             {
@@ -1300,7 +1292,7 @@
   "$id": "https://github.com/Manikanta2498/ledgergate/schema/trace/v2.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "LedgerGate trace, schema v2. Consumers enforce, as this model does: every intent has\nexactly one invocation_resolution; an intent event exists iff the disposition is not\ninvalid and its kind follows the disposition (read_intent for read, legacy_intent for\nlegacy, command_intent otherwise); a policy_decision exists exactly once for new and\napproval, never for replay, conflict or legacy, at most once for read; a ledger pair\nexists iff the decision was allow on new or approval, exactly once for legacy, never\notherwise; a read_result exists iff a read was not denied; every runtime intent is\nbracketed by a tool_call immediately before and a tool_result immediately after with\nthe same call_id; events of one intent appear in ordinal order; seq is dense and\nstrictly increasing; every ledger_command has exactly one ledger_result and command_id\nis unique; every operation and outcome reference resolves to one recorded earlier, and\na produced outcome is produced once.",
+  "description": "LedgerGate trace, schema v2. Consumers enforce, as this model does: every intent has\nexactly one invocation_resolution; an intent event exists iff the disposition is not\ninvalid and its kind follows the disposition (read_intent for read, legacy_intent for\nlegacy, command_intent otherwise); a policy_decision exists exactly once for new and\napproval, never for replay, conflict or legacy, at most once for read; a ledger pair\nexists iff the decision was allow on new or approval, exactly once for legacy, never\notherwise; a read_result exists iff a read was not denied; every runtime intent is\nbracketed by a tool_call immediately before and a tool_result immediately after with\nthe same call_id; events of one intent appear in ordinal order; seq is dense and\nstrictly increasing; every ledger_command has exactly one ledger_result and command_id\nis unique; every operation and outcome reference resolves to one recorded earlier, and\na produced outcome is produced once, in allocation order; derived references\n(outcome, presentation, consumption) follow their fixed grammars.",
   "properties": {
     "agent": {
       "anyOf": [

@@ -87,6 +87,15 @@ class LegacyIntent(_V2Event):
     command: CommandDoc
 
 
+OutcomeRef = Annotated[str, Field(pattern=r"^outcome-[1-9][0-9]*$")]
+PresentationRef = Annotated[str, Field(pattern=r"^presentation-[1-9][0-9]*$")]
+ConsumptionRef = Annotated[str, Field(pattern=r"^consumption-[1-9][0-9]*$")]
+
+
+def _ref_number(ref: str) -> int:
+    return int(ref.rsplit("-", 1)[1])
+
+
 class InvocationResolution(_V2Event):
     """Exactly one per invocation: what the runtime did with it."""
 
@@ -94,12 +103,14 @@ class InvocationResolution(_V2Event):
     intent_id: Identifier
     disposition: Disposition
     operation_id: Identifier | None = None
-    outcome_ref: Identifier | None = None
+    outcome_ref: OutcomeRef | None = None
     attempted_digest: Sha256
-    presentation_ref: Identifier | None = None
+    presentation_ref: PresentationRef | None = None
 
     @model_validator(mode="after")
     def _shape(self) -> InvocationResolution:
+        if self.disposition == "approval" and self.presentation_ref is None:
+            raise ValueError("an approval disposition is defined by a presented artefact")
         has_op = self.operation_id is not None
         if self.disposition in ("read", "invalid") and has_op:
             raise ValueError(f"{self.disposition} resolution carries no operation")
@@ -111,7 +122,7 @@ class InvocationResolution(_V2Event):
 
 
 class ApprovalRef(_Strict):
-    presentation_ref: Identifier
+    presentation_ref: PresentationRef
     verdict: Verdict
 
 
@@ -126,7 +137,7 @@ class PolicyDecision(_V2Event):
     reason: ShortText
     context: dict[str, JsonValue]
     approval: ApprovalRef | None = None
-    consumption_ref: Identifier | None = None
+    consumption_ref: ConsumptionRef | None = None
 
     @property
     def runtime_written(self) -> bool:
@@ -181,7 +192,8 @@ class TraceV2(_Strict):
     the same call_id; events of one intent appear in ordinal order; seq is dense and
     strictly increasing; every ledger_command has exactly one ledger_result and command_id
     is unique; every operation and outcome reference resolves to one recorded earlier, and
-    a produced outcome is produced once."""
+    a produced outcome is produced once, in allocation order; derived references
+    (outcome, presentation, consumption) follow their fixed grammars."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -314,6 +326,7 @@ class TraceV2(_Strict):
         produced earlier."""
         operations: set[str] = set()
         outcomes: dict[str, str] = {}  # outcome_ref -> operation_id
+        last_produced = 0
         for r in resolutions:
             op, out = r.operation_id, r.outcome_ref
             decision = next(
@@ -337,6 +350,10 @@ class TraceV2(_Strict):
                 assert out is not None
                 if out in outcomes:
                     raise ValueError(f"{r.intent_id}: outcome {out} was already produced")
+                number = _ref_number(out)
+                if number <= last_produced:
+                    raise ValueError(f"{r.intent_id}: outcome {out} is out of allocation order")
+                last_produced = number
                 outcomes[out] = op
             elif out is not None and outcomes.get(out) != op:
                 raise ValueError(f"{r.intent_id}: outcome {out} was not produced for {op}")

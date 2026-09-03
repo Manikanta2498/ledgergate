@@ -25,7 +25,13 @@ from typing import Literal
 from ledgergate.ledger import GENESIS_HASH, LedgerError
 from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent
 from ledgergate.trace.replay import replay_trace
-from ledgergate.trace.v2 import InvocationResolution, PolicyDecision, ReadResult, TraceV2
+from ledgergate.trace.v2 import (
+    InvocationResolution,
+    PolicyDecision,
+    ReadResult,
+    TraceV2,
+    _ref_number,
+)
 
 Severity = Literal["error", "warning"]
 Status = Literal["pass", "fail", "no_evidence"]
@@ -104,10 +110,6 @@ def _has_non_allow_decision(t: TraceV2) -> bool:
     return any(d.decision != "allow" for d in t.decisions().values())
 
 
-def _has_runtime_decision(t: TraceV2) -> bool:
-    return any(d.runtime_written for d in t.decisions().values())
-
-
 def _has_ledger_pairs(t: TraceV2) -> bool:
     """Replay needs both the pairs and the chart they were posted against."""
     return t.chart is not None and any(isinstance(e, LedgerCommandEvent) for e in t.events)
@@ -171,10 +173,37 @@ def every_write_was_decided(t: TraceV2) -> list[Finding]:
 
 def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
     """A ``runtime.``-prefixed decision is a deny with a failed approval verdict as reason, on an
-    ``approval`` intent, and carries a presentation reference."""
+    ``approval`` intent, carrying its own presentation and no consumption; conversely every
+    failed verdict was decided by the runtime, and a consumption is kept exactly for a valid
+    verdict."""
     out = []
     by_id = {r.intent_id: r for r in t.resolutions()}
+    failed = {
+        "approval_already_used",
+        "approval_invalid",
+        "approval_expired",
+        "approval_scope_mismatch",
+    }
     for iid, d in _decided(t).items():
+        verdict = None if d.approval is None else d.approval.verdict
+        if (d.consumption_ref is not None) != (verdict == "approval_valid"):
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: a consumption is kept exactly for a valid verdict",
+                    iid,
+                )
+            )
+        if verdict in failed and not d.runtime_written:
+            out.append(
+                Finding(
+                    "runtime_decisions_are_verdicts",
+                    "error",
+                    f"{iid}: a failed verdict must be decided by the runtime, not the policy set",
+                    iid,
+                )
+            )
         if not d.runtime_written:
             continue
         r = by_id[iid]
@@ -315,7 +344,7 @@ def read_observed_the_recorded_head(t: TraceV2) -> list[Finding]:
         if isinstance(e, LedgerResultEvent) and e.head is not None:
             head = e.head
         elif isinstance(e, InvocationResolution) and e.outcome_ref is not None:
-            max_outcome = max(max_outcome, int(e.outcome_ref.split("-")[1]))
+            max_outcome = max(max_outcome, _ref_number(e.outcome_ref))
         elif isinstance(e, ReadResult):
             if e.head != head:
                 out.append(
@@ -398,7 +427,7 @@ REGISTRY: tuple[Invariant, ...] = (
         runtime_decisions_are_verdicts.__doc__ or "",
         "docs/spec/journal.md, approval artefacts",
         runtime_decisions_are_verdicts,
-        _has_runtime_decision,
+        lambda t: any(d.approval is not None for d in t.decisions().values()),
     ),
     Invariant(
         "context_matches_decision",

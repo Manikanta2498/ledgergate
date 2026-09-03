@@ -157,7 +157,9 @@ def test_journal_pending_and_approve_round_trip(
     )
     artefact = json.loads(capsys.readouterr().out)
     assert (
-        artefact["amount"] == "500" and artefact["currency"] == "USD" and artefact["subject"] == "t"
+        artefact["amount"] == "500"
+        and artefact["currency"] == "USD"
+        and artefact["subject"] is None
     )
 
     class WallClock:

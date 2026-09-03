@@ -63,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="file holding the 32-byte Ed25519 private key (raw or hex)",
     )
     approve.add_argument("--valid-hours", type=float, default=24.0)
+    approve.add_argument(
+        "--subject",
+        default=None,
+        help="display subject for the approver (the policy set defines what a subject is)",
+    )
     approve.set_defaults(handler=journal_approve)
 
     return parser
@@ -113,7 +118,17 @@ def journal_approve(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime, timedelta
 
     from ledgergate.journal import issue, signing_key_from_bytes, verification_key_text
+    from ledgergate.ledger import InvalidIdentifierError
+    from ledgergate.ledger.identifiers import require_identifier
 
+    try:
+        require_identifier(args.approver, "--approver")
+        require_identifier(args.approval_id, "--approval-id")
+        if args.subject is not None:
+            require_identifier(args.subject, "--subject")
+    except InvalidIdentifierError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     raw = args.signing_key.read_bytes()
     try:
         # 32 raw bytes as written, or 64 hex characters (whitespace around the hex ignored;
@@ -159,7 +174,7 @@ def journal_approve(args: argparse.Namespace) -> int:
         key=key,
         issued_at=now,
         expires_at=now + timedelta(hours=args.valid_hours),
-        subject=command.get("transaction_id"),
+        subject=args.subject,
         amount=None if money is None else str(money["amount"]),
         currency=None if money is None else money["currency"],
     )

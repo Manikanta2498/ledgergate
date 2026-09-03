@@ -118,11 +118,16 @@ that; the check value does.
 **Approval artefact fields.** An artefact is issued by the approver against what the
 journal already holds, so its `key` and `subject` are the stored tokens, and admission does
 not transform them again (re-tokenizing would break the equality check 3 depends on). Every
-field is nonetheless bounded by a fixed grammar at admission before anything is stored,
-verified or not: `journal_id` 32 hex, `fingerprint` 64 hex, `signature` 86 base64url
-characters, `amount` a decimal string of at most 40 digits, `currency` three capitals,
-`approval_id`, `approver`, `key` and `subject` identifiers. An artefact that fails the
-grammar is `approval_malformed` at admission and never reaches a presentation row; an
-artefact that passes it can carry nothing unbounded or free-form.
+field is bounded at admission: `journal_id` 32 hex, `fingerprint` 64 hex, `signature` 86
+base64url characters, `amount` a decimal string of at most 40 digits, `currency` three
+capitals, `approval_id`, `approver`, `key` and `subject` identifiers (at most 256
+characters, one line). An artefact that fails these is `approval_malformed` and never
+reaches a row. An identifier is still bounded caller text, so the presentation row applies
+one more rule, enforced by the schema: **a row holds only the fixed-grammar bindings
+(`journal_id`, `fingerprint`), the timestamps, the signature and the check result unless
+the signature verified**; `approval_id`, `approver`, `key`, `subject`, `amount` and
+`currency` are stored only when it did, because only then are they the approver's words
+rather than the presenter's. Check 4 needs `approval_id` only after checks 1 to 3 passed,
+so nothing the protocol needs is lost.
 
 v2's intent and policy fields are designed under the same four classes in M3.

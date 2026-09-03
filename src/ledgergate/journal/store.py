@@ -131,6 +131,7 @@ class Definition:
     token_domain: str = "none"  # noqa: S105 - a domain label, not a credential
     token_key_version: str = "none"  # noqa: S105 - a version label, not a credential
     token_check: str = "none"  # noqa: S105 - identifies the key; not key material
+    policy_config: str = "none"
     approval_key: str = "none"
 
     @property
@@ -294,13 +295,14 @@ class Journal:
             token_domain=self.admitter.token_domain,
             token_key_version=self.admitter.token_key_version,
             token_check=self.admitter.key_check(),
+            policy_config=self.policy.configuration_digest(),
             approval_key=self._approval_key,
         )
         registry = definition.registry
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
                     1,
@@ -311,6 +313,7 @@ class Journal:
                     definition.token_domain,
                     definition.token_key_version,
                     definition.token_check,
+                    definition.policy_config,
                     definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
@@ -349,6 +352,11 @@ class Journal:
                 f"journal was defined with policy set {row[2]!r};"
                 f" this process runs {self.policy.version!r}"
             )
+        if row[10] != self.policy.configuration_digest():
+            raise ConfigurationError(
+                f"policy set {self.policy.version!r} has different rules from the ones this"
+                " journal was defined with; a rule change is a new journal"
+            )
         if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
             raise ConfigurationError(
                 f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
@@ -370,7 +378,7 @@ class Journal:
             except (ValueError, KeyError, TypeError, LedgerError) as exc:
                 raise IntegrityError(f"definition does not decode: {exc}") from exc
             self._definition = Definition(
-                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[9], row[5]
+                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[9], row[10], row[5]
             )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
@@ -545,8 +553,13 @@ class Journal:
             aggregates=self.policy.aggregates_for(command, now, _History(self)),
             approval=approval_ctx,
         )
-        if verdict is not None and verdict not in ("approval_valid", "approval_not_applicable"):
+        failed_verdict = verdict is not None and verdict not in (
+            "approval_valid",
+            "approval_not_applicable",
+        )
+        if failed_verdict:
             # A failed verdict: the runtime decides; the policy set never sees it.
+            assert verdict is not None
             decision = Decision("deny", "runtime.approval_rejected", verdict)
         else:
             decision = self.policy.evaluate(context)
@@ -559,7 +572,7 @@ class Journal:
             inv_seq, op_seq, context, decision, presentation, verdict, consumption
         )
         head = self._ledger.head
-        if decision.matched_rule == "runtime.approval_rejected":
+        if failed_verdict:
             # Pending-operation table: a failed verdict appends no outcome. The operation
             # stays at its awaiting_approval tip, this response names that tip, and a plain
             # retry therefore replays what the operation's own request was told
@@ -911,36 +924,49 @@ class Journal:
 
     def _present(self, inv_seq: int, request: Request, result: CheckResult) -> int:
         """The approvals presentation row: one per presentation, carrying the pure-check
-        result; the verdict lives on the decision."""
+        result; the verdict lives on the decision. Identity and display fields are stored
+        only once the signature verified: until then they are the presenter's words, and a
+        presentation row holds nothing but fixed-grammar bindings and the signature."""
         assert request.approval is not None
         a = Approval.from_json(request.approval)
-        # Display fields are the approver's words only once the signature verifies; until
-        # then they are whatever the presenter typed, and are not stored.
-        verified = result == "checks_passed" or result in (
-            "approval_expired",
-            "approval_scope_mismatch",
-        )
+        verified = self._signature_verifies(a)
         seq = self._alloc("approvals")
         self._conn.execute(
-            "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 seq,
                 inv_seq,
                 a.journal_id,
-                a.approval_id,
-                a.approver,
+                a.approval_id if verified else None,
+                a.approver if verified else None,
                 a.fingerprint,
-                a.key,
+                a.key if verified else None,
                 a.subject if verified else None,
                 a.amount if verified else None,
                 a.currency if verified else None,
                 a.issued_at.isoformat(),
                 a.expires_at.isoformat(),
                 a.signature,
+                int(verified),
                 result,
             ),
         )
         return seq
+
+    def _signature_verifies(self, artefact: Approval) -> bool:
+        if self._definition.approval_key == "none":
+            return False
+        return (
+            check(
+                artefact,
+                public=verification_key(self._definition.approval_key),
+                now=artefact.expires_at,  # only check 1 matters here: expiry and scope are
+                journal_id=artefact.journal_id,  # satisfied trivially by construction
+                fingerprint=artefact.fingerprint,
+                key=artefact.key,
+            )
+            != "approval_invalid"
+        )
 
     def _validate_approval(
         self, inv_seq: int, request: Request, now: datetime, fingerprint: str
@@ -1165,8 +1191,8 @@ def _read_definition_row(path: str) -> tuple[Any, ...] | None:
             )
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-            " token_key_version, approval_key, chart, currencies, schema_version, token_check"
-            " FROM definition"
+            " token_key_version, approval_key, chart, currencies, schema_version, token_check,"
+            " policy_config FROM definition"
         ).fetchone()
         return None if row is None else tuple(row)
     finally:

@@ -249,7 +249,7 @@ class TestApprovalProtocol:
         assert [o[3] for o in outcomes] == ["awaiting_approval", "applied"]
         assert outcomes[1][2] == outcomes[0][0]  # chained to the pending root
         (pres,) = table(gated.path, "approvals")
-        assert pres[13] == "checks_passed"
+        assert pres[14] == "checks_passed"
         (cons,) = table(gated.path, "approval_consumptions")
         assert cons[1] == "appr-k1" and cons[2] == pres[0]
         decisions = table(gated.path, "decisions")
@@ -269,7 +269,7 @@ class TestApprovalProtocol:
         # replay after approval says applied; a re-presented artefact is not applicable
         again = present(gated, "k1", artefact(gated, "k1"), call_id="again")
         assert (again.disposition, again.response) == ("replay", "replayed") and again.ok
-        assert [p[13] for p in table(gated.path, "approvals")] == [
+        assert [p[14] for p in table(gated.path, "approvals")] == [
             "checks_passed",
             "approval_not_applicable",
         ]
@@ -335,7 +335,7 @@ class TestApprovalProtocol:
         r = gated.handle({**open_txn("k9", "t-new", amount=10), "approval": artefact_free(gated)})
         assert r.response == "applied"
         (pres,) = table(gated.path, "approvals")
-        assert pres[13] == "approval_not_applicable"
+        assert pres[14] == "approval_not_applicable"
         (dec,) = table(gated.path, "decisions")
         assert (
             dec[9] == "approval_not_applicable"
@@ -353,7 +353,7 @@ class TestApprovalProtocol:
             }
         )
         (pres,) = table(gated.path, "approvals")
-        assert pres[13] == "approval_not_applicable"
+        assert pres[14] == "approval_not_applicable"
 
     def test_valid_approval_then_another_rule_denies_is_terminal_and_consumed(
         self, tmp_path: Path
@@ -390,7 +390,7 @@ class TestApprovalProtocol:
         assert len(table(j.path, "approval_consumptions")) == 1  # consumed whatever policy said
         again = present(j, "k1", artefact(j, "k1"), call_id="again")
         assert again.response == "replayed" and again.error_type == "PolicyDenied"
-        assert table(j.path, "approvals")[-1][13] == "approval_not_applicable"
+        assert table(j.path, "approvals")[-1][14] == "approval_not_applicable"
         j.close()
 
     def test_artefact_on_a_conflict_is_not_applicable(self, gated: Journal) -> None:
@@ -399,7 +399,7 @@ class TestApprovalProtocol:
             {**open_txn("k1", "t-big", amount=7_000), "approval": artefact(gated, "k1")}
         )
         assert r.response == "conflict"
-        assert table(gated.path, "approvals")[-1][13] == "approval_not_applicable"
+        assert table(gated.path, "approvals")[-1][14] == "approval_not_applicable"
         assert len(table(gated.path, "decisions")) == 1  # conflict writes no decision
 
     def test_gated_read_with_artefact_records_the_presentation_on_the_decision(
@@ -472,7 +472,13 @@ class TestApprovalProtocol:
         r = present(gated, "k1", forged)
         assert r.error_message == "runtime.approval_rejected: approval_invalid"
         (pres,) = table(gated.path, "approvals")
-        assert pres[13] == "approval_invalid" and pres[7] is None and pres[8] is None
+        assert (
+            pres[14] == "approval_invalid"
+            and pres[7] is None
+            and pres[8] is None
+            and pres[3] is None
+            and pres[13] == 0
+        )
         everything = " ".join(
             json.dumps(row, default=str) for row in table(gated.path, "approvals")
         )
@@ -599,3 +605,69 @@ def artefact_free(j: Journal) -> dict[str, Any]:
         issued_at=EPOCH,
         expires_at=EPOCH + timedelta(days=1),
     ).to_json()
+
+
+class TestConfigurationBinding:
+    def test_same_version_label_different_rules_is_refused_at_open(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "rules.journal")
+        j = Journal.create(
+            path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=POLICY
+        )
+        j.close()
+        looser = ThresholdPolicySet(
+            version=POLICY.version, approve_above=[Threshold("open_transaction", "USD", 999_999)]
+        )
+        with pytest.raises(ConfigurationError, match="different rules"):
+            Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=looser)
+        same = Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=POLICY)
+        same.close()
+        assert POLICY.configuration_digest() != looser.configuration_digest()
+        assert NullPolicySet().configuration_digest() == "none"
+
+    def test_unverified_presentation_row_holds_no_identity_under_tokenizing_admitter(
+        self, tmp_path: Path
+    ) -> None:
+        from ledgergate.codec import Tokenizer
+        from ledgergate.journal import TokenizingAdmitter
+
+        tk = Tokenizer(bytes(range(32)), domain="acme", key_version="v1")
+        j = Journal.create(
+            str(tmp_path / "t.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            admitter=TokenizingAdmitter(tk),
+            approval_key=verification_key_text(SIGNER),
+        )
+        secrets = {
+            "approval_id": "card 4111 1111 1111 1111 exp 12/29",
+            "approver": "alice.smith@example.com +1-555-0100",
+            "key": "customer SSN 123-45-6789 raw key text",
+            "subject": "SECRET SUBJECT",
+        }
+        forged = {**artefact_free(j), **secrets, "signature": "A" * 86}
+        j.handle(
+            {**open_txn("k-new", "t-new", amount=10), "approval": forged}
+        )  # new: not applicable
+        pending(j, "k-pending")
+        j.handle(
+            {**open_txn("k-pending", "t-big", amount=6_000), "call_id": "c2", "approval": forged}
+        )  # approval: invalid
+        stored = " ".join(json.dumps(r, default=str) for r in table(j.path, "approvals"))
+        for value in secrets.values():
+            assert value not in stored, value
+        assert [r[14] for r in table(j.path, "approvals")] == [
+            "approval_not_applicable",
+            "approval_invalid",
+        ]
+        assert all(
+            r[13] == 0 and r[3] is None and r[4] is None and r[6] is None
+            for r in table(j.path, "approvals")
+        )
+        j.close()
+
+    def test_verified_not_applicable_presentation_keeps_identity(self, gated: Journal) -> None:
+        gated.handle({**open_txn("k9", "t-new", amount=10), "approval": artefact_free(gated)})
+        (pres,) = table(gated.path, "approvals")
+        assert pres[13] == 1 and pres[3] == "free" and pres[14] == "approval_not_applicable"

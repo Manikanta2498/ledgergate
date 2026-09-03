@@ -43,6 +43,10 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   whose original decision and pair appear earlier in the same trace (a trace is derived from a whole journal; in a windowed export the reference is
   marked `external`).
 - `deny` / `approval_required`: the intent ends at its decision.
+- `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
+  names the operation's pending tip, an outcome produced by an *earlier* invocation, exactly
+  as a `replay` does; the `policy_decision` carries the `runtime.approval_rejected` rule and
+  the verdict.
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.
 - `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error). No

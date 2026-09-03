@@ -84,6 +84,12 @@ class PolicySet(Protocol):
     @property
     def version(self) -> str: ...
 
+    def configuration_digest(self) -> str:
+        """A digest of the rules themselves. The definition records it and ``open`` compares
+        it, so two processes with the same version label and different rules cannot share
+        a journal; the label alone is operator-typed and binds nothing."""
+        ...
+
     def gates_read(self, tool: str) -> bool: ...
 
     def subject_of(self, command: Command) -> str | None:
@@ -121,6 +127,9 @@ class NullPolicySet:
     """Allows everything, gates nothing, derives no subject, reads no history."""
 
     version = "none"
+
+    def configuration_digest(self) -> str:
+        return "none"
 
     def gates_read(self, tool: str) -> bool:
         return False
@@ -184,6 +193,21 @@ class ThresholdPolicySet:
         require_identifier(self.version, "policy set version")
         if self.version == "none":
             raise ValueError("'none' names the null policy set")
+
+    def configuration_digest(self) -> str:
+        from ledgergate.codec import digest
+
+        return digest(
+            {
+                "version": self.version,
+                "deny_above": [asdict(x) for x in self.deny_above],
+                "approve_above": [asdict(x) for x in self.approve_above],
+                "window_caps": [
+                    {**asdict(c), "window": int(c.window.total_seconds())} for c in self.window_caps
+                ],
+                "gated_reads": sorted(self.gated_reads),
+            }
+        )
 
     def gates_read(self, tool: str) -> bool:
         return tool in self.gated_reads

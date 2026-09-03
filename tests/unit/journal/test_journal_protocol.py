@@ -1163,3 +1163,31 @@ class TestForeignFilesWithOverlappingNames:
         j = Journal.create(str(target), CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
         assert j.handle(post("k")).response == "applied"
         j.close()
+
+
+class TestOpenRefusesBeforeTouching:
+    def test_version_mismatch_is_refused_with_the_file_unchanged(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode = DELETE")  # so a WAL switch would be visible
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET codec_version = '99'")
+        conn.close()
+        before = Path(journal_path).read_bytes()
+        with pytest.raises(ConfigurationError, match="codec"):
+            Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        assert Path(journal_path).read_bytes() == before
+
+    def test_sqlite_internal_tables_do_not_lock_the_operator_out(
+        self, journal: Journal, journal_path: str
+    ) -> None:
+        journal.handle(post("k1"))
+        journal.close()
+        conn = sqlite3.connect(journal_path, isolation_level=None)
+        conn.execute("ANALYZE")  # creates sqlite_stat1, routine maintenance
+        conn.close()
+        j = Journal.open(journal_path, clock=SteppingClock(EPOCH), ids=SequentialIds(start=2))
+        assert j.handle(post("k1", call_id="again")).response == "replayed"
+        j.close()

@@ -227,8 +227,9 @@ BUSY_TIMEOUT_SECONDS = 5.0
 
 def tables_of(path: str) -> set[str]:
     """The table names in an existing SQLite file, read-only and without pragmas, so that
-    inspecting a file changes nothing about it. Raises ``sqlite3.Error`` if it is not a
-    database or does not exist."""
+    inspecting a file changes nothing about it. Includes SQLite's own ``sqlite_*`` tables
+    (``sqlite_sequence``, ``sqlite_stat1`` after ``ANALYZE``); callers exclude them.
+    Raises ``sqlite3.Error`` if it is not a database or does not exist."""
     uri = Path(path).resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
@@ -247,7 +248,7 @@ def probe(path: str) -> None:
     other. A database missing any of them, or holding a stranger's table, is refused
     untouched. Raises ``ValueError`` for a database that is not a journal and
     ``sqlite3.Error`` for a file that is not a database."""
-    tables = tables_of(path) - {"sqlite_sequence"}
+    tables = {name for name in tables_of(path) if not name.startswith("sqlite_")}
     if tables != JOURNAL_TABLES:
         raise ValueError("not a journal: table set differs from the journal schema")
 

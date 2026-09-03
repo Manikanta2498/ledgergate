@@ -222,7 +222,7 @@ class Journal:
             # or a complete journal may proceed; anything else, including a database whose
             # table names merely overlap the journal's, is refused byte-for-byte unchanged.
             try:
-                tables = tables_of(path) - {"sqlite_sequence"}
+                tables = {n for n in tables_of(path) if not n.startswith("sqlite_")}
             except sqlite3.Error as exc:
                 raise JournalError(f"cannot create journal at {path}: {exc}") from exc
             if tables and tables != JOURNAL_TABLES:
@@ -298,26 +298,26 @@ class Journal:
             raise JournalError(f"cannot open journal at {path}: {exc}") from exc
         if row is None:
             raise JournalError(f"cannot open journal at {path}: no definition; use create()")
+        if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
+            raise ConfigurationError(
+                f"journal is schema {row[8]}/codec {row[1]!r};"
+                f" this process is schema {SCHEMA_VERSION}/codec {CODEC_VERSION!r}"
+            )
+        if row[2] != self.policy.version:
+            raise ConfigurationError(
+                f"journal was defined with policy set {row[2]!r};"
+                f" this process runs {self.policy.version!r}"
+            )
+        if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
+            raise ConfigurationError(
+                f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
+                f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
+            )
         try:
             self._conn = connect(path, create=False)
         except sqlite3.Error as exc:
             raise JournalError(f"cannot open journal at {path}: {exc}") from exc
         try:
-            if row[8] != SCHEMA_VERSION or row[1] != CODEC_VERSION:
-                raise ConfigurationError(
-                    f"journal is schema {row[8]}/codec {row[1]!r};"
-                    f" this process is schema {SCHEMA_VERSION}/codec {CODEC_VERSION!r}"
-                )
-            if row[2] != self.policy.version:
-                raise ConfigurationError(
-                    f"journal was defined with policy set {row[2]!r};"
-                    f" this process runs {self.policy.version!r}"
-                )
-            if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
-                raise ConfigurationError(
-                    f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
-                    f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
-                )
             try:
                 currencies = {code: Currency(code, exp) for code, exp in json.loads(row[7]).items()}
                 chart = _decode_chart(json.loads(row[6]), currencies)
@@ -333,9 +333,12 @@ class Journal:
                 self._rebuild()
             finally:
                 self._conn.execute("COMMIT")
-        except (JournalError, sqlite3.Error):
+        except JournalError:
             self._conn.close()
             raise
+        except sqlite3.Error as exc:
+            self._conn.close()
+            raise JournalError(f"cannot open journal at {path}: {exc}") from exc
         return self
 
     def close(self) -> None:

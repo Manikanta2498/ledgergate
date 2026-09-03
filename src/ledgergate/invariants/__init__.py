@@ -69,8 +69,18 @@ class Scorecard:
     ledger_commands: int
 
     @property
+    def status(self) -> Status:
+        """``fail`` if any invariant failed; ``pass`` only if none failed *and at least one
+        ran*; otherwise ``no_evidence``: nothing was checked, and that is never a pass."""
+        if any(r.status == "fail" for r in self.results):
+            return "fail"
+        if any(r.status == "pass" for r in self.results):
+            return "pass"
+        return "no_evidence"
+
+    @property
     def passed(self) -> bool:
-        return all(r.status != "fail" for r in self.results)
+        return self.status == "pass"
 
     @property
     def failures(self) -> tuple[Finding, ...]:
@@ -78,6 +88,7 @@ class Scorecard:
 
     def as_json(self) -> dict[str, object]:
         return {
+            "status": self.status,
             "passed": self.passed,
             "intents": self.intents,
             "ledger_commands": self.ledger_commands,

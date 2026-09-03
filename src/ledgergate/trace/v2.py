@@ -15,6 +15,7 @@ v1's are by :class:`~ledgergate.trace.models.Trace`.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from itertools import pairwise
 from typing import Annotated, Any, Literal
@@ -200,7 +201,10 @@ class TraceV2(_Strict):
     in a derived document every boundary event brackets an intent; a document is derived iff
     it carries a journal_id, and then has no legacy resolution, or lifted, and then has no
     journal_id and only legacy resolutions; derived
-    references (outcome, presentation, consumption) follow their fixed grammars."""
+    references (outcome, presentation, consumption) follow their fixed grammars; in a
+    derived document intent and operation ids follow theirs, intent numbers strictly
+    increase, an intent's events are contiguous, and every row an invocation wrote has a
+    sequence strictly between its own and the next invocation's."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -280,6 +284,8 @@ class TraceV2(_Strict):
                     raise ValueError(f"{e.type} {e.call_id!r} brackets no intent")
         self._check_references(resolutions, by_intent)
         self._check_commands(resolutions, by_intent)
+        if derived:
+            self._check_windows(resolutions, by_intent)
         for intent_id, group in by_intent.items():
             if not any(isinstance(e, InvocationResolution) for e in group):
                 raise ValueError(f"intent {intent_id!r} has events but no resolution")
@@ -397,6 +403,56 @@ class TraceV2(_Strict):
                 if current.get(op) != out:
                     raise ValueError(f"{r.intent_id}: outcome {out} was not {op}'s current outcome")
 
+    def _check_windows(
+        self, resolutions: list[InvocationResolution], by_intent: dict[str, list[AnyV2Event]]
+    ) -> None:
+        """In a derived document every reference is anchored to the invocation that wrote it:
+        intent numbers strictly increase along the trace; every row an invocation wrote (its
+        operation if new, its produced outcome, its presentation, its consumption) has a
+        sequence strictly between the invocation's and the next invocation's, except the
+        operation of a new, which is allocated just before its invocation."""
+        numbers = []
+        for r in resolutions:
+            if not re.fullmatch(r"intent-[1-9][0-9]*", r.intent_id):
+                raise ValueError(f"{r.intent_id}: a derived intent id is intent-<sequence>")
+            if r.operation_id is not None and not re.fullmatch(
+                r"command-[1-9][0-9]*", r.operation_id
+            ):
+                raise ValueError(f"{r.intent_id}: a derived operation id is command-<sequence>")
+            numbers.append(_ref_number(r.intent_id))
+        if numbers != sorted(set(numbers)):
+            raise ValueError("derived intent numbers must strictly increase along the trace")
+        for i, r in enumerate(resolutions):
+            lo = numbers[i]
+            hi = numbers[i + 1] if i + 1 < len(numbers) else float("inf")
+            decision = next(
+                (e for e in by_intent[r.intent_id] if isinstance(e, PolicyDecision)), None
+            )
+            produced = r.disposition == "new" or (
+                r.disposition == "approval"
+                and decision is not None
+                and not decision.runtime_written
+            )
+            written: list[str | None] = [r.presentation_ref]
+            if r.disposition == "new":
+                # The operations row is the first row of a new operation's transaction,
+                # allocated just before the invocation row that references it.
+                prev = numbers[i - 1] if i else 0
+                assert r.operation_id is not None
+                if not (prev < _ref_number(r.operation_id) < lo):
+                    raise ValueError(
+                        f"{r.intent_id}: {r.operation_id} was not created by this invocation"
+                    )
+            if produced:
+                written.append(r.outcome_ref)
+            if decision is not None:
+                written.append(decision.consumption_ref)
+            for ref in written:
+                if ref is not None and not (lo < _ref_number(ref) < hi):
+                    raise ValueError(
+                        f"{r.intent_id}: {ref} was not written by this invocation's transaction"
+                    )
+
     def _check_commands(
         self, resolutions: list[InvocationResolution], by_intent: dict[str, list[AnyV2Event]]
     ) -> None:
@@ -410,7 +466,7 @@ class TraceV2(_Strict):
         operation_fp: dict[str, str] = {}
         for r in resolutions:
             group = by_intent[r.intent_id]
-            intent = next((e for e in group if isinstance(e, CommandIntent)), None)
+            intent = next((e for e in group if isinstance(e, CommandIntent | LegacyIntent)), None)
             if intent is None:
                 continue
             fp = command_fingerprint(intent.command.to_command(registry))
@@ -420,6 +476,8 @@ class TraceV2(_Strict):
                 )
             op = r.operation_id
             assert op is not None
+            if r.disposition == "legacy":
+                continue
             if r.disposition == "new":
                 operation_fp[op] = fp
             elif r.disposition == "conflict":
@@ -451,6 +509,8 @@ class TraceV2(_Strict):
         first, last = group[0], group[-1]
         before = positions[id(first)] - 1
         after = positions[id(last)] + 1
+        if after - before - 1 != len(group):
+            raise ValueError(f"{r.intent_id}: another event is interleaved within the intent")
         call = self.events[before] if before >= 0 else None
         result = self.events[after] if after < len(self.events) else None
         if not isinstance(call, ToolCallEvent):

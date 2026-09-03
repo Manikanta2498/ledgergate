@@ -75,7 +75,9 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
 
 **Tool boundary.** Every runtime intent (every disposition but `legacy`) is bracketed by
 its own boundary events: the event immediately before its first event is its `tool_call`
-and the event immediately after its last is its `tool_result`, with the same `call_id`.
+and the event immediately after its last is its `tool_result`, with the same `call_id`, and
+nothing else is interleaved within the intent's events (a standalone message sits at its
+own row's sequence, never inside an invocation's ordinals).
 `call_id` is not unique across a trace (a caller may retry with the same one); the
 bracketing is what ties a boundary pair to its intent. Lifted v1 content keeps v1's rule
 (one `tool_result` per `tool_call`, after it) and is not bracketed.
@@ -137,8 +139,15 @@ ledger pair replays as before.
 
 Derived identifiers are decimal, positive, prefixed, and must pass `require_identifier`:
 
-- `intent_id`: `intent-<invocation journal_sequence>`
-- `command_id`: `command-<operation journal_sequence>`
+- `intent_id`: `intent-<invocation journal_sequence>`; in a derived document the model enforces
+  this grammar, that intent numbers strictly increase along the trace, and that every row an
+  invocation wrote (its produced outcome, its presentation, its consumption) has a sequence
+  strictly between the invocation's and the next invocation's, and a `new`'s operation, the
+  first row of its transaction, a sequence between the previous invocation's and its own,
+  which is what the journal's single sequence and serialized transactions guarantee; so the
+  numbers the read and consumption checks compare are witnessed, not chosen
+- `command_id`: `command-<operation journal_sequence>` (model-enforced grammar in a derived
+  document)
 - `outcome_ref`: `outcome-<outcome journal_sequence>` (on `invocation_resolution`); the model
   enforces this grammar and, for produced outcomes, allocation order (each produced outcome's
   number exceeds the previous one's)
@@ -156,7 +165,7 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
 - lifted v1 content: `intent_id` is `legacy-<v1 seq of the ledger_command>` (bounded by
   position, since a v1 `command_id` may already use the whole identifier length),
   `operation_id` is the v1 `command_id`, and `attempted_digest` is the command's fingerprint
-  recomputed on lift.
+  recomputed on lift (and re-checked by the model on load, as for every command intent).
 
 `seq` is the dense enumeration of emitted events in anchored order: `(invocation
 journal_sequence, ordinal)` for runtime content, `(v1 seq, ordinal)` for lifted content,
@@ -186,7 +195,11 @@ the projection a trace supports: every `read_result` head equals the most recent
 `ledger_result` head (or genesis) and its cursor equals the largest outcome any earlier
 resolution referenced, since every outcome is named by the resolution that produced it and
 that resolution precedes any later read; a stale or premature projection fails.
-The scorecard is the combined result; the process exits 0 only when nothing failed.
+The scorecard is the combined result and is itself tri-state: `fail` if any invariant
+failed, `pass` only if none failed *and at least one ran*, otherwise `no_evidence`. The
+process exits 0 for `pass`, 1 for `fail`, 3 for `no_evidence`, 2 when the source could not
+be read; a trace that carries nothing any invariant quantifies over is reported, never
+passed.
 
 ## Status
 

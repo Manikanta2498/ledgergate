@@ -219,7 +219,8 @@ policy set or by the runtime on a rejected approval (marked with a `runtime.` ru
 carries the whole context; a ledger pair appears only after an `allow`. A v1 document is
 lifted under a `legacy` grammar that invents neither tool events nor policy evidence.
 `ledgergate verify <trace-or-journal>` runs the invariant registry and reports each
-invariant as `pass`, `fail` or `no_evidence`, never a pass by absence:
+invariant, and the whole, as `pass`, `fail` or `no_evidence`; a trace that carries nothing
+to check is `NO_EVIDENCE` (exit 3), never a pass by absence:
 
 ```text
 $ ledgergate verify ledger.journal

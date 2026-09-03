@@ -203,8 +203,9 @@ def journal_approve(args: argparse.Namespace) -> int:
 
 
 def verify_command(args: argparse.Namespace) -> int:
-    """Exit 0 when every invariant with evidence passes, 1 when any fails, 2 when the
-    source cannot be read. ``no_evidence`` is reported, never counted as a pass."""
+    """Exit 0 when at least one invariant ran and none failed, 1 when any failed, 2 when the
+    source cannot be read, 3 when nothing could be checked (``no_evidence``: a trace that
+    carries nothing any invariant quantifies over is never a pass)."""
     from ledgergate.derive import DerivationError
     from ledgergate.derive import trace as derive_trace
     from ledgergate.invariants import check
@@ -245,10 +246,9 @@ def verify_command(args: argparse.Namespace) -> int:
                 where = f" [{f.intent_id}]" if f.intent_id else ""
                 print(f"             {f.severity}{where}: {f.message}")
         print(
-            f"{'PASS' if card.passed else 'FAIL'}: {card.intents} intents,"
-            f" {card.ledger_commands} ledger commands"
+            f"{card.status.upper()}: {card.intents} intents, {card.ledger_commands} ledger commands"
         )
-    return 0 if card.passed else 1
+    return {"pass": 0, "fail": 1, "no_evidence": 3}[card.status]
 
 
 def journal_dump(args: argparse.Namespace) -> int:

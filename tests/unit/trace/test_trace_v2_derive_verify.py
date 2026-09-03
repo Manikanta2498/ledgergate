@@ -273,18 +273,18 @@ class TestGrammar:
         return TraceV2.model_validate(self._base(self._bracketed(*inner)))
 
     def test_invalid_carries_nothing_else(self) -> None:
-        self._validate(self._res("i", "invalid"))
+        self._validate(self._res("intent-5", "invalid"))
         read = {
             "type": "read_intent",
             "seq": 1,
             "at": self.AT,
-            "intent_id": "i",
+            "intent_id": "intent-5",
             "call_id": "c",
             "tool": "balance",
             "arguments": {},
         }
         with pytest.raises(ValidationError, match="invalid carries no intent"):
-            self._validate(read, self._res("i", "invalid"))
+            self._validate(read, self._res("intent-5", "invalid"))
 
     def test_new_requires_a_decision_and_replay_forbids_one(self) -> None:
         from ledgergate.codec import decode_command
@@ -296,7 +296,7 @@ class TestGrammar:
             "type": "command_intent",
             "seq": 1,
             "at": self.AT,
-            "intent_id": "i",
+            "intent_id": "intent-5",
             "call_id": "c",
             "command": cmd,
         }
@@ -304,7 +304,7 @@ class TestGrammar:
             "type": "policy_decision",
             "seq": 1,
             "at": self.AT,
-            "intent_id": "i",
+            "intent_id": "intent-5",
             "policy_set_version": "none",
             "decision": "deny",
             "matched_rule": "r",
@@ -315,20 +315,34 @@ class TestGrammar:
             self._validate(
                 intent,
                 self._res(
-                    "i", "new", operation_id="op", outcome_ref="outcome-1", attempted_digest=fp
+                    "intent-5",
+                    "new",
+                    operation_id="command-4",
+                    outcome_ref="outcome-6",
+                    attempted_digest=fp,
                 ),
             )
         with pytest.raises(ValidationError, match="never carries a policy_decision"):
             self._validate(
                 intent,
                 self._res(
-                    "i", "replay", operation_id="op", outcome_ref="outcome-1", attempted_digest=fp
+                    "intent-5",
+                    "replay",
+                    operation_id="command-4",
+                    outcome_ref="outcome-6",
+                    attempted_digest=fp,
                 ),
                 decision,
             )
         self._validate(
             intent,
-            self._res("i", "new", operation_id="op", outcome_ref="outcome-1", attempted_digest=fp),
+            self._res(
+                "intent-5",
+                "new",
+                operation_id="command-4",
+                outcome_ref="outcome-6",
+                attempted_digest=fp,
+            ),
             decision,
         )
 
@@ -337,25 +351,25 @@ class TestGrammar:
             InvocationResolution(
                 seq=1,
                 at=EPOCH,
-                intent_id="i",
+                intent_id="intent-5",
                 disposition="read",
-                operation_id="op",
+                operation_id="command-4",
                 attempted_digest="0" * 64,
             )
         with pytest.raises(ValidationError, match="outcome_ref is present exactly"):
             InvocationResolution(
                 seq=1,
                 at=EPOCH,
-                intent_id="i",
+                intent_id="intent-5",
                 disposition="conflict",
-                operation_id="op",
-                outcome_ref="outcome-1",
+                operation_id="command-4",
+                outcome_ref="outcome-6",
                 attempted_digest="0" * 64,
             )
 
     def test_each_intent_has_exactly_one_resolution(self) -> None:
         with pytest.raises(ValidationError, match="exactly one invocation_resolution"):
-            self._validate(self._res("i", "invalid"), self._res("i", "invalid"))
+            self._validate(self._res("intent-5", "invalid"), self._res("intent-5", "invalid"))
 
 
 class TestLift:
@@ -698,7 +712,7 @@ class TestBoundaryGrammar:
             "type": "invocation_resolution",
             "seq": 2,
             "at": at,
-            "intent_id": "i",
+            "intent_id": "intent-5",
             "disposition": "invalid",
             "attempted_digest": "0" * 64,
         }
@@ -728,7 +742,7 @@ class TestBoundaryGrammar:
             "type": "command_intent",
             "seq": 2,
             "at": at,
-            "intent_id": "i",
+            "intent_id": "intent-5",
             "call_id": "c",
             "command": cmd,
         }
@@ -736,14 +750,14 @@ class TestBoundaryGrammar:
             **res,
             "seq": 3,
             "disposition": "new",
-            "operation_id": "op",
-            "outcome_ref": "outcome-1",
+            "operation_id": "command-4",
+            "outcome_ref": "outcome-6",
         }
         decision = {
             "type": "policy_decision",
             "seq": 4,
             "at": at,
-            "intent_id": "i",
+            "intent_id": "intent-5",
             "policy_set_version": "none",
             "decision": "deny",
             "matched_rule": "r",
@@ -815,8 +829,12 @@ class TestSecondReviewFindings:
         assert statuses["ledger_pairs_replay"] == "no_evidence"
 
     def test_duplicate_command_ids_are_refused_at_load(self) -> None:
+        from ledgergate.codec import decode_command
+        from ledgergate.ledger import CURRENCIES, command_fingerprint
+
         at = EPOCH.isoformat()
         cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
+        fp = command_fingerprint(decode_command(cmd, CURRENCIES))
         events = []
         for i, cid in enumerate(("dup", "dup")):
             base = i * 4
@@ -843,7 +861,7 @@ class TestSecondReviewFindings:
                     "intent_id": f"i{i}",
                     "disposition": "legacy",
                     "operation_id": cid,
-                    "attempted_digest": "0" * 64,
+                    "attempted_digest": fp,
                 },
                 {
                     "type": "ledger_command",
@@ -1127,7 +1145,7 @@ class TestFifthReviewFindings:
         d = next(
             e for e in doc["events"] if e["type"] == "policy_decision" and e.get("approval") is None
         )
-        d["consumption_ref"] = "consumption-77"
+        d["consumption_ref"] = f"consumption-{_n(d['intent_id']) + 1}"  # inside its window
         card = check(TraceV2.model_validate(doc))
         assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
 
@@ -1441,8 +1459,17 @@ class TestSeventhReviewFindings:
         ]
         assert len(approvals) == 2
         approvals[1]["consumption_ref"] = approvals[0]["consumption_ref"]
-        card = check(TraceV2.model_validate(doc))
-        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+        # the model refuses it first: another invocation's row cannot be this one's
+        with pytest.raises(ValidationError, match="not written by this invocation"):
+            TraceV2.model_validate(doc)
+        # and the registry catches the same shape on a model built without validation
+        from ledgergate.invariants import runtime_decisions_are_verdicts
+
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        assert any(
+            "more than one decision" in f.message for f in runtime_decisions_are_verdicts(built)
+        )
 
 
 class TestEighthReviewFindings:
@@ -1462,8 +1489,11 @@ class TestEighthReviewFindings:
         assert len(lift(only_messages.trace()).events) == 1
         p = tmp_path / "obs.json"
         p.write_text(dump_trace(rec.trace()))
-        assert main(["verify", str(p), "--json"]) == 0
-        assert json.loads(capsys.readouterr().out)["intents"] == 0
+        assert main(["verify", str(p), "--json"]) == 3  # nothing to check is never a pass
+        card = json.loads(capsys.readouterr().out)
+        assert card["intents"] == 0 and card["status"] == "no_evidence" and not card["passed"]
+        assert main(["verify", str(p)]) == 3
+        assert "NO_EVIDENCE" in capsys.readouterr().out
 
     def test_a_runtime_document_must_carry_its_journal_id(self, journal_path: str) -> None:
         doc = derive(journal_path).model_dump(mode="json")
@@ -1506,10 +1536,11 @@ class TestEighthReviewFindings:
             for e in doc["events"]
             if e["type"] == "invocation_resolution" and e["intent_id"] == new["intent_id"]
         )
-        res["presentation_ref"] = "presentation-3"
-        new["approval"] = {"presentation_ref": "presentation-3", "verdict": "approval_valid"}
-        new["context"]["approval"] = {"presentation": 3, "verdict": "approval_valid"}
-        new["consumption_ref"] = "consumption-4"
+        n = _n(new["intent_id"])
+        res["presentation_ref"] = f"presentation-{n + 1}"
+        new["approval"] = {"presentation_ref": f"presentation-{n + 1}", "verdict": "approval_valid"}
+        new["context"]["approval"] = {"presentation": n + 1, "verdict": "approval_valid"}
+        new["consumption_ref"] = f"consumption-{n + 2}"
         card = check(TraceV2.model_validate(doc))
         assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
 
@@ -1530,6 +1561,74 @@ class TestEighthReviewFindings:
         d = next(
             e for e in doc["events"] if e["type"] == "policy_decision" and e.get("consumption_ref")
         )
-        d["consumption_ref"] = "consumption-1"
+        d["consumption_ref"] = f"consumption-{_n(d['intent_id']) + 1}"  # before its presentation
         card = check(TraceV2.model_validate(doc))
         assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+
+
+class TestNinthReviewFindings:
+    def test_derived_references_are_anchored_to_their_invocation(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        doc = t.model_dump(mode="json")
+        res = [e for e in doc["events"] if e["type"] == "invocation_resolution"]
+        # renumber outcomes from 1: a new at intent-n cannot have produced outcome-1
+        produced = [r for r in res if r["disposition"] == "new"]
+        for i, r in enumerate(produced):
+            r["outcome_ref"] = f"outcome-{i + 1}"
+        for r in res:
+            if r["disposition"] == "replay":
+                r["outcome_ref"] = produced[0]["outcome_ref"]
+        with pytest.raises(ValidationError, match="not written by this invocation"):
+            TraceV2.model_validate(doc)
+        doc = t.model_dump(mode="json")
+        for e in doc["events"]:
+            if e.get("presentation_ref"):
+                e["presentation_ref"] = "presentation-1"
+            if e.get("approval"):
+                e["approval"]["presentation_ref"] = "presentation-1"
+        with pytest.raises(ValidationError, match="not written by this invocation"):
+            TraceV2.model_validate(doc)
+        doc = t.model_dump(mode="json")
+        ids = [e for e in doc["events"] if e.get("intent_id")]
+        first, second = (
+            ids[0]["intent_id"],
+            next(e["intent_id"] for e in ids if e["intent_id"] != ids[0]["intent_id"]),
+        )
+        for e in doc["events"]:
+            if e.get("intent_id") == first:
+                e["intent_id"] = "intent-999999"
+        with pytest.raises(ValidationError, match="strictly increase"):
+            TraceV2.model_validate(doc)
+        del second
+
+    def test_a_message_interleaved_inside_an_intent_is_refused(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        i = next(i for i, e in enumerate(doc["events"]) if e["type"] == "command_intent")
+        doc["events"].insert(
+            i + 1,
+            {
+                "type": "message",
+                "seq": 0,
+                "at": doc["events"][i]["at"],
+                "role": "user",
+                "content": "x",
+            },
+        )
+        for n, e in enumerate(doc["events"]):
+            e["seq"] = n + 1
+        with pytest.raises(ValidationError, match="interleaved"):
+            TraceV2.model_validate(doc)
+
+    def test_a_lifted_intent_digest_is_rechecked_on_load(self) -> None:
+        rec = Recorder("t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds())
+        rec.execute(OpenTransaction("o", "t", Money(1, USD)))
+        doc = lift(rec.trace()).model_dump(mode="json")
+        next(e for e in doc["events"] if e["type"] == "invocation_resolution")[
+            "attempted_digest"
+        ] = "0" * 64
+        with pytest.raises(ValidationError, match="not the command's fingerprint"):
+            TraceV2.model_validate(doc)
+
+
+def _n(ref: str) -> int:
+    return int(ref.rsplit("-", 1)[1])

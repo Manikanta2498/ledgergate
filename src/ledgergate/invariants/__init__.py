@@ -202,9 +202,30 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
         "approval_expired",
         "approval_scope_mismatch",
     }
+    seen_presentations: set[str] = set()
+    seen_consumptions: set[str] = set()
     for iid, d in _decided(t).items():
         verdict = None if d.approval is None else d.approval.verdict
         r = by_id[iid]
+        for ref, seen, what in (
+            (
+                None if d.approval is None else d.approval.presentation_ref,
+                seen_presentations,
+                "presentation",
+            ),
+            (d.consumption_ref, seen_consumptions, "consumption"),
+        ):
+            if ref is not None:
+                if ref in seen:
+                    out.append(
+                        Finding(
+                            "runtime_decisions_are_verdicts",
+                            "error",
+                            f"{iid}: {what} {ref} is referenced by more than one decision",
+                            iid,
+                        )
+                    )
+                seen.add(ref)
         # A decision references the presentation its own invocation made, and none otherwise.
         mine = None if d.approval is None else d.approval.presentation_ref
         if mine != r.presentation_ref:

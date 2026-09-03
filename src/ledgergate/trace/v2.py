@@ -196,8 +196,10 @@ class TraceV2(_Strict):
     approval is against a pending operation, a produced outcome is produced once, in
     allocation order; a command intent's fingerprint is its attempted_digest, matches the
     operation's for new, replay and approval and differs for conflict, and equals its
-    ledger_command's; in a runtime trace every boundary event brackets an intent; derived references
-    (outcome, presentation, consumption) follow their fixed grammars."""
+    ledger_command's, whose command_id is the operation and whose call_id is the intent's;
+    in a runtime trace every boundary event brackets an intent; a document is either wholly
+    lifted (legacy, no journal) or wholly derived (no legacy), never both; derived
+    references (outcome, presentation, consumption) follow their fixed grammars."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -252,6 +254,13 @@ class TraceV2(_Strict):
                 if owner is None:
                     raise ValueError(f"ledger_result {e.command_id} has no ledger_command")
                 by_intent[owner].append(e)
+        # A document is either lifted (every resolution legacy, no journal) or derived (no
+        # legacy at all); the two grammars never mix, since neither producer mixes them.
+        legacy = [r for r in resolutions if r.disposition == "legacy"]
+        if legacy and self.journal_id is not None:
+            raise ValueError("a journal-derived trace carries no legacy content")
+        if legacy and len(legacy) != len(resolutions):
+            raise ValueError("legacy and runtime dispositions never share a document")
         positions = {id(e): i for i, e in enumerate(self.events)}
         bracketing: set[int] = set()
         for r in resolutions:
@@ -418,8 +427,15 @@ class TraceV2(_Strict):
                     f"{r.intent_id}: {r.disposition} carries a command other than the operation's"
                 )
             pair = next((e for e in group if isinstance(e, LedgerCommandEvent)), None)
-            if pair is not None and pair.command != intent.command:
-                raise ValueError(f"{r.intent_id}: ledger_command differs from the intent's command")
+            if pair is not None:
+                if pair.command != intent.command:
+                    raise ValueError(
+                        f"{r.intent_id}: ledger_command differs from the intent's command"
+                    )
+                if pair.command_id != op or pair.call_id != intent.call_id:
+                    raise ValueError(
+                        f"{r.intent_id}: ledger_command names another operation or call"
+                    )
 
     def _check_boundary(
         self, r: InvocationResolution, group: list[AnyV2Event], positions: dict[int, int]

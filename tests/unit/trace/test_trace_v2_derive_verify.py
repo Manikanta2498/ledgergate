@@ -1227,7 +1227,7 @@ class TestSixthReviewFindings:
         pair = next(e for e in doc["events"] if e["type"] == "ledger_command")
         pair["command"]["draft"]["postings"][0]["money"]["amount"] = 1
         pair["command"]["draft"]["postings"][1]["money"]["amount"] = 1
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match="ledger_command differs"):
             TraceV2.model_validate(doc)
 
     def test_a_replay_must_carry_the_operations_command(self, journal_path: str) -> None:
@@ -1244,7 +1244,7 @@ class TestSixthReviewFindings:
             if e["type"] == "command_intent" and e["intent_id"] == replay_res["intent_id"]
         )
         intent["command"]["draft"]["description"] = "changed"
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match="not the command's fingerprint"):
             TraceV2.model_validate(doc)
 
     def test_a_stray_boundary_pair_is_refused_in_a_runtime_trace(self, journal_path: str) -> None:
@@ -1309,3 +1309,129 @@ def _to_event(doc: dict[str, Any]) -> Any:
     from ledgergate.trace.v2 import V2Event
 
     return TypeAdapter(V2Event).validate_python(doc)
+
+
+class TestSeventhReviewFindings:
+    def test_legacy_rows_cannot_be_smuggled_into_a_derived_trace(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        n = len(doc["events"])
+        at = doc["events"][-1]["at"]
+        cmd = {
+            "kind": "post",
+            "key": "smuggled",
+            "draft": {
+                "postings": [
+                    {
+                        "account": "cash",
+                        "side": "debit",
+                        "money": {"amount": 999999, "currency": "USD"},
+                    },
+                    {
+                        "account": "revenue",
+                        "side": "credit",
+                        "money": {"amount": 999999, "currency": "USD"},
+                    },
+                ]
+            },
+        }
+        doc["events"] += [
+            {
+                "type": "legacy_intent",
+                "seq": n + 1,
+                "at": at,
+                "intent_id": "legacy-1",
+                "command": cmd,
+            },
+            {
+                "type": "invocation_resolution",
+                "seq": n + 2,
+                "at": at,
+                "intent_id": "legacy-1",
+                "disposition": "legacy",
+                "operation_id": "smuggled",
+                "attempted_digest": "0" * 64,
+            },
+            {
+                "type": "ledger_command",
+                "seq": n + 3,
+                "at": at,
+                "command_id": "smuggled",
+                "command": cmd,
+            },
+            {
+                "type": "ledger_result",
+                "seq": n + 4,
+                "at": at,
+                "command_id": "smuggled",
+                "ok": False,
+                "error": {"type": "X", "message": "m"},
+                "head": "0" * 64,
+                "sequence": 0,
+            },
+        ]
+        with pytest.raises(ValidationError, match=r"no legacy content|never share"):
+            TraceV2.model_validate(doc)
+        doc.pop("journal_id")
+        with pytest.raises(ValidationError, match="never share a document"):
+            TraceV2.model_validate(doc)
+
+    def test_ledger_pair_is_tied_to_its_operation_and_call(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        pair = next(e for e in doc["events"] if e["type"] == "ledger_command")
+        result = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "ledger_result" and e["command_id"] == pair["command_id"]
+        )
+        pair["command_id"] = result["command_id"] = "command-999"
+        with pytest.raises(ValidationError, match="names another operation or call"):
+            TraceV2.model_validate(doc)
+        doc = derive(journal_path).model_dump(mode="json")
+        next(e for e in doc["events"] if e["type"] == "ledger_command")["call_id"] = "somebody-else"
+        with pytest.raises(ValidationError, match="names another operation or call"):
+            TraceV2.model_validate(doc)
+
+    def test_a_consumption_referenced_twice_fails(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "two.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        for key in ("k1", "k2"):
+            j.handle(
+                {
+                    "tool": "open_transaction",
+                    "call_id": f"c-{key}",
+                    "key": key,
+                    "arguments": {
+                        "transaction_id": key,
+                        "amount": {"amount": 500, "currency": "USD"},
+                    },
+                }
+            )
+        for key in ("k1", "k2"):
+            j.handle(
+                {
+                    "tool": "open_transaction",
+                    "call_id": f"a-{key}",
+                    "key": key,
+                    "approval": _artefact(j, key),
+                    "arguments": {
+                        "transaction_id": key,
+                        "amount": {"amount": 500, "currency": "USD"},
+                    },
+                }
+            )
+        j.close()
+        doc = derive(path).model_dump(mode="json")
+        approvals = [
+            e for e in doc["events"] if e["type"] == "policy_decision" and e.get("consumption_ref")
+        ]
+        assert len(approvals) == 2
+        approvals[1]["consumption_ref"] = approvals[0]["consumption_ref"]
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"

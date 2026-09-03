@@ -49,8 +49,10 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   pending; a produced outcome is produced exactly once, in allocation order). The model also
   ties every command intent to what it is about: the fingerprint of its `command` is its
   `attempted_digest`, equals the operation's for `new`, `replay` and `approval` and differs
-  for `conflict`, and equals the command its `ledger_command` carries; and in a runtime trace
-  every `tool_call` and `tool_result` brackets an intent.
+  for `conflict`, and equals the command its `ledger_command` carries, whose `command_id`
+  is the operation and whose `call_id` is the intent's; and in a runtime trace every
+  `tool_call` and `tool_result` brackets an intent. The registry additionally requires each
+  presentation and each consumption to be referenced by at most one decision.
 - `deny` / `approval_required`: the intent ends at its decision.
 - `approval` with a failed verdict: no outcome was appended, so `invocation_resolution`
   names the operation's pending tip, the outcome that was *current* at the time (the latest
@@ -103,7 +105,10 @@ internally consistent, and must say which of the two it did.
 v1 tool events and ledger pairs are not one-to-one: one `tool_call` may be followed by
 several ledger commands, or by none. Lifting each ledger pair into a full runtime
 invocation would require inventing `tool_call`/`tool_result` events that never happened.
-Lifted content therefore uses its own grammar and never synthesizes boundary events:
+Lifted content therefore uses its own grammar and never synthesizes boundary events. A
+document is either wholly lifted (every resolution `legacy`, no `journal_id`) or wholly
+derived (no `legacy` at all); the model refuses a mixture, since neither producer makes one,
+and a runtime document's grammar can therefore never be switched off by lifted rows:
 
 ```
 legacy_intent              intent_id, command, optional call_id from the v1 ledger_command

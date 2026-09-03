@@ -56,7 +56,10 @@ whose verification counterpart is in `definition`. Binds to exactly one pending 
 
 **Validation and reservation**, performed inside the write transaction *before* the
 `PolicyContext` is built. First the `approvals` presentation row is written (outside any
-savepoint, so the audit of the attempt survives whatever follows). Then, in order:
+savepoint, so the audit of the attempt survives whatever follows). Then the checks run
+**in order and short-circuit: the first failure is the verdict, and no later check runs**.
+In particular, the reservation in check 4 is attempted if and only if checks 1 to 3 all
+passed; an invalid, expired or mis-scoped artefact never touches `approval_consumptions`.
 
 1. Signature verifies against the definition's key, else verdict `approval_invalid`.
 2. `expires_at` is after the injected evaluation time, else `approval_expired`.
@@ -65,11 +68,25 @@ savepoint, so the audit of the attempt survives whatever follows). Then, in orde
    presentation, invocation)`. A `UNIQUE` violation means an earlier *committed*
    transaction consumed this logical approval (writes are serialized, so there is no other
    way): `ROLLBACK TO reserve; RELEASE reserve`, verdict `approval_already_used`. Success:
-   the approval is reserved for this transaction and the savepoint stays open.
+   verdict `approval_valid`, the approval is reserved for this transaction, and the
+   savepoint stays open.
 
-The verdict enters the `PolicyContext`. A failed verdict is an approval that is not
-usable; policy decides accordingly (in practice `deny` with that reason). Nothing is
-consumed on a failed verdict.
+The verdict enters the `PolicyContext`. Nothing is consumed on any verdict other than
+`approval_valid`.
+
+**Decision-to-outcome for an operation whose current outcome is `awaiting_approval`.**
+This is the one state where a later invocation can change an operation, so the mapping is
+fixed here rather than left to policy authors:
+
+| Approval verdict | Policy decision | Outcome appended | Operation afterwards | `tool_result` |
+| :--- | :--- | :--- | :--- | :--- |
+| any failed verdict | (policy sees an unusable approval and returns `deny` with the verdict as reason) | **`awaiting_approval`** | still pending; a later correct approval can complete it | `ok=false`, type `ApprovalRejected`, message the verdict |
+| `approval_valid` | `deny` (some *other* rule refused) | **`denied`** | terminal | `ok=false`, `PolicyDenied`, rule and reason |
+| `approval_valid` | `approval_required` | not reachable: a valid approval satisfies the rule that asked for it; a policy set that asks again is a configuration error and is rejected at definition load | | |
+| `approval_valid` | `allow` | `applied` or `rejected` from the core | terminal | per the core's result |
+
+A failed presentation therefore never forecloses the operation; only a genuine policy
+denial or the core's own verdict does. Each row of this table is a required test.
 
 **Settling the reservation** happens in step 6 of the write protocol, *before* the
 decision row is written, because `ROLLBACK TO` undoes everything after the savepoint and
@@ -135,6 +152,31 @@ non-`LedgerError` exception from the core (a bug): the transaction is rolled bac
 is written, the caller receives an MCP error. This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the
 record.
+
+## Foreign keys
+
+Every reference points to a row written earlier in the same or an earlier transaction;
+SQLite foreign keys are enabled and **immediate**, so the write order in the protocols
+above is the only legal one and an implementation that reorders it fails at the
+constraint, not in review. Targets are `journal_sequence` values.
+
+| Column | References |
+| :--- | :--- |
+| `outcomes.operation` | `operations` |
+| `outcomes.previous_outcome` | `outcomes` (null for the first) |
+| `outcomes.decision` | `decisions` (null when no policy ran) |
+| `invocations.operation` | `operations` (null for `read`, `invalid`) |
+| `decisions.invocation` | `invocations` |
+| `decisions.operation` | `operations` (null for reads) |
+| `decisions.presentation` | `approvals` (null when none presented) |
+| `decisions.consumption` | `approval_consumptions` (null unless kept) |
+| `approval_consumptions.presentation` | `approvals` |
+| `approval_consumptions.invocation` | `invocations` |
+| `events.invocation` | `invocations` |
+| `reads.invocation` | `invocations` |
+
+Nothing references `decisions` forward from a row written before it; that is the property
+the reservation ordering depends on.
 
 ## Read protocol
 

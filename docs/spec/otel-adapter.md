@@ -43,10 +43,18 @@ nesting about 30 before the first `arguments` member and each further JSON objec
 four more (`value -> kvlistValue -> values -> kv`), so 64 would admit about eight levels of
 arguments natively against the 32 the string form allows; 64 + 4 * 32 admits both forms
 alike (`require_ijson` is iterative and the scanner's recursion budget is far above 200).
-Every refusal before any OTLP structure exists (not JSON, not I-JSON, over the byte, node or
-depth bound) is exit `2`, "cannot read", with the decoder's message: the codec raises one
-`IJsonError` for all of them, and the adapter does not string-match messages to tell them
-apart. Exit `1` is reserved for a completeness report, which presupposes a decoded document.
+Every refusal before any OTLP structure exists (not JSON: `json.JSONDecodeError`; not I-JSON
+or over the byte, node or depth bound: `IJsonError`) is exit `2`, "cannot read", with the
+decoder's message; the adapter never string-matches messages. The codec gains one
+distinguishable subclass, `IJsonRangeError(IJsonError)`, raised for an integer outside the
+safe range (whether by literal length or by value), and that *type* is the only thing the CLI
+keys a hint on (below). Exit `1` is reserved for a completeness report, which presupposes a
+decoded document: **after decode, any deviation from the OTLP/JSON shape this document reads**
+(a top level that is not an object or an array of objects; `resourceSpans`, `scopeSpans`,
+`spans`, `attributes`, `events` not arrays; a span that is not an object; an attribute
+`value` with zero or several typed members; a non-integer `status.code`; a malformed
+`events[]` entry) **is a completeness fault located by index path, exit `1`; nothing after
+decode exits `2`.**
 Fifty million nodes materialised as Python objects is several gigabytes of heap; the byte
 bound does not prevent that, and an operator with such an export should split it by trace
 first. Stated, so it is not rediscovered as a bug. The payload
@@ -60,17 +68,20 @@ nano timestamp fields must match `^[0-9]{1,20}$` and render to a `datetime` (at 
 year 9999, about 2.5e20); anything else is a completeness fault naming the span. A producer
 that emits them as JSON *numbers* is refused at decode (exit `2`), since 1.7e18 exceeds the
 I-JSON safe integer and the decoder cannot represent it; the adapter cannot know the offending
-integer was a timestamp (no structure exists yet), so when the decoder's refusal is the
-safe-range one the CLI appends a fixed *hint*: "OTLP timestamps emitted as JSON numbers are
-the common cause".
+integer was a timestamp (no structure exists yet), so when the decoder raises
+`IJsonRangeError` the CLI appends a fixed *hint*: "OTLP timestamps emitted as JSON numbers
+are the common cause".
 The adapter normalises an `AnyValue` to JSON before any mapping: strings, booleans and
 doubles as themselves; `intValue` parsed, and a value outside the I-JSON safe range is a
 fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a JSON object
 (a repeated key is a fault, located by index path below the top-level attribute, since keys
 inside `arguments` are agent content); `bytesValue` is a fault (the conventions carry no bytes
 the adapter reads). Content attributes may be a JSON *string* (the attribute form) or a native
-structure (the event form); a string is parsed with the same decoder and the two are then one
-shape.
+structure (the event form); a string is parsed with the same decoder under the adapter's
+bounds (50,000,000 nodes, depth 200; a per-attribute bound would refuse long histories the
+payload bound per event later admits), an inner-parse refusal is a completeness fault located
+by span and attribute key (exit `1`, since the document itself decoded), and the two forms are
+then one shape.
 
 Span fields used: `traceId`, `spanId`, `parentSpanId`, `name`, `startTimeUnixNano`,
 `endTimeUnixNano`, `attributes[]` (`key`, `value` in OTLP's typed encoding: `stringValue`,
@@ -100,22 +111,26 @@ The *resource* `schemaUrl` describes the resource attributes and is set by the S
 resource routinely says `.../1.2x.0` under a 1.37 GenAI instrumentation), so it is never a
 reason to refuse. So: the adapter refuses, with a report naming the URL, only when a
 `scopeSpans[].schemaUrl` on a scope that contains spans with `gen_ai.operation.name` is
-present and does not end in `/1.37.0`; two such scopes with differing URLs are a fault.
+present and does not end in `/1.37.0`; two such scopes with differing *present* URLs are a
+fault, and a scope without a URL beside one with a URL takes the present one.
 Otherwise the adapter *assumes* 1.37 and records the assumption. `metadata` carries
 `otel.semconv: "1.37"`, `otel.scope_schema_url` (the GenAI scope's URL, or `absent`),
 `otel.resource_schema_urls` (the distinct resource URLs, sorted and joined with `;`, or
 `absent`) and `otel.scope` (the GenAI scopes' names and library versions, sorted and joined
 with `;`). Every `metadata` value is a string of at most 1,024 characters (v1's `StringMap`);
-`otel.spans` and `otel.agents` are decimal strings; a value that would exceed the bound is a
-fault naming the key. A later convention is a new mapping, reviewed against this document; the adapter
+`otel.spans` and `otel.agents` (the number of distinct `gen_ai.agent.name` values across
+`invoke_agent` spans, `0` when there are none) are always present, as decimal strings; a value
+that would exceed the bound is a fault naming the key. A later convention is a new mapping, reviewed against this document; the adapter
 does not guess at attributes it was not written for. Spans without `gen_ai.operation.name`,
 or with one this document does not map (`embeddings`, `create_agent`, ...), produce no events;
 they are counted in `otel.spans` and take part in the parent check.
 
 ## The mapping
 
-Every produced event carries `at` from a span or span-event timestamp (nanoseconds since
-epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
+Every produced event carries `at` from a span's start or end timestamp (nanoseconds since
+epoch, rendered as a UTC `Timestamp`; span-event `timeUnixNano` values are not used, since the
+event form of a content attribute describes the span it is attached to) and `seq` from the
+ordering below.
 
 1. **Messages.** Inference spans are processed in order of `startTimeUnixNano`, ties by
    position in the file. The adapter keeps the *emitted conversation*: a sequence of
@@ -142,14 +157,17 @@ epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
    `tool_call_response` parts are still a *result source* and still subject to the orphan
    check (a response the agent was shown was observed, whatever the inference then did), so a
    call whose only observed response was presented to a failed final inference has a result.
-   A second known consequence: the emitted conversation is one sequence, so a fan-out or
+   A consequence of skipping: an `execute_tool` span for a call the failed inference
+   requested has no `tool_call` to match and is reported as a result without a call. A second
+   known consequence: the emitted conversation is one sequence, so a fan-out or
    multi-agent run (two `invoke_agent` subtrees with their own histories) presents two
    diverging histories and is reported as a prefix fault; per-subtree conversations are not
    designed in M5 and `otel.agents` records the count.
 2. **Tool calls.** Each `tool_call` part in an inference span's `gen_ai.output.messages`
    becomes a `tool_call` event at the span's end time with `call_id` = the part's `id`,
-   `tool` = the part's `name`, `arguments` = the part's `arguments` (an object; a string is
-   parsed as JSON, and a string that does not parse as an object is a completeness fault).
+   `tool` = the part's `name`, `arguments` = the part's `arguments` (an object, or `{}` when
+   absent; a string is parsed as JSON, and a string that does not parse as an object is a
+   completeness fault).
    `idempotency_key` is set from `arguments.idempotency_key` when that member is a string
    satisfying the identifier grammar (the `ledgergate serve` convention) and omitted
    otherwise, never a fault; the member is left in the arguments too, since the adapter does
@@ -183,11 +201,11 @@ epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
    after its `tool_call`; the completeness check enforces it.
 5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 lowercase hex characters
    (a fault otherwise: base64 ids from non-compliant producers are refused, not converted);
-   `agent.name` = `gen_ai.agent.name` from the *root-most* `invoke_agent` span (the one
-   without a parent, else the earliest), else `service.name`, else `unknown`; a present value
-   that is not an identifier is a fault; several `invoke_agent` spans with differing names are
-   recorded in `metadata` as `otel.agents: <count>` and the root-most wins, so the result is
-   still a function of the document. `started_at`/`ended_at` =
+   `agent.name` = `gen_ai.agent.name` from the *root-most* `invoke_agent` span: the
+   earliest-starting parentless one, ties by file position, and if none is parentless the
+   earliest by the same key; else `service.name`; else `unknown`; a present value that is not
+   an identifier is a fault. `otel.agents` records the count of distinct names, so several
+   agents are visible and the result is still a function of the document. `started_at`/`ended_at` =
    the earliest span start and the latest span end; `chart` and `currencies` absent (the
    adapter knows no books); `metadata` as above plus `otel.spans: <count>`.
 
@@ -205,8 +223,8 @@ first:
 | every span's `parentSpanId`, when non-empty, names a span in the document | a missing parent is a signature of sampling or a dropped batch. ADR-0002 §6 requires unsampled capture, which the adapter can only *partially* observe: it detects orphaned spans and unresolved calls, not a truncated tail (a dropped last inference span or a lost final batch leaves every parent present); the precondition remains the operator's |
 | all spans share one `traceId`, and it is 32 lowercase hex characters | one trace is one run; two runs in one file are two traces; v1 needs an identifier |
 | every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
-| every `tool_call` part has an `id`, a `name` and arguments that are an object; `id` and `name` satisfy the identifier grammar (1 to 256 characters, one line, no edge whitespace); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
-| every `tool_call` has a selected result, and it is after the call | v1's pairing rule |
+| every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent or an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
+| every `tool_call` has a selected result, and it is after the call in `seq` (the ordering key of step 4, decided in nanoseconds) | v1's pairing rule |
 | every `execute_tool` span and every `tool_call_response` id matches a `tool_call` | a result without a call is a hole in the record |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
 | timestamps are present, non-zero, end ≥ start, and every `intValue` is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |

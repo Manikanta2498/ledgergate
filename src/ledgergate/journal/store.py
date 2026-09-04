@@ -327,7 +327,9 @@ class Journal:
         against; ``none`` means no artefact can ever verify."""
         if approval_key != "none":
             verification_key(approval_key)  # refuse a malformed key at creation
-        elif getattr(policy, "approve_above", ()):
+        elif getattr(policy, "approve_above", ()):  # ThresholdPolicySet declares its lines;
+            # a custom set that returns approval_required without a key is not detectable
+            # here and its operations would wait forever (stated in journal.md)
             raise ConfigurationError(
                 "the policy set can require approval but the journal has no verification key,"
                 " so nothing could ever approve; supply approval_key or drop approve_above"

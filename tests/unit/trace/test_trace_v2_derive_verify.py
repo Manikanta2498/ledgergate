@@ -2249,3 +2249,56 @@ class TestAggregateWitnessing:
         object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
         findings = decision_recomputes(built)
         assert any("is not the command's" in f.message for f in findings)
+
+
+class TestNullSetRecomputation:
+    def test_null_set_decisions_recompute_and_forged_inputs_fail(self, tmp_path: Path) -> None:
+        from ledgergate.invariants import decision_recomputes
+
+        path = str(tmp_path / "null.journal")
+        j = Journal.create(path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds())
+        j.handle({"tool": "post", "call_id": "c1", "key": "k1", "arguments": {"draft": SALE}})
+        j.close()
+        t = derive(path)
+        assert {r.name: r.status for r in check(t).results}["decision_recomputes"] == "pass"
+        doc = t.model_dump(mode="json")
+        d = next(e for e in doc["events"] if e["type"] == "policy_decision")
+        d["context"]["subject"] = "forged"
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        assert any("derives no subject" in f.message for f in decision_recomputes(built))
+        doc = t.model_dump(mode="json")
+        doc["policy_configuration"]["version"] = "other"
+        from ledgergate.codec import digest
+
+        doc["policy_config_digest"] = digest(doc["policy_configuration"])
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        assert any(
+            "configuration is for set version" in f.message for f in decision_recomputes(built)
+        )
+
+    def test_a_null_set_subclass_cannot_open_a_null_journal(self, tmp_path: Path) -> None:
+        from ledgergate.journal import ConfigurationError, NullPolicySet
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class Evil(NullPolicySet):
+            def evaluate(self, context: PolicyContext) -> Decision:
+                return Decision("deny", "none.evil", "no")
+
+        path = str(tmp_path / "n.journal")
+        Journal.create(path, CHART, clock=SteppingClock(EPOCH), ids=SequentialIds()).close()
+        assert Evil().configuration_digest() != NullPolicySet().configuration_digest()
+        with pytest.raises(ConfigurationError, match="different rules"):
+            Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=Evil())
+        j = Journal.create(
+            str(tmp_path / "e.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=Evil(),
+        )
+        j.handle({"tool": "post", "call_id": "c1", "key": "k1", "arguments": {"draft": SALE}})
+        j.close()
+        statuses = {r.name: r.status for r in check(derive(str(tmp_path / "e.journal"))).results}
+        assert statuses["decision_recomputes"] == "no_evidence"  # a subclass is code

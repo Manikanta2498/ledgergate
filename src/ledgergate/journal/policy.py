@@ -140,7 +140,9 @@ class NullPolicySet:
     version = "none"
 
     def configuration(self) -> Mapping[str, Any] | None:
-        return {"set": "NullPolicySet", "version": "none"}
+        # The class name is part of the configuration, as for every set: a subclass with
+        # other semantics cannot share a journal defined under the null set.
+        return {"set": type(self).__qualname__, "version": self.version}
 
     def configuration_digest(self) -> str:
         from ledgergate.codec import digest

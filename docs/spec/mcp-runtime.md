@@ -9,9 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 one local principal. It is a *transport*: everything it does is decode a wire message, hand
 the journal one untyped JSON value, and encode what the journal committed. It holds no
 state of its own that the journal does not hold, decides nothing the journal does not
-decide, and returns nothing the journal did not commit. ADR-0002 §2 names the four design
-questions this document answers before any transport code; every mechanism named here is
-built in M4 and tested.
+decide, and returns nothing the journal did not commit. ADR-0002's roadmap row for M4 names
+the four design questions this document answers before any transport code; every mechanism
+named here is built in M4 and tested. M4 changes three things outside the transport, each
+named where it applies: the journal gains `CapacityError` and refuses a non-identifier
+principal, and `codec.loads` is made total over its refusals (below).
 
 ## Terms
 
@@ -20,18 +22,25 @@ built in M4 and tested.
   `\n` at EOF is a message. The server writes one line per response to stdout and nothing
   else to stdout, ever; diagnostics go to stderr, and a diagnostic carries only the JSON-RPC
   error code, the byte length of the line, the *kind* of id (`integer`, `string`, `absent`,
-  `invalid`) and the method **only if it is one of the five the server implements** (else
-  `unknown`, mirroring the envelope's rule for tool names). Never the id itself (it is the
+  `invalid`), the method **only if it is one of the five the server implements** (else
+  `unknown`, mirroring the envelope's rule for tool names), and for a `-32000` the
+  exception's *class name* (a closed set of project identifiers: `CapacityError`,
+  `ConfigurationError`, `IntegrityError`, `JournalError`), never its message. Never the id itself (it is the
   caller's `call_id`, a class-2 identifier the journal tokenizes), never a caller string,
   never message content: stderr is routinely captured to disk and sits outside the redactor.
 - **Line bound**: a line longer than 16 MiB is refused before decoding (`-32700`, `id`
   `null`, unrecorded) by reading with a limit, so no line is materialised in memory beyond
-  it; depth and node bounds apply after decoding. This joins the transport-class list in
-  `journal.md`.
-- **Request** vs **notification**: a message with an `id` member is a request and is always
-  answered, once, echoing its `id`; a message without an `id` member is a notification and
-  is never answered (JSON-RPC 2.0 forbids it). `id: null` is not an absent `id`: it is an
-  invalid request.
+  it; the remainder of that line is drained to the next `\n` in bounded chunks and
+  discarded, so one over-long line yields exactly one `-32700` and cannot smuggle a second
+  message in its tail; the diagnostic reports the drained total. Depth and node bounds
+  apply after decoding. This joins the transport-class list in `journal.md`.
+- **Request** vs **notification**: shape is judged first. A decoded value that is not a
+  well-formed JSON-RPC 2.0 object (see *Wire decoding*) is answered `-32600` whether or not
+  it has an `id` (JSON-RPC 2.0 §5 answers `{"foo": "boo"}` with `-32600`, `id` `null`).
+  Among well-formed objects, one with an `id` member is a request and is always answered,
+  once, echoing its `id`; one without an `id` member is a notification and is never
+  answered (JSON-RPC 2.0 forbids it). `id: null` is not an absent `id`: it is an invalid
+  request.
 - **Session**: from the first byte read to EOF on stdin. One process serves one session
   over one journal. There is no second connection to serialize against: the process is the
   connection owner, and the journal's `BEGIN IMMEDIATE` serializes it against any other
@@ -43,7 +52,11 @@ built in M4 and tested.
 Every line is decoded with the project's I-JSON decoder (`ledgergate.codec.loads`) *before*
 any other code looks at it. That decoder rejects duplicate member names, non-finite doubles,
 integers outside the safe range and unpaired surrogates, and enforces the transport-class
-depth and node bounds. A generic JSON decoder would silently keep the last of two duplicate
+depth and node bounds. M4 makes its refusals total: `loads` raises exactly `IJsonError` or
+`json.JSONDecodeError` and nothing else escapes it, in particular not the `RecursionError`
+Python's scanner raises on deeply nested text before the depth bound can be counted (the
+codec converts it into the depth refusal), so a two-kilobyte line of brackets is a `-32700`,
+not a dead session. A generic JSON decoder would silently keep the last of two duplicate
 members, so the client and the journal could disagree about what was sent; the project
 decoder is therefore the only decoder on the input path, and no MCP library sits in front
 of it. (The server does not depend on an MCP SDK: the stdio protocol is small, and a
@@ -67,8 +80,8 @@ is drawn at the object, not at the presence of a name.)
 A `tools/call` sent as a *notification* (no `id`) is refused unrecorded with one stderr
 diagnostic: JSON-RPC forbids answering it, and a call whose result cannot be delivered must
 not run (a write that cannot be answered would move money the client never learns of). This
-is the one attempt against the ledger the server declines to record, and it does so because
-the transport, not the journal, is what the client violated.
+is one of the transport-class refusals, unrecorded because the transport, not the journal,
+is what the client violated.
 
 ## Methods
 
@@ -208,7 +221,9 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
   more bytes (its own policy; the `Tokenizer` accepts 16). Without it the identity admitter
   runs and the server prints one stderr warning that identifiers and free text will reach
   disk as given.
-- `--create` builds the journal from `--chart` (a JSON array of `AccountDoc`); without it
+- `--create` builds the journal from `--chart` (a JSON array in the trace schema's
+  `AccountDoc` shape; the file is parsed by `cli`, which may import `trace`, and handed to
+  `mcp` as a `ChartOfAccounts`, so `mcp` itself never imports `trace`); without it
   the journal must exist and `open` applies every binding check the journal specifies.
   Either way the process holds the journal open for the session and closes it at EOF.
 
@@ -228,7 +243,11 @@ transaction that would fail it is refused as an unrecorded `CapacityError` (a
 the one `journal.md` change M4 makes beyond wording). At capacity `serve` still answers
 `initialize`, `ping` and `tools/list` (no journal transaction) and answers *every*
 `tools/call`, reads included, `-32000 CapacityError`. The remedy is a new journal: the
-operator creates one and points the server at it.
+operator creates one and points the server at it. An operation left `awaiting_approval` in
+a full journal cannot become terminal there (an approval presentation is an invocation and
+is refused like any other); as `journal.md` already says for a fatally misconfigured
+journal, a pending operation does not migrate, and the caller resubmits under a new key in
+the new journal.
 A rolled-over journal is complete, verifiable and closed; the two journals share nothing
 but the operator's intent, and an approval artefact is bound to one of them by `journal_id`.
 Cross-journal continuity (a trace over a sequence of journals, or a chain of definitions)

@@ -76,18 +76,24 @@ The adapter normalises an `AnyValue` to JSON before any mapping: strings, boolea
 doubles as themselves; `intValue` parsed, and a value outside the I-JSON safe range is a
 fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a JSON object
 (a repeated key is a fault, located by index path below the top-level attribute, since keys
-inside `arguments` are agent content); `bytesValue` is a fault (the conventions carry no bytes
-the adapter reads). Normalisation, and therefore every fault in this paragraph, applies to
+inside `arguments` are agent content); `bytesValue` is a fault (bytes have no JSON form the trace can carry). Normalisation, and therefore every fault in this paragraph, applies to
 exactly the attributes the adapter *reads*, enumerated as (span class, attribute) pairs:
 inference span whose status is not error: `gen_ai.system_instructions`,
 `gen_ai.input.messages`, `gen_ai.output.messages`; inference span whose status is error:
 `gen_ai.input.messages` only (its `tool_call_response` parts are a result source);
-`execute_tool` span: `gen_ai.tool.call.id`, `gen_ai.tool.name`, `gen_ai.tool.call.result`,
+`execute_tool` span: `gen_ai.tool.call.id`, `gen_ai.tool.name` (checked: a fault when it
+differs from the matched `tool_call`'s `name`, since a span saying a different tool ran than
+was called is a completeness signal, and an identifier, not a body), `gen_ai.tool.call.result`,
 `error.type`; `invoke_agent` span: `gen_ai.agent.name` only (its content attributes are not
 read); every span: `gen_ai.operation.name`, the timestamps, `status`; resource:
 `service.name`. Anything else is never normalised and can fault nothing, since nothing of it
-is recorded. An `intValue` string must match `^-?[0-9]{1,17}$` before it is parsed (the
-codec's own literal-length rule, so `int()` is never asked about a 4,300-digit string). Content attributes may be a JSON *string* (the attribute form) or a native
+is recorded. An `intValue` string must match `^-?[0-9]{1,16}$` before it is parsed (2^53 - 1 has sixteen
+digits, so this is the safe range by grammar and `int()` is never asked about a 4,300-digit
+string); an `intValue` that is a JSON *number* rather than a string is the shape fault of
+the sentence above, located by span and key. A `status.code` outside 0, 1, 2 is a located
+fault. The one-copy rule below applies to every attribute in the read set, not only content
+keys: two `gen_ai.tool.call.id` or two `gen_ai.operation.name` attributes on one span are a
+fault, since the adapter does not pick a winner. Content attributes may be a JSON *string* (the attribute form) or a native
 structure (the event form); a string is parsed with the same decoder under the adapter's
 bounds (50,000,000 nodes, depth 200; a per-attribute bound would refuse long histories the
 payload bound per event later admits), an inner-parse refusal is a completeness fault located
@@ -185,8 +191,11 @@ ordering below.
    requested has no `tool_call` to match and is reported as a result without a call. A
    related consequence of reading calls only from *output* messages: a first inference span
    whose history already contains `tool_call_response` parts from an earlier session is
-   reported with one orphan per such part, since the calls they answer were never observed. A second
-   known consequence: the emitted conversation is one sequence, so a fan-out or
+   reported with one orphan per such part, since the calls they answer were never observed.
+   And a consequence of ordering in nanoseconds: a streaming instrumentation that starts and
+   *ends* an `execute_tool` span before the inference span that requested it has ended places
+   the result before the call, and the pairing check reports it; the check is right, and the
+   instrumentation's timestamps are what they are. A second known consequence: the emitted conversation is one sequence, so a fan-out or
    multi-agent run (two `invoke_agent` subtrees with their own histories) presents two
    diverging histories and is reported as a prefix fault; per-subtree conversations are not
    designed in M5 and `otel.agents` records the count.
@@ -229,8 +238,10 @@ ordering below.
    (span, attribute, message index, part index, step) tuple, so ties are impossible and
    `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
    after its `tool_call`; the completeness check enforces it.
-5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 lowercase hex characters
-   (a fault otherwise: base64 ids from non-compliant producers are refused, not converted);
+5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 hex characters in either
+   case (OTLP/JSON ids are case-insensitive hex; the adapter compares, matches and emits ids
+   *lowercased*, an invertible canonicalisation of a byte string, not a repair; base64 ids
+   from non-compliant producers are a fault, refused, not converted);
    `agent.name` = `gen_ai.agent.name` from the *root-most* `invoke_agent` span: the
    earliest-starting parentless one, ties by file position, and if none is parentless the
    earliest by the same key; else `service.name`; else `unknown`; a present value that is not
@@ -251,21 +262,23 @@ first:
 | Check | Why it is required |
 | :-- | :-- |
 | every span's `parentSpanId`, when non-empty, names a span in the document | a missing parent is a signature of sampling or a dropped batch. ADR-0002 §6 requires unsampled capture, which the adapter can only *partially* observe: it detects orphaned spans and unresolved calls, not a truncated tail (a dropped last inference span or a lost final batch leaves every parent present); the precondition remains the operator's |
-| all spans share one `traceId`, and it is 32 lowercase hex characters | one trace is one run; two runs in one file are two traces; v1 needs an identifier |
+| all spans share one `traceId` (compared lowercased), and it is 32 hex characters | one trace is one run; two runs in one file are two traces; v1 needs an identifier |
 | every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
 | every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent, an object, or a string that parses to an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
 | every `tool_call` has a selected result, and it is after the call in `seq` (the ordering key of step 4, decided in nanoseconds) | v1's pairing rule |
-| every `execute_tool` span and every `tool_call_response` id matches a `tool_call` | a result without a call is a hole in the record |
+| every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span processed *after* the span that emitted its call | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
+| every `execute_tool` span's `gen_ai.tool.name` equals the matched call's `name` | the record must not say a different tool ran than was called |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
 | timestamps are present, non-zero, end ≥ start, and every `intValue` the adapter reads is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
-| the document has at least one span; every `spanId` is present and 16 lowercase hex characters, and values are unique | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
+| the document has at least one span; every `spanId` is present and 16 hex characters in either case, and values are unique when lowercased; `parentSpanId` matches by lowercased value | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
 | `service.name`, when present on several resources, is one value | `agent.name` must be a function of the document; differing names are a fault naming the resources |
-| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug |
+| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug: the CLI exits `70` with a traceback and prints no report, so a bug is never mistaken for a completeness finding |
 
 A report lists each failing check with the span ids, attribute keys, message and part
 indices concerned (locations only, never content: the report is what an operator files, and
 message text is the most sensitive thing in the document); a span whose `spanId` is missing
-or malformed is named by its index path `resourceSpans[i].scopeSpans[j].spans[k]`. The CLI exit code is `1` for a
+or malformed is named by its index path `resourceSpans[i].scopeSpans[j].spans[k]`, prefixed
+`[d].` when the top level is an array of documents. The CLI exit code is `1` for a
 report, `0` for a trace, `2` for a file that cannot be read or decoded at all (not JSON,
 not I-JSON, over the byte, node or depth bound).
 

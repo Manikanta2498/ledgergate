@@ -1201,8 +1201,7 @@ class TestFifthReviewFindings:
         # and the registry catches the same shape on a document built without validation
         from ledgergate.invariants import runtime_decisions_are_verdicts
 
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         assert any("carry the verdict" in f.message for f in runtime_decisions_are_verdicts(built))
 
     def test_a_consumption_without_any_approval_fails(self, journal_path: str) -> None:
@@ -1295,8 +1294,7 @@ class TestSixthReviewFindings:
 
         doc = self._denied_then_approved(tmp_path)
         # a model built without validation, so the invariant, not the grammar, must catch it
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         findings = denied_never_reaches_ledger(built)
         assert any("operation that was denied" in f.message for f in findings)
 
@@ -1408,6 +1406,28 @@ def _to_event(doc: dict[str, Any]) -> Any:
     from ledgergate.trace.v2 import V2Event
 
     return TypeAdapter(V2Event).validate_python(doc)
+
+
+def _unvalidated(doc: dict[str, Any]) -> TraceV2:
+    """A TraceV2 whose *fields* are typed but whose grammar was not checked: for exercising a
+    registry row on a shape the grammar would refuse at load."""
+    from pydantic import TypeAdapter
+
+    from ledgergate.trace.models import AccountDoc, CurrencyDoc
+
+    built = TraceV2.model_construct(**doc)
+    object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+    if doc.get("currencies") is not None:
+        object.__setattr__(
+            built,
+            "currencies",
+            tuple(TypeAdapter(CurrencyDoc).validate_python(c) for c in doc["currencies"]),
+        )
+    if doc.get("chart") is not None:
+        object.__setattr__(
+            built, "chart", tuple(TypeAdapter(AccountDoc).validate_python(a) for a in doc["chart"])
+        )
+    return built
 
 
 class TestSeventhReviewFindings:
@@ -1538,8 +1558,7 @@ class TestSeventhReviewFindings:
         # and the registry catches the same shape on a model built without validation
         from ledgergate.invariants import runtime_decisions_are_verdicts
 
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         assert any(
             "more than one decision" in f.message for f in runtime_decisions_are_verdicts(built)
         )
@@ -2232,8 +2251,7 @@ class TestAggregateWitnessing:
         d["decision"], d["matched_rule"], d["reason"] = "allow", "w.within_limits", "x"
         # an allow needs a pair; keep the grammar honest by leaving the pair out and the
         # tool_result denied: the registry, not the grammar, must catch the forged input
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         from ledgergate.invariants import decision_recomputes
 
         assert any("trace witnesses 2000" in f.message for f in decision_recomputes(built))
@@ -2245,8 +2263,7 @@ class TestAggregateWitnessing:
         d["context"]["subject"] = "someone-else"
         d["context"]["aggregates"]["applied.refund.USD.3600s"] = "0"
         d["decision"], d["matched_rule"], d["reason"] = "allow", "w.within_limits", "x"
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         findings = decision_recomputes(built)
         assert any("is not the command's" in f.message for f in findings)
 
@@ -2264,16 +2281,14 @@ class TestNullSetRecomputation:
         doc = t.model_dump(mode="json")
         d = next(e for e in doc["events"] if e["type"] == "policy_decision")
         d["context"]["subject"] = "forged"
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         assert any("derives no subject" in f.message for f in decision_recomputes(built))
         doc = t.model_dump(mode="json")
         doc["policy_configuration"]["version"] = "other"
         from ledgergate.codec import digest
 
         doc["policy_config_digest"] = digest(doc["policy_configuration"])
-        built = TraceV2.model_construct(**doc)
-        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        built = _unvalidated(doc)
         assert any(
             "configuration is for set version" in f.message for f in decision_recomputes(built)
         )

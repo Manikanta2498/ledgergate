@@ -664,7 +664,9 @@ def read_result_binds_the_served_value(t: TraceV2) -> list[Finding]:
     return out
 
 
-RECOMPUTABLE_SETS = frozenset({"ThresholdPolicySet", "NullPolicySet"})
+RECOMPUTABLE_SETS = frozenset(
+    {"ledgergate.journal.policy.ThresholdPolicySet", "ledgergate.journal.policy.NullPolicySet"}
+)
 """The sets whose rules are wholly declarative; a subclass or a custom set is code, and its
 decisions are evidence only (``no_evidence`` for recomputation)."""
 
@@ -695,7 +697,7 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
                 f" {t.policy_set_version!r}",
             )
         )
-    if config.get("set") == "NullPolicySet":
+    if config.get("set") == "ledgergate.journal.policy.NullPolicySet":
         null = NullPolicySet()
         for iid, d in _decided(t).items():
             if d.runtime_written:
@@ -735,7 +737,7 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
         intent = intents.get(iid)
         derived_subject = None
         if isinstance(intent, CommandIntent):
-            derived_subject = getattr(intent.command, "transaction_id", None)
+            derived_subject = policy.subject_of(intent.command.to_command(t.registry()))
         if c.subject != derived_subject:
             out.append(
                 Finding(

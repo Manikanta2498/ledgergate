@@ -110,6 +110,12 @@ class PolicySet(Protocol):
     def evaluate(self, context: PolicyContext) -> Decision: ...
 
 
+def set_name(kind: type) -> str:
+    """The module-qualified class name a configuration records: two sets with one name in
+    two modules are two sets."""
+    return f"{kind.__module__}.{kind.__qualname__}"
+
+
 AMOUNT_KINDS = frozenset({"open_transaction", "refund"})
 """The command kinds that carry one amount a threshold can govern."""
 
@@ -140,9 +146,9 @@ class NullPolicySet:
     version = "none"
 
     def configuration(self) -> Mapping[str, Any] | None:
-        # The class name is part of the configuration, as for every set: a subclass with
-        # other semantics cannot share a journal defined under the null set.
-        return {"set": type(self).__qualname__, "version": self.version}
+        # The module-qualified class name is part of the configuration, as for every set: a
+        # subclass with another name cannot share a journal defined under the null set.
+        return {"set": set_name(type(self)), "version": self.version}
 
     def configuration_digest(self) -> str:
         from ledgergate.codec import digest
@@ -242,7 +248,7 @@ class ThresholdPolicySet:
         """The declarative rules as a JSON document; :meth:`from_configuration` inverts it, so
         a consumer holding the document can recompute every decision this set made."""
         return {
-            "set": type(self).__qualname__,
+            "set": set_name(type(self)),
             "version": self.version,
             "deny_above": [{**asdict(x), "amount": str(x.amount)} for x in self.deny_above],
             "approve_above": [{**asdict(x), "amount": str(x.amount)} for x in self.approve_above],
@@ -255,8 +261,8 @@ class ThresholdPolicySet:
 
     @classmethod
     def from_configuration(cls, doc: Mapping[str, Any]) -> ThresholdPolicySet:
-        if doc.get("set") != cls.__qualname__:
-            raise ValueError(f"configuration is for {doc.get('set')!r}, not {cls.__qualname__}")
+        if doc.get("set") != set_name(cls):
+            raise ValueError(f"configuration is for {doc.get('set')!r}, not {set_name(cls)}")
         return cls(
             version=str(doc["version"]),
             deny_above=[

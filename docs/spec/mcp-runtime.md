@@ -17,15 +17,19 @@ named where it applies and recorded in the document that owns it: the journal ga
 non-identifier principal when the object is built; the journal's transaction wrapper
 classifies every `sqlite3.Error` by mechanism, on both the `BEGIN IMMEDIATE` branch and the
 statement branch, so the server's exit rule below has a mechanism for the half of "the rows
-contradict each other" that the database, not Python, detects: `sqlite3.IntegrityError` (a
-`CHECK`, trigger or foreign key firing on a row the process built) and any error whose
-primary result code (`sqlite_errorcode & 0xff`, Python 3.11+) is `SQLITE_CORRUPT` or
-`SQLITE_NOTADB` become the journal's `IntegrityError`; `sqlite3.ProgrammingError` and
-`sqlite3.InterfaceError` (a bug in the process, not a state of the file) are re-raised
-unmapped and take the `-32603` path; every other `sqlite3.Error` (`SQLITE_BUSY`,
-`SQLITE_LOCKED`, `SQLITE_FULL`, `SQLITE_IOERR`, `SQLITE_READONLY` and the rest: the journal
-unavailable or the environment failing) is the base `JournalError`, answered `-32000` with
-the session continuing; and `codec.loads` is made total over its refusals (below).
+contradict each other" that the database, not Python, detects, in this order: first the class test, so
+`sqlite3.ProgrammingError` and `sqlite3.InterfaceError` (a bug in the process, not a state
+of the file; module-raised, and carrying no `sqlite_errorcode` at all) are re-raised unmapped
+before any result code is read and take the `-32603` path; then `sqlite3.IntegrityError` (a
+`CHECK`, trigger or foreign key firing on a row the process built) becomes the journal's
+`IntegrityError`; then any error whose primary result code
+(`getattr(exc, "sqlite_errorcode", 0) & 0xff`, present on SQLite-originated errors from
+Python 3.11) is `SQLITE_CORRUPT` or `SQLITE_NOTADB` becomes `IntegrityError` too; every other
+`sqlite3.Error` (`SQLITE_BUSY`, `SQLITE_LOCKED`, `SQLITE_FULL`, `SQLITE_IOERR`,
+`SQLITE_READONLY` and the rest: the journal unavailable or the environment failing) is the
+base `JournalError`, answered `-32000` with the session continuing; the M4 tests include a
+module-raised `ProgrammingError` taking the `-32603` path; and `codec.loads` is made total
+over its refusals (below).
 
 ## Terms
 
@@ -241,7 +245,9 @@ request was answered, once; the invariant "always answered" holds on this path t
 [--approval-key KEY] [--token-key-file FILE] [--principal NAME]`.
 
 The server lives in `ledgergate.mcp`, a layer beside `runner` directly under `cli`, that imports
-`codec` (for `loads`) and never `trace`, `derive`, `invariants` or `runner`. The layers
+`journal` (the `Journal`, its error classes, the effects it needs), `ledger` (`ChartOfAccounts`
+and the `Clock`/`IdGenerator` protocols) and `codec` (`loads`, `canonical_text`), and never
+`trace`, `derive`, `invariants` or `runner`. The layers
 contract gains that layer, and, since a layers contract only forbids upward imports, a
 separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what enforces the
 "never"; ADR-0002's "final shape" sentence is amended to name the layer.

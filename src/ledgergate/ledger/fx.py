@@ -75,6 +75,15 @@ def conversion_entry(
     """
     if not money.is_positive:
         raise InvalidAmountError(f"conversion amount must be positive, got {money}")
+    legs: tuple[str, ...] = (
+        (source_account, destination_account)
+        if money.currency == to
+        else (source_account, source_clearing, destination_clearing, destination_account)
+    )
+    if len(set(legs)) != len(legs):
+        raise InvalidAmountError(
+            "conversion legs must be distinct accounts; aliased legs move nothing"
+        )
     priced = price(money, to, rates, rounding)
     label = description or f"convert {priced.source} to {priced.destination} @ {priced.rate}"
 

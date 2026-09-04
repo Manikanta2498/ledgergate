@@ -195,7 +195,7 @@ class TestNoRawValueReachesStorage:
 
     def test_definition_account_names_are_redacted(self, tokenizing: Journal) -> None:
         (d,) = table(tokenizing.path, "definition")
-        names = [a["name"] for a in json.loads(d[11])]
+        names = [a["name"] for a in json.loads(d[12])]
         assert all(n == "" or REDACTION_PATTERN.match(n) for n in names)
         assert d[6] == "acme" and d[7] == "v1"
 

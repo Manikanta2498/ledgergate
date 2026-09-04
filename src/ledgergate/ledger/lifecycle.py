@@ -11,8 +11,10 @@ cumulative refunds to the full amount lands in ``REFUNDED``, anything less lands
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
+from types import MappingProxyType
 
 from ledgergate.ledger.errors import (
     CurrencyMismatchError,
@@ -51,23 +53,27 @@ class TransactionEvent(Enum):
 
 S, E = TransactionStatus, TransactionEvent
 
-TRANSITIONS: dict[tuple[TransactionStatus, TransactionEvent], TransactionStatus] = {
-    (S.PENDING, E.AUTHORIZE): S.AUTHORIZED,
-    (S.PENDING, E.CANCEL): S.CANCELLED,
-    (S.PENDING, E.FAIL): S.FAILED,
-    (S.AUTHORIZED, E.SETTLE): S.SETTLED,
-    (S.AUTHORIZED, E.CANCEL): S.CANCELLED,
-    (S.AUTHORIZED, E.FAIL): S.FAILED,
-    # Two events have data-dependent destinations, and the table records only that they
-    # are *permitted*. REFUND lands in REFUNDED or PARTIALLY_REFUNDED depending on the
-    # running total; RESOLVE_DISPUTE returns to whichever of SETTLED or PARTIALLY_REFUNDED
-    # the transaction was in before the dispute. See `Transaction.advance` / `refund`.
-    (S.SETTLED, E.REFUND): S.PARTIALLY_REFUNDED,
-    (S.PARTIALLY_REFUNDED, E.REFUND): S.PARTIALLY_REFUNDED,
-    (S.SETTLED, E.DISPUTE): S.DISPUTED,
-    (S.PARTIALLY_REFUNDED, E.DISPUTE): S.DISPUTED,
-    (S.DISPUTED, E.RESOLVE_DISPUTE): S.SETTLED,
-}
+TRANSITIONS: Mapping[tuple[TransactionStatus, TransactionEvent], TransactionStatus] = (
+    MappingProxyType(
+        {
+            (S.PENDING, E.AUTHORIZE): S.AUTHORIZED,
+            (S.PENDING, E.CANCEL): S.CANCELLED,
+            (S.PENDING, E.FAIL): S.FAILED,
+            (S.AUTHORIZED, E.SETTLE): S.SETTLED,
+            (S.AUTHORIZED, E.CANCEL): S.CANCELLED,
+            (S.AUTHORIZED, E.FAIL): S.FAILED,
+            # Two events have data-dependent destinations, and the table records only that they
+            # are *permitted*. REFUND lands in REFUNDED or PARTIALLY_REFUNDED depending on the
+            # running total; RESOLVE_DISPUTE returns to whichever of SETTLED or PARTIALLY_REFUNDED
+            # the transaction was in before the dispute. See `Transaction.advance` / `refund`.
+            (S.SETTLED, E.REFUND): S.PARTIALLY_REFUNDED,
+            (S.PARTIALLY_REFUNDED, E.REFUND): S.PARTIALLY_REFUNDED,
+            (S.SETTLED, E.DISPUTE): S.DISPUTED,
+            (S.PARTIALLY_REFUNDED, E.DISPUTE): S.DISPUTED,
+            (S.DISPUTED, E.RESOLVE_DISPUTE): S.SETTLED,
+        }
+    )
+)
 
 TERMINAL: frozenset[TransactionStatus] = frozenset({S.REFUNDED, S.CANCELLED, S.FAILED})
 

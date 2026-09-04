@@ -41,8 +41,8 @@
       },
       "required": [
         "account_id",
-        "kind",
-        "currency"
+        "currency",
+        "kind"
       ],
       "title": "AccountDoc",
       "type": "object"
@@ -95,9 +95,9 @@
         }
       },
       "required": [
+        "event",
         "key",
-        "transaction_id",
-        "event"
+        "transaction_id"
       ],
       "title": "AdvanceDoc",
       "type": "object"
@@ -156,6 +156,119 @@
         "name"
       ],
       "title": "AgentDoc",
+      "type": "object"
+    },
+    "ApprovalPresentation": {
+      "additionalProperties": false,
+      "description": "The presentation row: one per artefact presented, carrying the pure-check result and,\nonce the signature verified, the approver's identity fields. Nothing of an unverified\nartefact but its fixed-grammar bindings is here, as in the journal.",
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
+        "approver": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approver"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "check_result": {
+          "enum": [
+            "checks_passed",
+            "approval_invalid",
+            "approval_expired",
+            "approval_scope_mismatch",
+            "approval_not_applicable"
+          ],
+          "title": "Check Result",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "title": "Issued At",
+          "type": "string"
+        },
+        "journal_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Journal Id",
+          "type": "string"
+        },
+        "presentation_ref": {
+          "pattern": "^presentation-[1-9][0-9]*$",
+          "title": "Presentation Ref",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "approval_presentation",
+          "title": "Type",
+          "type": "string"
+        },
+        "verified": {
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "at",
+        "check_result",
+        "expires_at",
+        "fingerprint",
+        "intent_id",
+        "issued_at",
+        "journal_id",
+        "presentation_ref",
+        "seq",
+        "type",
+        "verified"
+      ],
+      "title": "ApprovalPresentation",
       "type": "object"
     },
     "ApprovalRef": {
@@ -245,19 +358,47 @@
         },
         "type": {
           "const": "command_intent",
-          "default": "command_intent",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
-        "intent_id",
         "call_id",
-        "command"
+        "command",
+        "intent_id",
+        "seq",
+        "type"
       ],
       "title": "CommandIntent",
+      "type": "object"
+    },
+    "ContextApproval": {
+      "additionalProperties": false,
+      "properties": {
+        "presentation": {
+          "minimum": 1,
+          "title": "Presentation",
+          "type": "integer"
+        },
+        "verdict": {
+          "enum": [
+            "approval_valid",
+            "approval_already_used",
+            "approval_not_applicable",
+            "approval_invalid",
+            "approval_expired",
+            "approval_scope_mismatch"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "presentation",
+        "verdict"
+      ],
+      "title": "ContextApproval",
       "type": "object"
     },
     "CurrencyDoc": {
@@ -332,8 +473,8 @@
         }
       },
       "required": [
-        "type",
-        "message"
+        "message",
+        "type"
       ],
       "title": "ErrorDoc",
       "type": "object"
@@ -420,17 +561,17 @@
         },
         "type": {
           "const": "invocation_resolution",
-          "default": "invocation_resolution",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
-        "intent_id",
+        "attempted_digest",
         "disposition",
-        "attempted_digest"
+        "intent_id",
+        "seq",
+        "type"
       ],
       "title": "InvocationResolution",
       "type": "object"
@@ -503,16 +644,16 @@
         },
         "type": {
           "const": "ledger_command",
-          "default": "ledger_command",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
+        "command",
         "command_id",
-        "command"
+        "seq",
+        "type"
       ],
       "title": "LedgerCommandEvent",
       "type": "object"
@@ -621,16 +762,16 @@
         },
         "type": {
           "const": "ledger_result",
-          "default": "ledger_result",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
         "command_id",
-        "ok"
+        "ok",
+        "seq",
+        "type"
       ],
       "title": "LedgerResultEvent",
       "type": "object"
@@ -703,16 +844,16 @@
         },
         "type": {
           "const": "legacy_intent",
-          "default": "legacy_intent",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
+        "command",
         "intent_id",
-        "command"
+        "seq",
+        "type"
       ],
       "title": "LegacyIntent",
       "type": "object"
@@ -747,16 +888,16 @@
         },
         "type": {
           "const": "message",
-          "default": "message",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
+        "content",
         "role",
-        "content"
+        "seq",
+        "type"
       ],
       "title": "MessageEvent",
       "type": "object"
@@ -809,11 +950,135 @@
         }
       },
       "required": [
+        "amount",
         "key",
-        "transaction_id",
-        "amount"
+        "transaction_id"
       ],
       "title": "OpenTransactionDoc",
+      "type": "object"
+    },
+    "PolicyContextDoc": {
+      "additionalProperties": false,
+      "description": "The persisted ``PolicyContext``, field for field. Nothing else is a context.",
+      "properties": {
+        "aggregates": {
+          "patternProperties": {
+            "^applied\\.[a-z_]+\\.[A-Z]{3}\\.[1-9][0-9]*s$": {
+              "pattern": "^-?[0-9]{1,40}$",
+              "type": "string"
+            }
+          },
+          "title": "Aggregates",
+          "type": "object"
+        },
+        "amount": {
+          "anyOf": [
+            {
+              "pattern": "^-?[0-9]{1,40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContextApproval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Command Digest",
+          "type": "string"
+        },
+        "command_kind": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command Kind"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "digest_kind": {
+          "enum": [
+            "fingerprint",
+            "request"
+          ],
+          "title": "Digest Kind",
+          "type": "string"
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string"
+        },
+        "policy_set_version": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Policy Set Version",
+          "type": "string"
+        },
+        "principal": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Principal",
+          "type": "string"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject"
+        }
+      },
+      "required": [
+        "command_digest",
+        "digest_kind",
+        "evaluated_at",
+        "policy_set_version",
+        "principal"
+      ],
+      "title": "PolicyContextDoc",
       "type": "object"
     },
     "PolicyDecision": {
@@ -850,11 +1115,7 @@
           "title": "Consumption Ref"
         },
         "context": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Context",
-          "type": "object"
+          "$ref": "#/$defs/PolicyContextDoc"
         },
         "decision": {
           "enum": [
@@ -896,20 +1157,20 @@
         },
         "type": {
           "const": "policy_decision",
-          "default": "policy_decision",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
-        "intent_id",
-        "policy_set_version",
+        "context",
         "decision",
+        "intent_id",
         "matched_rule",
+        "policy_set_version",
         "reason",
-        "context"
+        "seq",
+        "type"
       ],
       "title": "PolicyDecision",
       "type": "object"
@@ -935,8 +1196,8 @@
         }
       },
       "required": [
-        "key",
-        "draft"
+        "draft",
+        "key"
       ],
       "title": "PostDoc",
       "type": "object"
@@ -965,8 +1226,8 @@
       },
       "required": [
         "account",
-        "side",
-        "money"
+        "money",
+        "side"
       ],
       "title": "PostingDoc",
       "type": "object"
@@ -1014,18 +1275,18 @@
         },
         "type": {
           "const": "read_intent",
-          "default": "read_intent",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
+        "arguments",
         "at",
-        "intent_id",
         "call_id",
+        "intent_id",
+        "seq",
         "tool",
-        "arguments"
+        "type"
       ],
       "title": "ReadIntent",
       "type": "object"
@@ -1067,18 +1328,18 @@
         },
         "type": {
           "const": "read_result",
-          "default": "read_result",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
-        "intent_id",
         "cursor",
         "head",
-        "result_digest"
+        "intent_id",
+        "result_digest",
+        "seq",
+        "type"
       ],
       "title": "ReadResult",
       "type": "object"
@@ -1123,8 +1384,8 @@
       },
       "required": [
         "key",
-        "transaction_id",
-        "money"
+        "money",
+        "transaction_id"
       ],
       "title": "RefundDoc",
       "type": "object"
@@ -1160,8 +1421,8 @@
         }
       },
       "required": [
-        "key",
-        "entry_id"
+        "entry_id",
+        "key"
       ],
       "title": "ReverseDoc",
       "type": "object"
@@ -1217,17 +1478,17 @@
         },
         "type": {
           "const": "tool_call",
-          "default": "tool_call",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
+        "arguments",
         "at",
         "call_id",
+        "seq",
         "tool",
-        "arguments"
+        "type"
       ],
       "title": "ToolCallEvent",
       "type": "object"
@@ -1274,16 +1535,16 @@
         },
         "type": {
           "const": "tool_result",
-          "default": "tool_result",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "seq",
         "at",
         "call_id",
-        "ok"
+        "ok",
+        "seq",
+        "type"
       ],
       "title": "ToolResultEvent",
       "type": "object"
@@ -1346,6 +1607,7 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "approval_presentation": "#/$defs/ApprovalPresentation",
             "command_intent": "#/$defs/CommandIntent",
             "invocation_resolution": "#/$defs/InvocationResolution",
             "ledger_command": "#/$defs/LedgerCommandEvent",
@@ -1383,6 +1645,9 @@
             "$ref": "#/$defs/InvocationResolution"
           },
           {
+            "$ref": "#/$defs/ApprovalPresentation"
+          },
+          {
             "$ref": "#/$defs/PolicyDecision"
           },
           {
@@ -1396,7 +1661,7 @@
           }
         ]
       },
-      "maxItems": 200000,
+      "maxItems": 5000000,
       "title": "Events",
       "type": "array"
     },
@@ -1422,6 +1687,35 @@
       "title": "Metadata",
       "type": "object"
     },
+    "policy_config_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "type": "string"
+        }
+      ],
+      "default": "none",
+      "title": "Policy Config Digest"
+    },
+    "policy_configuration": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Policy Configuration"
+    },
     "policy_set_version": {
       "maxLength": 256,
       "minLength": 1,
@@ -1446,7 +1740,6 @@
     },
     "schema_version": {
       "const": "2",
-      "default": "2",
       "title": "Schema Version",
       "type": "string"
     },
@@ -1464,11 +1757,12 @@
     }
   },
   "required": [
-    "trace_id",
-    "started_at",
     "ended_at",
+    "events",
     "policy_set_version",
-    "events"
+    "schema_version",
+    "started_at",
+    "trace_id"
   ],
   "title": "TraceV2",
   "type": "object"

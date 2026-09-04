@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 import warnings
@@ -26,6 +27,8 @@ from typing import Any, TypeVar
 
 from ledgergate.codec import (
     CODEC_VERSION,
+    MAX_PAYLOAD_NODES,
+    MAX_TEXT,
     CodecError,
     IJsonError,
     canonical_text,
@@ -33,6 +36,7 @@ from ledgergate.codec import (
     digest,
     encode_command,
     looks_sensitive,
+    payload_size,
     require_ijson,
 )
 from ledgergate.journal.admission import (
@@ -87,6 +91,44 @@ from ledgergate.ledger.identifiers import require_identifier
 T = TypeVar("T")
 LOCAL_PRINCIPAL = "local"
 ENVELOPE_BOUND = 4096  # bytes of UTF-8, per the specification
+MAX_MESSAGE_CHARS = 65536  # the trace schema's bound on message content
+_BOUND = frozenset({"path", "clock", "ids", "admitter", "policy", "principal"})
+
+
+AGGREGATE_NAME = re.compile(r"applied\.[a-z_]+\.[A-Z]{3}\.[1-9][0-9]*s")
+DECIMAL_TEXT = re.compile(r"-?[0-9]{1,40}")
+
+
+def _bounded_subject(subject: Any) -> str | None:
+    """A set's subject is an identifier or nothing; anything else is a configuration fault,
+    so the context a trace carries is always one the trace models accept."""
+    if subject is None:
+        return None
+    try:
+        return require_identifier(subject, "policy subject")
+    except (InvalidIdentifierError, TypeError) as exc:
+        raise ConfigurationError(f"policy set returned an unusable subject: {exc}") from exc
+
+
+def _bounded_aggregates(aggregates: Any) -> dict[str, str]:
+    """Aggregates are ``applied.<kind>.<CCY>.<W>s -> decimal string``, the grammar the trace
+    enforces; a set returning anything else is misconfigured."""
+    if not isinstance(aggregates, Mapping) or any(
+        not isinstance(k, str)
+        or not isinstance(v, str)
+        or not AGGREGATE_NAME.fullmatch(k)
+        or not DECIMAL_TEXT.fullmatch(v)
+        for k, v in aggregates.items()
+    ):
+        raise ConfigurationError("policy set returned aggregates outside the recorded grammar")
+    return dict(aggregates)
+
+
+def _configuration_text(policy: PolicySet) -> str | None:
+    doc = policy.configuration()
+    return None if doc is None else canonical_text(doc)
+
+
 MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
 
@@ -117,6 +159,13 @@ class Response:
     error_message: str | None = None
     outcome: int | None = None
 
+    def __post_init__(self) -> None:
+        # Error messages are bounded by construction (fixed text plus identifiers of at most
+        # 256 characters); a longer one is a bug in whoever built it, and would leave the
+        # journal with a row the trace cannot carry, so it is refused before any write.
+        if self.error_message is not None and len(self.error_message) > MAX_TEXT:
+            raise IntegrityError("error message exceeds the trace bound")
+
     def as_tool_result(self) -> dict[str, Any]:
         if self.ok:
             return {"ok": True, "result": self.result}
@@ -135,6 +184,9 @@ class Definition:
     token_check: str = "none"  # noqa: S105 - identifies the key; not key material
     policy_config: str = "none"
     approval_key: str = "none"
+    policy_configuration: str | None = None
+    """The set's declarative rules as JCS text, when it has any; a trace carries it so a
+    verifier can recompute decisions. ``policy_config`` is its digest."""
 
     @property
     def registry(self) -> dict[str, Currency]:
@@ -223,6 +275,39 @@ class Journal:
     _pending_projection: tuple[Ledger, int] | None = field(init=False, default=None, repr=False)
     _approval_key: str = field(init=False, default="none", repr=False)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The components a definition binds (policy, admitter, principal, effects) are
+        # fixed for the life of the object: swapping one after open would let calls run
+        # under rules or a redaction key the definition never recorded.
+        if name in _BOUND and name in self.__dict__:
+            raise ConfigurationError(f"Journal.{name} is bound at open and cannot be replaced")
+        super().__setattr__(name, value)
+
+    def __post_init__(self) -> None:
+        # A set's version label is persisted in the definition and in every decision, and
+        # the trace carries it as an identifier; a set whose label is not one would produce a
+        # journal the trace refuses, so it is refused here, before any file exists.
+        try:
+            require_identifier(self.policy.version, "policy set version")
+        except (InvalidIdentifierError, TypeError) as exc:
+            raise ConfigurationError(f"policy set version is not an identifier: {exc}") from exc
+
+    def _check_binding(self) -> None:
+        """Re-assert, at the start of every transaction, that the components in use are the
+        ones the definition recorded; ``open`` checked once, and this makes the check hold
+        for every call rather than for the first."""
+        d = self._definition
+        if (
+            self.policy.version != d.policy_set_version
+            or self.policy.configuration_digest() != d.policy_config
+            or (self.admitter.token_domain, self.admitter.token_key_version)
+            != (d.token_domain, d.token_key_version)
+            or not hmac.compare_digest(self.admitter.key_check(), d.token_check)
+        ):
+            raise ConfigurationError(
+                "the policy set or admitter in use no longer matches the journal's definition"
+            )
+
     # ------------------------------------------------------------- lifecycle
 
     @classmethod
@@ -242,7 +327,9 @@ class Journal:
         against; ``none`` means no artefact can ever verify."""
         if approval_key != "none":
             verification_key(approval_key)  # refuse a malformed key at creation
-        elif getattr(policy, "approve_above", ()):
+        elif getattr(policy, "approve_above", ()):  # ThresholdPolicySet declares its lines;
+            # a custom set that returns approval_required without a key is not detectable
+            # here and its operations would wait forever (stated in journal.md)
             raise ConfigurationError(
                 "the policy set can require approval but the journal has no verification key,"
                 " so nothing could ever approve; supply approval_key or drop approve_above"
@@ -294,6 +381,18 @@ class Journal:
                     " number; operator-defined identifiers are stored as given",
                     stacklevel=3,
                 )
+        # Every result the journal will ever serve must be representable in a trace: the
+        # trial balance grows with the chart, so the chart is bounded by the payload bound.
+        zero = {"amount": "0", "currency": "XXX"}
+        probe_rows = [
+            {"account": a.account_id, "debit": zero, "credit": zero} for a in chart.values()
+        ]  # the exact shape _serve renders
+        nodes, _depth = payload_size({"rows": probe_rows, "balanced": True, "cursor": 0})
+        if nodes > MAX_PAYLOAD_NODES:
+            raise ConfigurationError(
+                f"a chart of {len(chart)} accounts serves a trial balance of {nodes} nodes,"
+                f" above the trace payload bound of {MAX_PAYLOAD_NODES}"
+            )
         definition = Definition(
             journal_id=secrets.token_hex(16),
             chart=chart,
@@ -304,12 +403,13 @@ class Journal:
             token_check=self.admitter.key_check(),
             policy_config=self.policy.configuration_digest(),
             approval_key=self._approval_key,
+            policy_configuration=_configuration_text(self.policy),
         )
         registry = definition.registry
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
                     1,
@@ -321,6 +421,7 @@ class Journal:
                     definition.token_key_version,
                     definition.token_check,
                     definition.policy_config,
+                    definition.policy_configuration,
                     definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
@@ -385,7 +486,17 @@ class Journal:
             except (ValueError, KeyError, TypeError, LedgerError) as exc:
                 raise IntegrityError(f"definition does not decode: {exc}") from exc
             self._definition = Definition(
-                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[9], row[10], row[5]
+                row[0],
+                chart,
+                currencies,
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[9],
+                row[10],
+                row[5],
+                row[11],
             )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
@@ -432,6 +543,7 @@ class Journal:
         except IJsonError as exc:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
         with self._txn():
+            self._check_binding()
             self._ensure_current()  # step 2
             scope = AdmissionScope(
                 self._definition.registry, self._definition.chart, self.principal, self._ledger
@@ -449,7 +561,10 @@ class Journal:
         of the trace schema's four; only ``content`` is free text."""
         if role not in MESSAGE_ROLES:
             raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}")
+        if len(content) > MAX_MESSAGE_CHARS:
+            raise ValueError(f"message content exceeds {MAX_MESSAGE_CHARS} characters")
         with self._txn():
+            self._check_binding()
             seq = self._alloc("events")
             self._conn.execute(
                 "INSERT INTO events VALUES (?,?,?,?)",
@@ -562,7 +677,7 @@ class Journal:
             principal=self.principal,
             subject=None
             if failed_verdict
-            else self._guarded(lambda: self.policy.subject_of(command)),
+            else _bounded_subject(self._guarded(lambda: self.policy.subject_of(command))),
             command_digest=fingerprint,
             digest_kind="fingerprint",
             evaluated_at=now,
@@ -572,7 +687,9 @@ class Journal:
             currency=None if money is None else money.currency.code,
             aggregates={}
             if failed_verdict
-            else self._guarded(lambda: self.policy.aggregates_for(command, now, _History(self))),
+            else _bounded_aggregates(
+                self._guarded(lambda: self.policy.aggregates_for(command, now, _History(self)))
+            ),
             approval=approval_ctx,
         )
         if failed_verdict:
@@ -950,11 +1067,20 @@ class Journal:
 
     def _guarded(self, call: Callable[[], T]) -> T:
         """A policy set is a pure function of its context; raising is a bug in the set, an
-        unrecorded failure, and named as such on every path that invokes it."""
+        unrecorded failure, and named as such on every path that invokes it. A decision's
+        rule and reason are bounded like every other short text a trace carries."""
         try:
-            return call()
+            result = call()
         except Exception as exc:
             raise ConfigurationError(f"policy set {self.policy.version!r} raised: {exc}") from exc
+        if isinstance(result, Decision) and (
+            len(result.matched_rule) > MAX_TEXT or len(result.reason) > MAX_TEXT
+        ):
+            raise ConfigurationError(
+                f"policy set {self.policy.version!r} returned a rule or reason over {MAX_TEXT}"
+                " characters"
+            )
+        return result
 
     def _current_outcome_kind(self, op_seq: int) -> str | None:
         row = self._conn.execute(
@@ -1184,6 +1310,12 @@ def _applied_result(applied: Applied) -> dict[str, Any]:
     return out
 
 
+def _bounded_name(name: str) -> str:
+    if len(name) > MAX_TEXT:
+        raise ConfigurationError(f"account name exceeds {MAX_TEXT} characters after redaction")
+    return name
+
+
 def _encode_chart(chart: ChartOfAccounts, admitter: Admitter) -> list[dict[str, Any]]:
     return [
         {
@@ -1191,7 +1323,7 @@ def _encode_chart(chart: ChartOfAccounts, admitter: Admitter) -> list[dict[str, 
             "kind": a.kind.value,
             "currency": a.currency.code,
             "allow_negative": a.allow_negative,
-            "name": admitter.redact_text(a.name),  # definition free text: class 1
+            "name": _bounded_name(admitter.redact_text(a.name)),  # definition free text: class 1
         }
         for a in chart.values()
     ]
@@ -1227,7 +1359,7 @@ def _read_definition_row(path: str) -> tuple[Any, ...] | None:
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
             " token_key_version, approval_key, chart, currencies, schema_version, token_check,"
-            " policy_config FROM definition"
+            " policy_config, policy_configuration FROM definition"
         ).fetchone()
         return None if row is None else tuple(row)
     finally:

@@ -46,7 +46,14 @@ from pydantic import (
     model_validator,
 )
 
-from ledgergate.codec import decode_command, encode_command
+from ledgergate.codec import (
+    MAX_PAYLOAD_DEPTH,
+    MAX_PAYLOAD_NODES,
+    MAX_TAGS,
+    MAX_TEXT,
+    decode_command,
+    encode_command,
+)
 from ledgergate.ledger import (
     CURRENCIES,
     Account,
@@ -72,9 +79,9 @@ LINE_BREAKS = "\r\n\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\x00"
 IDENTIFIER_PATTERN = rf"^[^\s{LINE_BREAKS}](?:[^{LINE_BREAKS}]*[^\s{LINE_BREAKS}])?$"
 
 Identifier = Annotated[str, Field(min_length=1, max_length=256, pattern=IDENTIFIER_PATTERN)]
-ShortText = Annotated[str, Field(max_length=1024)]
+ShortText = Annotated[str, Field(max_length=MAX_TEXT)]
 LongText = Annotated[str, Field(max_length=65536)]
-StringMap = Annotated[dict[str, ShortText], Field(max_length=100)]
+StringMap = Annotated[dict[str, ShortText], Field(max_length=MAX_TAGS)]
 CurrencyCode = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -90,9 +97,6 @@ def _to_utc(value: datetime) -> datetime:
 Timestamp = Annotated[AwareDatetime, AfterValidator(_to_utc)]
 
 Registry = Mapping[str, Currency]
-
-MAX_PAYLOAD_DEPTH = 32
-MAX_PAYLOAD_NODES = 10_000
 
 
 def _check_payload(value: JsonValue) -> JsonValue:

@@ -16,7 +16,7 @@ subject cannot receive more than a cap within a window however the requests are 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
@@ -91,6 +91,12 @@ class PolicySet(Protocol):
         a journal; the label alone is operator-typed and binds nothing."""
         ...
 
+    def configuration(self) -> Mapping[str, Any] | None:
+        """The declarative rules as a JSON document a consumer can recompute decisions
+        from, or ``None`` for a set whose rules are code: then a trace carries only the
+        digest and a verifier reports the recomputation as ``no_evidence``."""
+        ...
+
     def gates_read(self, tool: str) -> bool: ...
 
     def subject_of(self, command: Command) -> str | None:
@@ -102,6 +108,16 @@ class PolicySet(Protocol):
         ...
 
     def evaluate(self, context: PolicyContext) -> Decision: ...
+
+
+def set_name(kind: type) -> str:
+    """The module-qualified class name a configuration records: two sets with one name in
+    two modules are two sets."""
+    return f"{kind.__module__}.{kind.__qualname__}"
+
+
+AMOUNT_KINDS = frozenset({"open_transaction", "refund"})
+"""The command kinds that carry one amount a threshold can govern."""
 
 
 def command_amount(command: Command) -> Money | None:
@@ -129,8 +145,15 @@ class NullPolicySet:
 
     version = "none"
 
+    def configuration(self) -> Mapping[str, Any] | None:
+        # The module-qualified class name is part of the configuration, as for every set: a
+        # subclass with another name cannot share a journal defined under the null set.
+        return {"set": set_name(type(self)), "version": self.version}
+
     def configuration_digest(self) -> str:
-        return "none"
+        from ledgergate.codec import digest
+
+        return digest(self.configuration())
 
     def gates_read(self, tool: str) -> bool:
         return False
@@ -194,6 +217,11 @@ class ThresholdPolicySet:
         require_identifier(self.version, "policy set version")
         if self.version == "none":
             raise ValueError("'none' names the null policy set")
+        # Copy caller-owned sequences so the rules that were digested are the rules that run.
+        object.__setattr__(self, "deny_above", tuple(self.deny_above))
+        object.__setattr__(self, "approve_above", tuple(self.approve_above))
+        object.__setattr__(self, "window_caps", tuple(self.window_caps))
+        object.__setattr__(self, "gated_reads", frozenset(self.gated_reads))
         lines: list[Threshold | WindowCap] = [
             *self.deny_above,
             *self.approve_above,
@@ -202,29 +230,60 @@ class ThresholdPolicySet:
         for line in lines:
             if type(line.amount) is not int or line.amount < 0:
                 raise ValueError(f"{line!r}: amount must be a non-negative int of minor units")
+            if line.kind not in AMOUNT_KINDS:
+                # A rule over a command kind that carries no single amount would never fire
+                # and would suggest a governance that does not exist.
+                raise ValueError(
+                    f"{line!r}: rules apply to {sorted(AMOUNT_KINDS)}; {line.kind!r} carries"
+                    " no single amount"
+                )
+            if not isinstance(line.currency, str) or len(line.currency) != 3:
+                raise ValueError(f"{line!r}: currency must be a three-letter code")
         for cap in self.window_caps:
             seconds = cap.window.total_seconds()
             if seconds <= 0 or seconds != int(seconds):
                 raise ValueError(f"{cap!r}: window must be a positive whole number of seconds")
 
+    def configuration(self) -> dict[str, Any]:
+        """The declarative rules as a JSON document; :meth:`from_configuration` inverts it, so
+        a consumer holding the document can recompute every decision this set made."""
+        return {
+            "set": set_name(type(self)),
+            "version": self.version,
+            "deny_above": [{**asdict(x), "amount": str(x.amount)} for x in self.deny_above],
+            "approve_above": [{**asdict(x), "amount": str(x.amount)} for x in self.approve_above],
+            "window_caps": [
+                {**asdict(c), "amount": str(c.amount), "window": int(c.window.total_seconds())}
+                for c in self.window_caps
+            ],
+            "gated_reads": sorted(self.gated_reads),
+        }
+
+    @classmethod
+    def from_configuration(cls, doc: Mapping[str, Any]) -> ThresholdPolicySet:
+        if doc.get("set") != set_name(cls):
+            raise ValueError(f"configuration is for {doc.get('set')!r}, not {set_name(cls)}")
+        return cls(
+            version=str(doc["version"]),
+            deny_above=[
+                Threshold(x["kind"], x["currency"], int(x["amount"])) for x in doc["deny_above"]
+            ],
+            approve_above=[
+                Threshold(x["kind"], x["currency"], int(x["amount"])) for x in doc["approve_above"]
+            ],
+            window_caps=[
+                WindowCap(
+                    c["kind"], c["currency"], int(c["amount"]), timedelta(seconds=int(c["window"]))
+                )
+                for c in doc["window_caps"]
+            ],
+            gated_reads=frozenset(doc["gated_reads"]),
+        )
+
     def configuration_digest(self) -> str:
         from ledgergate.codec import digest
 
-        return digest(
-            {
-                "set": type(self).__qualname__,
-                "version": self.version,
-                "deny_above": [{**asdict(x), "amount": str(x.amount)} for x in self.deny_above],
-                "approve_above": [
-                    {**asdict(x), "amount": str(x.amount)} for x in self.approve_above
-                ],
-                "window_caps": [
-                    {**asdict(c), "amount": str(c.amount), "window": int(c.window.total_seconds())}
-                    for c in self.window_caps
-                ],
-                "gated_reads": sorted(self.gated_reads),
-            }
-        )
+        return digest(self.configuration())
 
     def gates_read(self, tool: str) -> bool:
         return tool in self.gated_reads

@@ -14,6 +14,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from tests.unit.journal.support import CHART, open_txn, rows
 
+from ledgergate.codec import digest
 from ledgergate.journal import (
     Approval,
     ApprovalError,
@@ -632,7 +633,7 @@ class TestConfigurationBinding:
         same = Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=POLICY)
         same.close()
         assert POLICY.configuration_digest() != looser.configuration_digest()
-        assert NullPolicySet().configuration_digest() == "none"
+        assert NullPolicySet().configuration_digest() == digest(NullPolicySet().configuration())
 
     def test_unverified_presentation_row_holds_no_identity_under_tokenizing_admitter(
         self, tmp_path: Path
@@ -859,13 +860,14 @@ class TestNoPolicyCodeOnFailedVerdict:
                 )
             conn.execute("ROLLBACK")
             # (b) a consumption of a presentation whose checks failed is refused by the trigger
+            other_inv = next(r for r in rows(conn, "invocations") if r[0] != inv)[0]
             conn.execute("BEGIN")
             failed = conn.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
             conn.execute(
                 "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     failed,
-                    inv,
+                    other_inv,
                     "0" * 32,
                     "x1",
                     "cfo",
@@ -886,7 +888,8 @@ class TestNoPolicyCodeOnFailedVerdict:
             ).lastrowid
             with pytest.raises(sqlite3.IntegrityError, match="checks passed"):
                 conn.execute(
-                    "INSERT INTO approval_consumptions VALUES (?,?,?,?)", (cons, "x1", failed, inv)
+                    "INSERT INTO approval_consumptions VALUES (?,?,?,?)",
+                    (cons, "x1", failed, other_inv),
                 )
             conn.execute("ROLLBACK")
             # (c) a consumption must carry its presentation's approval id and invocation

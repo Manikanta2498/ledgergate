@@ -119,7 +119,11 @@ def command_fingerprint(command: Command) -> str:
         case OpenTransaction(_, transaction_id, amount):
             return fingerprint(
                 "open",
-                {"txn": transaction_id, "amount": str(amount.amount), "ccy": amount.currency.code},
+                {
+                    "txn": transaction_id,
+                    "amount": str(amount.amount),
+                    "ccy": f"{amount.currency.code}/{amount.currency.exponent}",
+                },
             )
         case Advance(_, transaction_id, event, entry):
             return fingerprint(
@@ -136,7 +140,7 @@ def command_fingerprint(command: Command) -> str:
                 {
                     "txn": transaction_id,
                     "amount": str(money.amount),
-                    "ccy": money.currency.code,
+                    "ccy": f"{money.currency.code}/{money.currency.exponent}",
                     "entry": "" if entry is None else entry.canonical(),
                 },
             )
@@ -147,11 +151,13 @@ def command_fingerprint(command: Command) -> str:
 
 @dataclass(frozen=True, slots=True)
 class OperationRecord:
-    """What an idempotency key was first used for, and what it produced."""
+    """What an idempotency key was first used for, and what it produced: the entry, and the
+    transaction *as it was then*, so a replay returns the original result and never the
+    transaction's current state."""
 
     fingerprint: str
     entry_id: str | None = None
-    transaction_id: str | None = None
+    transaction: Transaction | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,9 +400,7 @@ class Ledger:
         return Applied(
             self,
             entry=None if record.entry_id is None else self._by_id[record.entry_id],
-            transaction=(
-                None if record.transaction_id is None else self.transactions[record.transaction_id]
-            ),
+            transaction=record.transaction,
             replayed=True,
         )
 
@@ -413,7 +417,7 @@ class Ledger:
                 balances.get(account.account_id, 0) + posting.signed_amount
             )
 
-        for account_id in draft.account_ids:
+        for account_id in draft.account_order:  # first-appearance order, never set order
             account = self.chart[account_id]
             if account.allow_negative:
                 continue
@@ -434,7 +438,7 @@ class Ledger:
         clock: Clock,
         ids: IdGenerator,
         transactions: Mapping[str, Transaction] | None = None,
-        transaction_id: str | None = None,
+        transaction: Transaction | None = None,
     ) -> Applied:
         """Post ``draft`` as the next entry. Effects are consumed only after validation."""
         balances = self._validate(draft)
@@ -462,14 +466,13 @@ class Ledger:
             self,
             entries=(*self.entries, entry),
             transactions=self.transactions if transactions is None else transactions,
-            operations={**self.operations, key: OperationRecord(print_, entry_id, transaction_id)},
+            operations={**self.operations, key: OperationRecord(print_, entry_id, transaction)},
             head=digest,
             _balances=balances,
             _reversals=reversals,
             _by_id={**self._by_id, entry_id: entry},
         )
-        txn = None if transaction_id is None else new.transactions[transaction_id]
-        return Applied(new, entry=entry, transaction=txn)
+        return Applied(new, entry=entry, transaction=transaction)
 
     def _post(self, key: str, draft: EntryDraft, *, clock: Clock, ids: IdGenerator) -> Applied:
         print_ = command_fingerprint(Post(key, draft))
@@ -501,7 +504,7 @@ class Ledger:
             transactions={**self.transactions, transaction_id: txn},
             operations={
                 **self.operations,
-                key: OperationRecord(print_, transaction_id=transaction_id),
+                key: OperationRecord(print_, transaction=txn),
             },
         )
         return Applied(new, transaction=txn)
@@ -562,7 +565,7 @@ class Ledger:
                 transactions=transactions,
                 operations={
                     **self.operations,
-                    key: OperationRecord(print_, transaction_id=txn.transaction_id),
+                    key: OperationRecord(print_, transaction=txn),
                 },
             )
             return Applied(new, transaction=txn)
@@ -574,7 +577,7 @@ class Ledger:
             clock=clock,
             ids=ids,
             transactions=transactions,
-            transaction_id=txn.transaction_id,
+            transaction=txn,
         )
 
 
@@ -583,14 +586,15 @@ def _require_entry_moving(
 ) -> None:
     """A monetary event needs an entry, and that entry must move exactly ``amount``.
 
-    "Move" means the gross debited in the transaction's currency. This ties the lifecycle
-    to the books: a 100.00 settlement cannot be backed by a 0.01 entry, and a 30.00
-    refund cannot be recorded against an unrelated fees posting. Which *accounts* the
-    money moves between is not checked here; that is the invariants layer's job.
+    "Move" means the net that changes hands in the transaction's currency (the sum of each
+    account's positive net movement), so a debit and credit of the same account cancel and
+    move nothing. This ties the lifecycle to the books: a 100.00 settlement cannot be backed
+    by a 0.01 entry, nor by a 100.00 that goes nowhere. Which *accounts* the money moves
+    between is not checked here; that is the invariants layer's job.
     """
     if entry is None:
         raise EntryRequiredError(transaction_id, event.value)
-    moved = entry.gross(amount.currency)
+    moved = entry.moved(amount.currency)
     if moved != amount:
         raise EntryAmountMismatchError(transaction_id, str(amount), str(moved))
 

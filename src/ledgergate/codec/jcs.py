@@ -65,6 +65,10 @@ def _write(value: Any, out: list[str]) -> None:
     elif isinstance(value, float):
         out.append(_es_number(value))
     elif isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:  # lone surrogate: outside I-JSON
+            raise JcsError("string contains an unpaired surrogate") from exc
         out.append(_string(value))
     elif isinstance(value, Mapping):
         _object(value, out)

@@ -22,12 +22,15 @@ tool_call                        ordinal 0
                                        request_digest for reads, input_digest for invalid),
                                        approval presentation ref if one was presented
                                        disposition: new | replay | conflict | approval | read | invalid
-  [policy_decision]                3   iff disposition in {new, approval}, or a read whose tool the
+  [approval_presentation]          3   iff the resolution carries a presentation_ref: the
+                                       presentation row (check result, verified, bindings,
+                                       approver identity only once the signature verified)
+  [policy_decision]                4   iff disposition in {new, approval}, or a read whose tool the
                                        configured policy set declares gated (the null set gates none)
-  [ledger_command                  4   iff a policy_decision == allow on a write intent
-   ledger_result]                  5
-  [read_result]                    6   iff disposition == read and no policy_decision == deny
-tool_result                      7
+  [ledger_command                  5   iff a policy_decision == allow on a write intent
+   ledger_result]                  6
+  [read_result]                    7   iff disposition == read and no policy_decision == deny
+tool_result                      8
 ```
 
 **Ordering.** Every event derived from one invocation is placed at
@@ -165,8 +168,11 @@ Derived identifiers are decimal, positive, prefixed, and must pass `require_iden
 - a standalone `message` carries the time the journal recorded it (kept in its row).
 - lifted v1 content: `intent_id` is `legacy-<v1 seq of the ledger_command>` (bounded by
   position, since a v1 `command_id` may already use the whole identifier length),
-  `operation_id` is the v1 `command_id`, and `attempted_digest` is the command's fingerprint
-  recomputed on lift (and re-checked by the model on load, as for every command intent).
+  `operation_id` is the v1 `command_id`, and `attempted_digest` is the JCS digest of the
+  command document (not the core fingerprint: a v1 document may record a command the core
+  refused to construct, and the digest must be computable for every valid v1 document);
+  re-checked by the model on load. A v1 document without `ended_at` lifts with the latest
+  event time.
 
 `seq` is the dense enumeration of emitted events in anchored order: `(invocation
 journal_sequence, ordinal)` for runtime content, `(v1 seq, ordinal)` for lifted content,
@@ -197,8 +203,9 @@ the largest outcome any earlier resolution referenced, since every outcome is na
 resolution that produced it and that resolution precedes any later read, so a stale or
 premature projection fails; and its `result_digest` is the JCS digest of the value the
 caller was served in the `tool_result`, so the served value is bound to the row (agreement
-of that value with the replayed books is not checked). A further row checks that what the
-caller was told is what the journal did, per the decision-to-outcome tables: success iff a
+of that value with the replayed books is not checked). A further row checks that the *committed response*
+(the outbound event the journal committed; not proof of delivery, see journal.md
+`invocation_responses`) is what the journal did, per the decision-to-outcome tables: success iff a
 read was not denied or the ledger applied, otherwise the error type of the path taken and,
 on a decided path, the decision's rule and reason as the message; an applied write's served
 head, sequence and entry equal to the ledger result's and a rejected write's served error
@@ -209,6 +216,56 @@ failed, `pass` only if none failed *and at least one ran*, otherwise `no_evidenc
 process exits 0 for `pass`, 1 for `fail`, 3 for `no_evidence`, 2 when the source could not
 be read; a trace that carries nothing any invariant quantifies over is reported, never
 passed.
+
+## Recomputation and the policy configuration
+
+The top level carries `policy_config_digest` (the definition's) and, when the set is
+declarative, `policy_configuration`, the JCS document the digest is over; the model requires
+the two to agree and every decision to name the trace's set. `PolicyDecision.context` is a
+typed `PolicyContextDoc`, not an open object: every field the journal persists, with fixed
+grammars, and the model requires its verdict and presentation to agree with the decision's.
+A registry row (`decision_recomputes`) first recomputes every set-derived input in the
+persisted context from the trace itself: the subject from the command intent
+(`transaction_id`, or none), and each aggregate `applied.<kind>.<CCY>.<W>s` as the sum of the
+applied ledger commands of that kind, currency and subject produced by earlier intents whose
+requested time lies within the window ending at the evaluation time; a context whose subject
+or aggregates the trace does not support fails. It then re-runs the configuration over the
+context and requires the recorded decision, rule and reason; it needs a configuration for a set whose
+rules are wholly declarative (`ThresholdPolicySet`, `NullPolicySet`) and reports
+`no_evidence` for a subclass or a custom set, whose rules are code. `runtime.` rules are a
+closed registry (`runtime.approval_rejected`); any other is refused at load.
+
+## Presentations
+
+An `approval_presentation` event (ordinal 3, between the resolution and the decision)
+carries the presentation row: `presentation_ref`, `verified`, `check_result`, the presented
+`journal_id` and `fingerprint`, the timestamps, and the approver identity fields exactly when
+the signature verified. Exactly one exists iff the resolution carries a `presentation_ref`,
+and a decision after a presentation carries its verdict, so every reference to a presentation
+resolves to typed evidence, on every disposition.
+
+## Boundary binding
+
+The boundary call *is* the intent, and the model checks it: an `invalid` call carries the
+empty arguments, no idempotency key and no presentation; a read call carries the read's tool
+and arguments and no key; a write call, with its idempotency key, decodes to the intent's
+command. Every later intent against an operation (`replay`, `conflict`, `approval`) carries
+the key that created it, since the fingerprint excludes the key by design.
+
+## Limits
+
+Journal admission enforces every bound the trace has on what the journal admits or serves:
+the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per entry,
+1,024 characters for descriptions, tag keys and values, 100 tags per entry, 65,536
+characters per message; `create` refuses a chart whose trial balance would not fit the
+payload bound, an account name over 1,024 characters, or a policy set whose version label
+is not an identifier (checked when the journal object is built, before any file exists); and before any row is written the
+journal refuses, as unrecorded configuration faults, an error message, rule or reason over
+1,024 characters and a policy set's subject or aggregates outside the grammars the context
+carries. So every admitted input, every served result and every persisted context is
+representable here; `events` is bounded at 5,000,000 and derivation is
+whole-journal. Segmentation of a journal that outgrows that bound is not designed; it is
+the M4 runtime's first design question, stated in ADR-0002.
 
 ## Status
 

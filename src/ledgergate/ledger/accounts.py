@@ -18,6 +18,7 @@ from typing import TypeVar
 from ledgergate.ledger.errors import (
     ConflictingCurrencyError,
     DuplicateAccountError,
+    InvalidAmountError,
     UnknownAccountError,
 )
 from ledgergate.ledger.identifiers import require_identifier
@@ -81,6 +82,14 @@ class Account:
 
     def __post_init__(self) -> None:
         require_identifier(self.account_id, "account id")
+        if not isinstance(self.kind, AccountType):
+            raise InvalidAmountError(f"account kind must be an AccountType, got {self.kind!r}")
+        if not isinstance(self.currency, Currency):
+            raise InvalidAmountError(f"account currency must be a Currency, got {self.currency!r}")
+        if not isinstance(self.allow_negative, bool):
+            raise InvalidAmountError(f"allow_negative must be a bool, got {self.allow_negative!r}")
+        if not isinstance(self.name, str):
+            raise InvalidAmountError(f"account name must be a str, got {self.name!r}")
 
 
 class ChartOfAccounts(Mapping[str, Account]):

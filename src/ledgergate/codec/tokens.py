@@ -46,7 +46,7 @@ class Tokenizer:
     def __init__(self, key: bytes, *, domain: str, key_version: str) -> None:
         if len(key) < MIN_KEY_BYTES:
             raise ValueError(f"token key must be at least {MIN_KEY_BYTES} bytes")
-        if not DOMAIN_PATTERN.match(domain):
+        if not DOMAIN_PATTERN.fullmatch(domain):
             raise ValueError(f"token domain {domain!r} does not match {DOMAIN_PATTERN.pattern}")
         require_identifier(key_version, "key version")
         self._key = bytes(key)
@@ -67,7 +67,7 @@ class Tokenizer:
         the token once more after construction, so a token is always a valid identifier."""
         require_identifier(raw, "identifier")
         token = f"tk1_{self.domain}_{self._mac(self.domain, raw.encode('utf-8'))}"
-        if not TOKEN_PATTERN.match(token):  # pragma: no cover - by construction
+        if not TOKEN_PATTERN.fullmatch(token):  # pragma: no cover - by construction
             raise ValueError("token construction produced an ill-formed token")
         return require_identifier(token, "token")
 
@@ -77,7 +77,7 @@ class Tokenizer:
         if text == "":
             return ""
         token = f"rd1_{self.domain}_{self._mac(self.domain + ':text', text.encode('utf-8'))}"
-        if not REDACTION_PATTERN.match(token):  # pragma: no cover - by construction
+        if not REDACTION_PATTERN.fullmatch(token):  # pragma: no cover - by construction
             raise ValueError("redaction construction produced an ill-formed token")
         return token
 

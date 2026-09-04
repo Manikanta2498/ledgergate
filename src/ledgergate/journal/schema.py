@@ -18,8 +18,9 @@ from pathlib import Path
 
 # ruff: noqa: S608 - table names are interpolated from FACT_TABLES, a module constant, never input
 
-# 2: token_check; 3: policy_config, nullable approval identity; 4: message rows carry `at`
-SCHEMA_VERSION = 4
+# 2: token_check; 3: policy_config, nullable approval identity; 4: message rows carry `at`;
+# 5: definition.policy_configuration, approvals.invocation UNIQUE, decision<->consumption link
+SCHEMA_VERSION = 5
 
 FACT_TABLES = (
     "definition",
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS definition (
     token_key_version TEXT NOT NULL,
     token_check TEXT NOT NULL,
     policy_config TEXT NOT NULL,
+    policy_configuration TEXT,
     approval_key TEXT NOT NULL,
     chart TEXT NOT NULL,
     currencies TEXT NOT NULL,
@@ -83,7 +85,7 @@ CREATE TABLE IF NOT EXISTS invocations (
 
 CREATE TABLE IF NOT EXISTS approvals (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
-    invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence),
+    invocation INTEGER NOT NULL UNIQUE REFERENCES invocations(journal_sequence),
     journal_id TEXT NOT NULL,
     approval_id TEXT,
     approver TEXT,
@@ -156,6 +158,10 @@ BEGIN
     SELECT RAISE(ABORT, 'a decision must reference the presentation its invocation made')
     WHERE NEW.presentation IS NULL
       AND EXISTS (SELECT 1 FROM approvals WHERE invocation = NEW.invocation);
+    SELECT RAISE(ABORT, 'a decision''s consumption must be of its own presentation')
+    WHERE NEW.consumption IS NOT NULL
+      AND (SELECT presentation FROM approval_consumptions
+           WHERE journal_sequence = NEW.consumption) IS NOT NEW.presentation;
 END;
 
 CREATE TABLE IF NOT EXISTS outcomes (

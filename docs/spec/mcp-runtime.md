@@ -19,9 +19,15 @@ built in M4 and tested.
   newline-delimited JSON-RPC 2.0, no embedded newlines). A final line without a trailing
   `\n` at EOF is a message. The server writes one line per response to stdout and nothing
   else to stdout, ever; diagnostics go to stderr, and a diagnostic carries only the JSON-RPC
-  error code, the `id` if one was decoded, the method if one was decoded, and the byte
-  length of the line, never message content: stderr is routinely captured to disk and sits
-  outside the redactor.
+  error code, the byte length of the line, the *kind* of id (`integer`, `string`, `absent`,
+  `invalid`) and the method **only if it is one of the five the server implements** (else
+  `unknown`, mirroring the envelope's rule for tool names). Never the id itself (it is the
+  caller's `call_id`, a class-2 identifier the journal tokenizes), never a caller string,
+  never message content: stderr is routinely captured to disk and sits outside the redactor.
+- **Line bound**: a line longer than 16 MiB is refused before decoding (`-32700`, `id`
+  `null`, unrecorded) by reading with a limit, so no line is materialised in memory beyond
+  it; depth and node bounds apply after decoding. This joins the transport-class list in
+  `journal.md`.
 - **Request** vs **notification**: a message with an `id` member is a request and is always
   answered, once, echoing its `id`; a message without an `id` member is a notification and
   is never answered (JSON-RPC 2.0 forbids it). `id: null` is not an absent `id`: it is an
@@ -47,8 +53,9 @@ forbids.)
 A line the decoder refuses is answered `-32700` (parse error) with `id` `null`. A decoded
 value that is not a JSON-RPC 2.0 request object (`jsonrpc` not `"2.0"`, `method` not a
 string, a JSON array: MCP 2025-06-18 has no batching), or whose `id` member is present but
-neither a string nor an integer (`null` included), is answered `-32600` (invalid request)
-with `id` `null`. **Nothing is recorded.** This is the transport-class unrecorded failure
+neither a string nor an integer (`null` included), is answered `-32600` (invalid request),
+echoing the `id` when a string or integer one was decoded and `null` otherwise, so a client
+can correlate whenever correlation is possible. **Nothing is recorded.** This is the transport-class unrecorded failure
 `journal.md` already names; the line never became a value the journal could digest. A
 request whose method the server does not implement is answered `-32601` (method not found),
 unrecorded, since it is not a call. A `tools/call` whose `params` is absent or not an
@@ -185,11 +192,15 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
   `entry-` prefix). Both satisfy the core's `Clock`/`IdGenerator` protocols; the journal
   already rejects a naive clock and a repeated or invalid id as effect faults.
 - `--principal` (default `local`) is validated as an identifier before anything is opened,
-  and the journal itself now refuses a principal that is not one when the object is built
-  (it is persisted in every invocation and context, and the trace requires an identifier).
+  and M4 makes the journal refuse a principal that is not one when the object is built (it
+  is persisted in every invocation and context, and the trace requires an identifier).
 - `--policy` is a `ThresholdPolicySet` configuration document (the same JSON the definition
   stores; `ThresholdPolicySet.from_configuration`). Without it the null set runs. Custom
   sets are a library concern, not a CLI one: the CLI can only build what it can recompute.
+  On an existing journal the flags that built it must be repeated (`--policy` and
+  `--token-key-file`): `open` compares them against the definition and refuses a mismatch,
+  and the server does not rebuild a set from the stored configuration, because doing so
+  would let a journal dictate the rules a process runs rather than the operator.
 - `--approval-key` is the Ed25519 *verification* key text the definition records; it is
   meaningful only with `--create` (an existing journal's key is in its definition) and is
   refused otherwise.
@@ -210,7 +221,8 @@ statement inside every `BEGIN IMMEDIATE` transaction (under the write lock, besi
 binding check, so two writers cannot both pass a stale count) the journal evaluates
 `9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
-up to seven events) and 1 for a message, nine being the maximum of the ordinal grammar. A
+up to seven events, a write up to eight) and 1 for a message, nine being the number of
+ordinal slots and therefore an upper bound. A
 transaction that would fail it is refused as an unrecorded `CapacityError` (a
 `JournalError`; added to `journal.md`'s list of failures the journal cannot record, which is
 the one `journal.md` change M4 makes beyond wording). At capacity `serve` still answers

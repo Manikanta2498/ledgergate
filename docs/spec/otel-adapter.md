@@ -25,17 +25,33 @@ what only the journal can prove.
   talking to `ledgergate serve` shows tool calls named `post`, `refund` and so on; whether
   they reached a ledger, and what the ledger did, is the journal's evidence, derived by
   `ledgergate.derive`, and the adapter does not guess at it from span attributes. Joining an
-  observational trace to a journal-derived one (by `call_id`) is future work, named in
-  ADR-0002, and nothing here claims it.
+  observational trace to a journal-derived one (by `call_id`) is future work, and nothing
+  here claims it.
 
 ## Input
 
 One OTLP/JSON document (`ExportTraceServiceRequest`: `resourceSpans[].scopeSpans[].spans[]`)
 as written by the OpenTelemetry file exporter or a collector's file exporter, or a JSON array
 of such documents (one per export batch). It is decoded by the project's I-JSON decoder
-(`ledgergate.codec.loads`) before anything else looks at it, under the same transport bounds
-as every other input; the file is bounded at 256 MiB, read with a limit. Anything else
-(protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter reads a file.
+before anything else looks at it, with **adapter-specific bounds**: the transport bounds
+(200,000 nodes) would refuse a real export at about a thousand spans (an OTLP `KeyValue` is
+about seven nodes), so `codec.loads` gains explicit `max_nodes`/`max_depth` parameters, the
+adapter calls it with 50,000,000 nodes and depth 64, and the file itself is refused before
+decoding if it exceeds 256 MiB (read with a limit). A file within the byte bound but over the
+node bound is reported (exit `1`, "document exceeds N nodes"), not tracebacked. The payload
+bounds of the *produced* events are the v1 model's and are checked per event (below). Anything
+else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter reads a file.
+
+**OTLP/JSON encoding.** Attribute values arrive typed (`stringValue`, `boolValue`,
+`intValue` and the nano timestamp fields as *decimal strings*, `doubleValue`, `arrayValue`,
+`kvlistValue`, `bytesValue`); `status.code` is an integer (`0` unset, `1` ok, `2` error).
+The adapter normalises an `AnyValue` to JSON before any mapping: strings, booleans and
+doubles as themselves; `intValue` parsed, and a value outside the I-JSON safe range is a
+fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a JSON object
+(a repeated key is a fault); `bytesValue` is a fault (the conventions carry no bytes the
+adapter reads). Content attributes may be a JSON *string* (the attribute form) or a native
+structure (the event form); a string is parsed with the same decoder and the two are then one
+shape.
 
 Span fields used: `traceId`, `spanId`, `parentSpanId`, `name`, `startTimeUnixNano`,
 `endTimeUnixNano`, `attributes[]` (`key`, `value` in OTLP's typed encoding: `stringValue`,
@@ -50,7 +66,8 @@ development). The adapter reads:
 
 | Convention | Used for |
 | :-- | :-- |
-| `gen_ai.operation.name` on a span: `chat`, `generate_content`, `text_completion`, `invoke_agent` | an inference span: its output messages become `message` events (role `assistant`) and its tool-call parts become `tool_call` events |
+| `gen_ai.operation.name` on a span: `chat`, `generate_content`, `text_completion` | an **inference span**: its output messages become `message` events (role `assistant`) and its tool-call parts become `tool_call` events |
+| `gen_ai.operation.name` = `invoke_agent` | a **structural span**: the parent of inference and tool spans. It produces no events and its content attributes, if any, are ignored (they repeat its children's), so a tool call is never emitted twice; it contributes only `gen_ai.agent.name` (preferred over `service.name` for `agent.name`) and its time bounds |
 | `gen_ai.operation.name` = `execute_tool` | a tool execution span: `gen_ai.tool.call.id`, `gen_ai.tool.name`; its result is the `tool_result` |
 | `gen_ai.input.messages`, `gen_ai.output.messages` (opt-in content attributes, JSON text) | message content, tool-call parts (`type: tool_call`, `id`, `name`, `arguments`) and tool-response parts (`type: tool_call_response`, `id`, `response`) |
 | `gen_ai.system_instructions` | a `message` with role `system` |
@@ -67,37 +84,61 @@ adapter does not guess at attributes it was not written for.
 Every produced event carries `at` from a span or span-event timestamp (nanoseconds since
 epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
 
-1. **Messages.** For each inference span, in span order: the parts of `gen_ai.input.messages`
-   with roles `system`, `user` or `assistant` become `message` events at the span's start
-   time, **only for the first inference span of the trace and for any part not already
-   emitted**: successive inference spans repeat the conversation so far, and the adapter
-   de-duplicates by `(role, content)` against what it has emitted, so a conversation appears
-   once. `gen_ai.output.messages` text parts become `message` events (role `assistant`) at the
-   span's end time.
-2. **Tool calls.** Each `tool_call` part in `gen_ai.output.messages` becomes a `tool_call`
-   event at the span's end time with `call_id` = the part's `id`, `tool` = the part's `name`,
-   `arguments` = the part's `arguments` (an object; a string is parsed as JSON, and a string
-   that does not parse as an object is a completeness fault). `idempotency_key` is taken from
-   `arguments.idempotency_key` if present (the `ledgergate serve` convention), and is left in
-   the arguments too: the adapter does not rewrite what the agent sent.
-3. **Tool results.** For each `tool_call`, its result is the first of: an `execute_tool` span
-   whose `gen_ai.tool.call.id` matches, giving `ok` from the span status (`STATUS_CODE_ERROR`
-   → `ok: false`, `error.type` → `error.type`, status message → `error.message`) and `result`
-   from `gen_ai.tool.call.result` if the instrumentation captured it, at the span's end time;
-   or a `tool_call_response` part in a later span's `gen_ai.input.messages` whose `id`
-   matches, giving `ok: true` and `result` = `response`, at that span's start time. A call
-   with neither is a completeness fault.
-4. **Ordering.** Events are ordered by `at`, then by the producing span's position in the
-   file, then by mapping step (message, tool_call, tool_result), and given dense `seq` from 1.
-   v1 requires a `tool_result` after its `tool_call` and a strictly increasing `seq`; the
-   ordering guarantees the latter and the completeness check enforces the former.
-5. **Top level.** `trace_id` = the OTLP `traceId` (hex); `agent.name` = `service.name`, else
-   `unknown`; `started_at`/`ended_at` = the earliest span start and the latest span end;
-   `chart` and `currencies` absent (the adapter knows no books); `metadata` as above plus
-   `otel.spans: <count>`.
+1. **Messages.** Inference spans are processed in order of `startTimeUnixNano`, ties by
+   position in the file. The adapter keeps the *emitted conversation*: a sequence of
+   `(role, text)` items. For each span it builds the span's *presented conversation*: each
+   text part of `gen_ai.system_instructions` as `(system, text)`, then, for each message in
+   `gen_ai.input.messages` (a message has a `role`; its `parts` have a `type`), each `text`
+   part as `(role, text)`. The emitted conversation must be a positional prefix of the
+   presented one; the suffix is emitted as `message` events at the span's start time and
+   appended to the emitted conversation. If it is not a prefix (the history the agent was
+   shown diverged from what was emitted: an edited, dropped or reordered turn) that is a
+   completeness fault naming the span and the first differing position. This is a prefix
+   rule, not a set rule: a genuine repeated turn (`user "yes"` twice) is two messages,
+   because it lengthens the presented sequence. The invariant: after the last inference
+   span, the emitted conversation equals that span's presented conversation followed by its
+   output. Then each `text` part of `gen_ai.output.messages` becomes a `message` (role
+   `assistant`) at the span's end time and is appended. An inference span whose status is
+   error (`status.code` 2) produces no events: a failed inference is not conversation, and
+   it is exempt from the output-messages check below.
+2. **Tool calls.** Each `tool_call` part in an inference span's `gen_ai.output.messages`
+   becomes a `tool_call` event at the span's end time with `call_id` = the part's `id`,
+   `tool` = the part's `name`, `arguments` = the part's `arguments` (an object; a string is
+   parsed as JSON, and a string that does not parse as an object is a completeness fault).
+   `idempotency_key` is set from `arguments.idempotency_key` when that member is a string
+   satisfying the identifier grammar (the `ledgergate serve` convention) and omitted
+   otherwise, never a fault; the member is left in the arguments too, since the adapter does
+   not rewrite what the agent sent.
+3. **Tool results.** For each `tool_call`, exactly one `tool_result` is *selected*, from two
+   possible sources, in this preference: an `execute_tool` span whose `gen_ai.tool.call.id`
+   matches (`ok` false iff `status.code` is 2; then `error.type` = the `error.type` attribute,
+   or the fixed label `otel.status_error` when the instrumentation set none, and
+   `error.message` = the status message, which is a fault if over 1,024 characters; `result`
+   = `gen_ai.tool.call.result` if captured, at the span's end time); else the first
+   `tool_call_response` part, in processing order, in a later inference span's
+   `gen_ai.input.messages` whose `id` matches (`ok: true` meaning *a response was observed*,
+   not that the tool succeeded, since the response body may itself be the tool's error;
+   `result` = `response`; at that span's start time). Both sources commonly exist for one
+   call, and the response part recurs in every later span's history; those are not extra
+   results, they are the same result observed again, and only the selected one is emitted. A
+   call with neither source is a fault; more than one `execute_tool` span for one call id is
+   a fault.
+4. **Ordering.** Events are ordered by a total key: the timestamp in *nanoseconds* (compared
+   before it is rendered to the microsecond `Timestamp`, so two events a nanosecond apart
+   keep their order), then the producing span's start time and file position, then the
+   mapping step (message, tool_call, tool_result), then the message index and part index
+   within the content attribute. Ties are impossible under this key, so `seq` (dense from 1)
+   is a function of the document. v1 also requires a `tool_result` after its `tool_call`; the
+   completeness check enforces it.
+5. **Top level.** `trace_id` = the OTLP `traceId` (32 lowercase hex, an identifier);
+   `agent.name` = `gen_ai.agent.name` from an `invoke_agent` span, else `service.name`, else
+   `unknown`; a present value that is not an identifier is a fault. `started_at`/`ended_at` =
+   the earliest span start and the latest span end; `chart` and `currencies` absent (the
+   adapter knows no books); `metadata` as above plus `otel.spans: <count>`.
 
 The adapter is a pure function of the document: the same file yields the same trace, byte for
-byte through `dump_trace`, and a test asserts it.
+byte through `dump_trace` (the total ordering key above is what makes this true), and a test
+asserts it on every cassette.
 
 ## Completeness validation
 
@@ -106,19 +147,21 @@ first:
 
 | Check | Why it is required |
 | :-- | :-- |
-| every span's `parentSpanId`, when non-empty, names a span in the document | a missing parent is the signature of sampling or a dropped batch; ADR-0002 §6 requires unsampled capture, and this is the observable consequence of it |
+| every span's `parentSpanId`, when non-empty, names a span in the document | a missing parent is a signature of sampling or a dropped batch. ADR-0002 §6 requires unsampled capture, which the adapter can only *partially* observe: it detects orphaned spans and unresolved calls, not a truncated tail (a dropped last inference span or a lost final batch leaves every parent present); the precondition remains the operator's |
 | all spans share one `traceId` | one trace is one run; two runs in one file are two traces |
-| every inference span carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
-| every `tool_call` part has an `id`, a `name` and arguments that are an object | v1 requires each; the adapter does not invent a call id |
-| every `tool_call` has exactly one result, after it | v1's pairing rule |
-| every `execute_tool` span and `tool_call_response` part matches a `tool_call` | a result without a call is a hole in the record |
-| timestamps are present, non-zero and end ≥ start | a span with no time cannot be ordered |
-| the result, if produced, loads through `load_trace` | the v1 model is the final judge |
+| every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
+| every `tool_call` part has an `id`, a `name` and arguments that are an object; `id` and `name` satisfy the identifier grammar (1 to 256 characters, one line, no edge whitespace); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
+| every `tool_call` has a selected result, and it is after the call | v1's pairing rule |
+| every `execute_tool` span and every `tool_call_response` id matches a `tool_call` | a result without a call is a hole in the record |
+| each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
+| timestamps are present, non-zero, end ≥ start, and every `intValue` is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
+| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug |
 
-A report lists each failing check with the span ids and part indices concerned (ids only,
-never content: the report is what an operator files, and message text is the most sensitive
-thing in the document). The CLI exit code is `1` for a report, `0` for a trace, `2` for an
-unreadable file.
+A report lists each failing check with the span ids, attribute keys, message and part
+indices concerned (locations only, never content: the report is what an operator files, and
+message text is the most sensitive thing in the document). The CLI exit code is `1` for a
+report, `0` for a trace, `2` for a file that cannot be read or decoded at all (not JSON,
+not I-JSON, over the byte bound).
 
 ## Redaction
 
@@ -141,17 +184,23 @@ completeness check.
 ## CLI
 
 `ledgergate record --from-otel export.json [--out trace.json]` writes the v1 trace (to stdout
-by default) or prints the completeness report to stderr and exits `1`. The subcommand name
-is the roadmap's; "record" is what the adapter does with an observation. The live-capture
-meaning the stub carried ("record a cassette from a live agent run") is withdrawn: nothing
-in M5 attaches to a running agent, and a wrapper that did would be the "thin framework
-wrapper" ADR-0002 names as a convenience over this adapter, not shipped in M5.
+by default) or prints the completeness report to stderr and exits `1`. `--from-otel` is the
+only source in M5 and is required; the parser refuses `record` without it. The subcommand
+name is the roadmap's; "record" is what the adapter does with an observation. The
+live-capture meaning the stub carried ("record a cassette from a live agent run", the
+`cli` help text) is withdrawn in this change: nothing in M5 attaches to a running agent, and
+a wrapper that did would be the "thin framework wrapper" ADR-0002 names as a convenience
+over this adapter, not shipped in M5. This change also updates the README (the adapters line
+of the diagram marks `openai | anthropic | langgraph` as future conveniences over OTel; the
+M5 roadmap row drops "thin framework wrappers") and ADR-0002 §6 (completeness is validated
+against the **v1** contract, the ingest format, and the result lifts to v2).
 
 ## What this document does not claim
 
-- **Thin framework wrappers** (openai, anthropic, langgraph in the README diagram): not
-  shipped in M5. The diagram is updated to mark them as future conveniences over OTel.
+- **Thin framework wrappers** (openai, anthropic, langgraph): not shipped in M5; the README
+  diagram marks them as future conveniences over OTel.
 - **Joining observation to journal**: an observational trace and a journal-derived trace of
-  the same run are two documents; correlating them by `call_id` is future work.
+  the same run are two documents; correlating them by `call_id` is future work, named in
+  ADR-0002 §6 by this change.
 - **Live receivers**: file input only.
 - **Conventions other than 1.37**: refused with a report naming the scope version found.

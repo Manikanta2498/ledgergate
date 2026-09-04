@@ -138,9 +138,12 @@ is withdrawn: the code accepts an email address as an account id.
 ### 6. OpenTelemetry GenAI is the primary *observational* adapter (M5)
 
 The journal is authoritative. An OTel adapter maps `gen_ai.*` spans to trace events,
-validates completeness against the v2 contract, and yields either a conforming trace or
-a report of exactly what was missing. It requires unsampled capture. Per-framework
-adapters, where they exist, are conveniences over it.
+validates completeness against the v1 contract (the ingest format; the result lifts to v2
+under the `legacy` grammar with no ledger evidence, and `verify` says so), and yields either
+a conforming trace or a report of exactly what was missing. It requires unsampled capture,
+which it can only partially observe. Per-framework adapters, where they exist, are
+conveniences over it. Correlating an observational trace with the journal-derived trace of
+the same run (by call id) is future work, not claimed by M5.
 
 ### 7. The corpus includes a red team (M6)
 

@@ -69,8 +69,11 @@ OTLP/JSON is proto3 JSON, which *omits* a member holding its default: an absent 
 are empty arrays; an absent `parentSpanId` is the empty string (a root). A member that is
 *present* with the wrong type is the shape fault above; absence is never one, so an absent
 `key` is the empty string, which is outside the read set and ignored, and an absent `value`
-on a read-set attribute is the "zero typed members" case, a located fault, since the read set
-requires a value. For an attribute outside the read set only `key` is examined (a *present*
+normalises to an empty `AnyValue`, which on a read-set attribute then fails the
+zero-typed-members rule (a located fault, since the read set requires a value). A read-set
+attribute this document consumes as a string or identifier (`gen_ai.operation.name`,
+`gen_ai.tool.call.id`, `gen_ai.tool.name`, `gen_ai.agent.name`, `service.name`, `error.type`)
+that normalises to a non-string is a located fault. For an attribute outside the read set only `key` is examined (a *present*
 non-string `key` is a shape fault, since the read set cannot be decided without it); its
 `value` is not looked at,
 though a document-level decode refusal (an `intValue` emitted as a JSON number above 2^53
@@ -92,7 +95,8 @@ inside `arguments` are agent content); `bytesValue` is a fault (bytes have no JS
 exactly the attributes the adapter *reads*, enumerated as (span class, attribute) pairs:
 inference span whose status is not error: `gen_ai.system_instructions`,
 `gen_ai.input.messages`, `gen_ai.output.messages`; inference span whose status is error:
-`gen_ai.input.messages` only (its `tool_call_response` parts are a result source);
+`gen_ai.input.messages` only (its `tool_call_response` parts are a result source; its text
+parts are not examined, so a malformed one there faults nothing);
 `execute_tool` span: `gen_ai.tool.call.id`, `gen_ai.tool.name` (checked when present: a
 fault when it differs from the matched `tool_call`'s `name`, since a span saying a different
 tool ran than was called is a completeness signal, and an identifier, not a body; the
@@ -210,7 +214,10 @@ ordering below.
    related consequence of reading calls only from *output* messages: a first inference span
    whose history already contains `tool_call_response` parts from an earlier session is
    reported with one orphan per such part, since the calls they answer were never observed.
-   And a consequence of ordering in nanoseconds: a streaming instrumentation that starts and
+   Under the prefix rule the *time* check above also holds: a span that starts before the end
+   of the span whose output it re-presents (overlapping inference spans, an instrumentation
+   that opens the next request early) is reported, not silently misordered. And a consequence
+   of ordering in nanoseconds: a streaming instrumentation that starts and
    *ends* an `execute_tool` span before the inference span that requested it has ended places
    the result before the call, and the pairing check reports it; the check is right, and the
    instrumentation's timestamps are what they are. A second known consequence: the emitted conversation is one sequence, so a fan-out or
@@ -236,7 +243,8 @@ ordering below.
    `tool_call_response` part, in processing order, in a later inference span's
    `gen_ai.input.messages` whose `id` matches (`ok: true` meaning *a response was observed*,
    not that the tool succeeded, since the response body may itself be the tool's error;
-   `result` = `response`; at that span's start time). Both sources commonly exist for one
+   `result` = `response`, and a part without a `response` member is a located fault, like a
+   text part without `content`; at that span's start time). Both sources commonly exist for one
    call, and the response part recurs in every later span's history; the adapter selects by
    preference and emits one result. It does **not** compare the two bodies: frameworks
    routinely present a transformed or truncated version of a tool's output to the model, so a
@@ -259,7 +267,9 @@ ordering below.
    at that instant, its call included, and pairing is never decided by export order, which is
    not a fact about the run; a third event at the same instant sorts by the remaining
    components as usual. The key is therefore (ns, R, span start, file position, source
-   position, step), a total order on produced events: every event has a distinct (span,
+   position, step), a total order on produced events, where the source position of a
+   `tool_result` produced from an `execute_tool` span is the empty tuple (it is the only event
+   of its span): every event has a distinct (span,
    attribute, message index, part index, step) tuple, so ties are impossible and `seq` (dense
    from 1) is a function of the document. v1 also requires a `tool_result`
    after its `tool_call`; the completeness check enforces it.
@@ -294,14 +304,17 @@ first:
 | every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span processed *after* the span that emitted its call | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
 | every `execute_tool` span's `gen_ai.tool.name`, when present, equals the matched call's `name` | the record must not say a different tool ran than was called |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
+| every item of an inference span's presented prefix was emitted at an `at` no later than that span's start (equivalently, a non-error inference span does not start before the end of the span whose output it re-presents) | a message shown to the model before the trace says it was said is a fact out of order; the prefix rule sees sequence, not time, and without this row the ordered trace would silently contradict the conversation it just validated, the text analogue of the response-before-call row |
 | timestamps are present, non-zero, end ≥ start, and every `intValue` the adapter reads is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
 | the document has at least one span; every `spanId` is present and 16 hex characters in either case, and values are unique when lowercased; `parentSpanId` matches by lowercased value | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
 | `service.name`, when present on several resources, is one value | `agent.name` must be a function of the document; differing names are a fault naming the resources |
-| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug: the CLI exits `70` with a traceback and prints no report, so a bug is never mistaken for a completeness finding |
+| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug: the CLI exits `70`, prints no report, and prints the validation errors *without input values* (pydantic's `errors(include_input=False)`; a raw traceback would echo message text), so a bug is never mistaken for a completeness finding and never leaks content |
 
 A report lists each failing check with the span ids, attribute keys, message and part
 indices concerned (locations only, never content: the report is what an operator files, and
-message text is the most sensitive thing in the document); a span whose `spanId` is missing
+message text is the most sensitive thing in the document; resources are named by index, and
+the one *value* a report ever carries is a `schemaUrl`, which is a convention URL, not agent
+content); a span whose `spanId` is missing
 or malformed is named by its index path `resourceSpans[i].scopeSpans[j].spans[k]`, prefixed
 `[d].` when the top level is an array of documents. The CLI exit code is `1` for a
 report, `0` for a trace, `2` for a file that cannot be read or decoded at all (not JSON,

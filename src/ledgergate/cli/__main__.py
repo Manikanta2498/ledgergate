@@ -266,9 +266,15 @@ def record_command(args: argparse.Namespace) -> int:
         return 70
     text = dump_trace(trace)
     if args.out is None:
-        sys.stdout.write(text)
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except OSError as exc:
+            print(f"ledgergate record: cannot write: {type(exc).__name__}", file=sys.stderr)
+            return 2
         return 0
     target: Path = args.out
+    tmp: str | None = None
     try:
         fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -277,8 +283,9 @@ def record_command(args: argparse.Namespace) -> int:
             os.fsync(fh.fileno())
         Path(tmp).replace(target)
     except OSError as exc:
-        with contextlib.suppress(OSError, NameError):
-            Path(tmp).unlink()
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                Path(tmp).unlink()
         print(f"ledgergate record: cannot write --out: {type(exc).__name__}", file=sys.stderr)
         return 2
     return 0

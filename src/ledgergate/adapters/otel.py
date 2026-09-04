@@ -704,11 +704,14 @@ def convert(data: bytes) -> Outcome:
         if prefix_ok:
             for role, text, rank, m, p in presented[len(emitted) :]:
                 if len(text) > MAX_MESSAGE_CHARS:
+                    # the conversation happened; only recording it is refused, so the item
+                    # still joins the emitted conversation and later spans are not blamed
                     faults.add(
                         "bound",
                         f"{loc}.gen_ai.input.messages[{m}].parts[{p}]",
                         "message over 65536 characters",
                     )
+                    emitted.append((role, text, s.start))
                     continue
                 events.append(
                     _Event(
@@ -742,6 +745,7 @@ def convert(data: bytes) -> Outcome:
                     text = part["content"]
                     if len(text) > MAX_MESSAGE_CHARS:
                         faults.add("bound", ploc, "message over 65536 characters")
+                        emitted.append(("assistant", text, s.end))
                         continue
                     events.append(
                         _Event(
@@ -914,12 +918,14 @@ def convert(data: bytes) -> Outcome:
     roots = sorted((a for a in agents if not a.parent), key=by_start) or sorted(
         agents, key=by_start
     )
+    agent_loc = "resourceSpans"
     if roots and isinstance(roots[0].attrs.get("gen_ai.agent.name"), str):
         agent_name = roots[0].attrs["gen_ai.agent.name"]
+        agent_loc = roots[0].loc
     elif services:
         agent_name = services[0]
     if not _ident(agent_name):
-        faults.add("agent", "resourceSpans", "agent name is not an identifier")
+        faults.add("agent", agent_loc, "agent name is not an identifier")
     metadata = {
         "otel.semconv": SEMCONV,
         "otel.scope_schema_url": scope_url or "absent",

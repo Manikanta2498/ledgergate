@@ -577,3 +577,51 @@ class TestSecondImplementationReview:
         spans = _two_turns()
         spans[1]["attributes"][2] = _kv("gen_ai.tool.name", {"intValue": "5"})
         assert "type" in _findings(_export(spans))
+
+
+class TestThirdImplementationReview:
+    def test_a_bound_fault_does_not_blame_a_later_span(self) -> None:
+        spans = _two_turns()
+        big = {
+            "role": "assistant",
+            "parts": [
+                {"type": "text", "content": "x" * 70_000},
+                {"type": "text", "content": "ok"},
+                *A1["parts"],
+            ],
+        }
+        spans[0]["attributes"][2] = _kv("gen_ai.output.messages", _sj([big]))
+        spans[2]["attributes"][1] = _kv("gen_ai.input.messages", _sj([U1, big, R1]))
+        found = _findings(_export(spans))
+        assert found.count("bound") == 1 and "prefix" not in found
+
+    def test_agent_fault_is_located_at_the_agent_span(self) -> None:
+        agent = _span(
+            "a" * 16,
+            None,
+            T0 - 1,
+            T0 + 100,
+            "invoke_agent",
+            [_kv("gen_ai.agent.name", _s(" bad "))],
+        )
+        o = convert(_bytes(_export([agent, *_two_turns()])))
+        assert o.report is not None
+        agent_faults = [f for f in o.report.findings if f.check == "agent"]
+        assert agent_faults and agent_faults[0].location.endswith("spans[0]")
+
+    def test_a_stdout_write_failure_is_exit_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import io
+        import sys
+
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps(_export(_two_turns())))
+
+        class Broken(io.StringIO):
+            def write(self, _s: str) -> int:
+                raise BrokenPipeError
+
+        monkeypatch.setattr(sys, "stdout", Broken())
+        assert main(["record", "--from-otel", str(good)]) == 2
+        assert "cannot write" in capsys.readouterr().err

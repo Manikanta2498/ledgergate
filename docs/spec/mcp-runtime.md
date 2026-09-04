@@ -18,7 +18,10 @@ built in M4 and tested.
 - **Wire message**: one line of stdin, UTF-8, terminated by `\n` (the MCP stdio transport:
   newline-delimited JSON-RPC 2.0, no embedded newlines). A final line without a trailing
   `\n` at EOF is a message. The server writes one line per response to stdout and nothing
-  else to stdout, ever; diagnostics go to stderr.
+  else to stdout, ever; diagnostics go to stderr, and a diagnostic carries only the JSON-RPC
+  error code, the `id` if one was decoded, the method if one was decoded, and the byte
+  length of the line, never message content: stderr is routinely captured to disk and sits
+  outside the redactor.
 - **Request** vs **notification**: a message with an `id` member is a request and is always
   answered, once, echoing its `id`; a message without an `id` member is a notification and
   is never answered (JSON-RPC 2.0 forbids it). `id: null` is not an absent `id`: it is an
@@ -49,8 +52,10 @@ with `id` `null`. **Nothing is recorded.** This is the transport-class unrecorde
 `journal.md` already names; the line never became a value the journal could digest. A
 request whose method the server does not implement is answered `-32601` (method not found),
 unrecorded, since it is not a call. A `tools/call` whose `params` is absent or not an
-object is answered `-32602` (invalid params), unrecorded: in MCP's own grammar it is not a
-call, and there is no tool name to record an attempt against.
+object is answered `-32602` (invalid params), unrecorded: the server lifts members only
+from an object, and in MCP's own grammar a `tools/call` without a params object is not a
+call. (An *empty* object is a call and is recorded as `invalid`, `missing_field`; the line
+is drawn at the object, not at the presence of a name.)
 
 A `tools/call` sent as a *notification* (no `id`) is refused unrecorded with one stderr
 diagnostic: JSON-RPC forbids answering it, and a call whose result cannot be delivered must
@@ -112,9 +117,10 @@ Given `params = {"name": N, "arguments": A, "_meta": M?}` on a request with JSON
    Retrying with the same `id` is the client's choice; the journal records each attempt as
    its own invocation and the idempotency key, not the call id, decides replay.
 3. If `A` is an object, `key` is `A["idempotency_key"]` and `approval` is `A["approval"]`,
-   each lifted out of `A` *as given* when the member is present (a `null` is lifted as
-   `null` and admission records `wrong_type`; an absent member is omitted and admission
-   records `missing_field` on a write). What remains of `A` is `arguments`. If `A` is not
+   each lifted out of `A` *as given* when the member is present: a `null` key is
+   `wrong_type` on a write and `unexpected_field` on a read, a `null` approval is no
+   approval (admission treats it as absent), and an absent key is `missing_field` on a
+   write. What remains of `A` is `arguments`. If `A` is not
    an object it is forwarded as `arguments` as given and admission records `wrong_type`; if
    `A` is absent, `arguments` is omitted, which admission treats as the empty object (a
    valid `trial_balance`, an invalid write).
@@ -169,9 +175,10 @@ journal in that state must not keep serving.
 [--approval-key KEY] [--token-key-file FILE] [--principal NAME]`.
 
 The server lives in `ledgergate.mcp`, a layer between `cli` and `journal` that imports
-`codec` (for `loads`) and never `trace`, `derive` or `invariants`; the import-linter contract
-gains that layer in the same change, and ADR-0002's "final shape" sentence is amended to
-name it (the ADR foresaw a transport; it did not name the package).
+`codec` (for `loads`) and never `trace`, `derive`, `invariants` or `runner`. The layers
+contract gains that layer, and, since a layers contract only forbids upward imports, a
+separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what enforces the
+"never"; ADR-0002's "final shape" sentence is amended to name the layer.
 
 - Effects are the process's: a UTC wall clock (`SystemClock`, `datetime.now(UTC)`) and a
   cryptographically random id generator (`RandomIds`, `secrets.token_hex(16)` under the
@@ -198,13 +205,17 @@ name it (the ADR foresaw a transport; it did not name the package).
 
 A whole-journal trace is bounded at 5,000,000 events; a busy journal reaches that. M4's
 answer is **rollover, not segmentation**, and the enforcer is the journal, not the server,
-because the invariant must hold on every write and not only at open: before every
-transaction the journal computes an upper bound on its derived trace (nine events per
-invocation plus one per message, the maximum of the ordinal grammar) and refuses, as an
-unrecorded `CapacityError` (a `JournalError`; added to `journal.md`'s list of failures the
-journal cannot record, which is the one `journal.md` change M4 makes), any write or message
-that would take the bound past the trace's limit. `serve` reports the refusal as `-32000`
-and keeps serving reads until the operator rolls over. The remedy is a new journal: the
+because the invariant must hold on every transaction and not only at open: as the first
+statement inside every `BEGIN IMMEDIATE` transaction (under the write lock, beside the
+binding check, so two writers cannot both pass a stale count) the journal evaluates
+`9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
+`cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
+up to seven events) and 1 for a message, nine being the maximum of the ordinal grammar. A
+transaction that would fail it is refused as an unrecorded `CapacityError` (a
+`JournalError`; added to `journal.md`'s list of failures the journal cannot record, which is
+the one `journal.md` change M4 makes beyond wording). At capacity `serve` still answers
+`initialize`, `ping` and `tools/list` (no journal transaction) and answers *every*
+`tools/call`, reads included, `-32000 CapacityError`. The remedy is a new journal: the
 operator creates one and points the server at it.
 A rolled-over journal is complete, verifiable and closed; the two journals share nothing
 but the operator's intent, and an approval artefact is bound to one of them by `journal_id`.

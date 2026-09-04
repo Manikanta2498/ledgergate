@@ -14,13 +14,18 @@ the four design questions this document answers before any transport code; every
 named here is built in M4 and tested. M4 changes four things outside the transport, each
 named where it applies and recorded in the document that owns it: the journal gains
 `CapacityError` and the two indexes that serve it (schema 6); the journal refuses a
-non-identifier principal when the object is built; the journal's transaction wrapper maps a
-SQLite-detected contradiction (`sqlite3.IntegrityError`: a `CHECK`, trigger or foreign key
-firing on a row the process built) and SQLite-detected corruption (`sqlite3.DatabaseError`
-other than the busy/locked `OperationalError`) to the journal's own `IntegrityError`, so the
-server's exit rule below has a mechanism for the half of "the rows contradict each other"
-that the database, not Python, detects; and `codec.loads` is made total over its refusals
-(below).
+non-identifier principal when the object is built; the journal's transaction wrapper
+classifies every `sqlite3.Error` by mechanism, on both the `BEGIN IMMEDIATE` branch and the
+statement branch, so the server's exit rule below has a mechanism for the half of "the rows
+contradict each other" that the database, not Python, detects: `sqlite3.IntegrityError` (a
+`CHECK`, trigger or foreign key firing on a row the process built) and any error whose
+primary result code (`sqlite_errorcode & 0xff`, Python 3.11+) is `SQLITE_CORRUPT` or
+`SQLITE_NOTADB` become the journal's `IntegrityError`; `sqlite3.ProgrammingError` and
+`sqlite3.InterfaceError` (a bug in the process, not a state of the file) are re-raised
+unmapped and take the `-32603` path; every other `sqlite3.Error` (`SQLITE_BUSY`,
+`SQLITE_LOCKED`, `SQLITE_FULL`, `SQLITE_IOERR`, `SQLITE_READONLY` and the rest: the journal
+unavailable or the environment failing) is the base `JournalError`, answered `-32000` with
+the session continuing; and `codec.loads` is made total over its refusals (below).
 
 ## Terms
 
@@ -166,8 +171,9 @@ Given `params = {"name": N, "arguments": A, "_meta": M?}` on a request with JSON
    `wrong_type` on a write and `unexpected_field` on a read, a `null` approval is no
    approval (admission treats it as absent), and an absent key is `missing_field` on a
    write. An `approval` on a read is lifted like any other: the read schemas omit it, but
-   admission accepts it and the journal records a presentation with the verdict
-   `approval_not_applicable`, exactly as `journal.md` says for a read. What remains of `A` is `arguments`. If `A` is not
+   admission accepts a well-formed one and the journal records a presentation with the
+   verdict `approval_not_applicable`, exactly as `journal.md` says for a read (a malformed
+   one is `approval_malformed`, recorded `invalid`, before the read/write split). What remains of `A` is `arguments`. If `A` is not
    an object it is forwarded as `arguments` as given and admission records `wrong_type`; if
    `A` is absent, `arguments` is omitted, which admission treats as the empty object (a
    valid `trial_balance`, an invalid write).
@@ -234,7 +240,7 @@ request was answered, once; the invariant "always answered" holds on this path t
 `ledgergate serve --journal PATH [--create --chart chart.json] [--policy config.json]
 [--approval-key KEY] [--token-key-file FILE] [--principal NAME]`.
 
-The server lives in `ledgergate.mcp`, a layer between `cli` and `journal` that imports
+The server lives in `ledgergate.mcp`, a layer beside `runner` directly under `cli`, that imports
 `codec` (for `loads`) and never `trace`, `derive`, `invariants` or `runner`. The layers
 contract gains that layer, and, since a layers contract only forbids upward imports, a
 separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what enforces the

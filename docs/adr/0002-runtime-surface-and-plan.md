@@ -69,11 +69,12 @@ accepting every integer the schema accepts, and runtime inputs are bounded by th
 transport's I-JSON contract. The JCS serializer the journal digests with, and the I-JSON decoder that admission and
 the M4 transport share, live here too. The
 resulting contract, which M2b writes into import-linter and which M4 extends by one layer
-for the transport (`mcp`, between `cli` and `journal`, importing `codec` for the decoder and
-never `trace`, `derive`, `invariants` or `runner`); with that layer it is the final shape:
+for the transport (`mcp`, beside `runner` directly under `cli`, importing `journal`, `ledger`
+and `codec` for the decoder, and never `trace`, `derive`, `invariants` or `runner`; the layers
+contract alone would permit those, so a `forbidden` contract is the fence); with that layer it is the final shape:
 
 ```
-cli -> runner -> {invariants, report, (derive)} -> mcp -> {trace, journal} -> codec -> ledger
+cli -> {runner, mcp} -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger
 ```
 
 `derive` is in parentheses because it is an M3 package and import-linter rejects a

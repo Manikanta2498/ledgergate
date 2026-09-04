@@ -296,7 +296,7 @@ class _Derivation:
                 )
             )
 
-        # 4-5: ledger pair, iff this invocation produced an applied/rejected outcome
+        # 5-6: ledger pair, iff this invocation produced an applied/rejected outcome
         if (
             decision is not None
             and decision["decision"] == "allow"
@@ -320,7 +320,7 @@ class _Derivation:
             )
             out.append((6, self._ledger_result(outcome, cid, at)))
 
-        # 6: read_result
+        # 7: read_result
         if disposition == "read":
             rd = self.c.execute("SELECT * FROM reads WHERE invocation = ?", (seq,)).fetchone()
             if rd is not None:

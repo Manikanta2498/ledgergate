@@ -700,6 +700,15 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
         for iid, d in _decided(t).items():
             if d.runtime_written:
                 continue
+            if d.context.subject is not None or d.context.aggregates:
+                out.append(
+                    Finding(
+                        "decision_recomputes",
+                        "error",
+                        f"{iid}: the null set derives no subject and reads no aggregates",
+                        iid,
+                    )
+                )
             expected = null.evaluate(_context_of(d))
             if (d.decision, d.matched_rule, d.reason) != (
                 expected.decision,

@@ -258,7 +258,8 @@ Journal admission enforces every bound the trace has on what the journal admits 
 the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per entry,
 1,024 characters for descriptions, tag keys and values, 100 tags per entry, 65,536
 characters per message; `create` refuses a chart whose trial balance would not fit the
-payload bound or an account name over 1,024 characters; and before any row is written the
+payload bound, an account name over 1,024 characters, or a policy set whose version label
+is not an identifier (checked when the journal object is built, before any file exists); and before any row is written the
 journal refuses, as unrecorded configuration faults, an error message, rule or reason over
 1,024 characters and a policy set's subject or aggregates outside the grammars the context
 carries. So every admitted input, every served result and every persisted context is

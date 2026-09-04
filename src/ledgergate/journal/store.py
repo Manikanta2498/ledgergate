@@ -283,6 +283,15 @@ class Journal:
             raise ConfigurationError(f"Journal.{name} is bound at open and cannot be replaced")
         super().__setattr__(name, value)
 
+    def __post_init__(self) -> None:
+        # A set's version label is persisted in the definition and in every decision, and
+        # the trace carries it as an identifier; a set whose label is not one would produce a
+        # journal the trace refuses, so it is refused here, before any file exists.
+        try:
+            require_identifier(self.policy.version, "policy set version")
+        except (InvalidIdentifierError, TypeError) as exc:
+            raise ConfigurationError(f"policy set version is not an identifier: {exc}") from exc
+
     def _check_binding(self) -> None:
         """Re-assert, at the start of every transaction, that the components in use are the
         ones the definition recorded; ``open`` checked once, and this makes the check hold

@@ -380,3 +380,22 @@ class TestContextsAreRepresentable:
         with pytest.raises(ConfigurationError, match="aggregates"):
             j.handle(_open("k", 5))
         j.close()
+
+
+def test_a_policy_set_whose_version_is_not_an_identifier_is_refused(tmp_path: Path) -> None:
+    class LongLabel(NullPolicySet):
+        version = "v" * 300
+
+    with pytest.raises(ConfigurationError, match="not an identifier"):
+        _journal(tmp_path, policy=LongLabel())
+
+
+def test_aggregate_and_decimal_grammars_agree_between_journal_and_trace() -> None:
+    from ledgergate.journal.store import AGGREGATE_NAME, DECIMAL_TEXT
+    from ledgergate.trace.v2 import AggregateName, DecimalText
+
+    def pattern(annotated: Any) -> str:
+        return str(annotated.__metadata__[0].metadata[0].pattern)
+
+    assert pattern(AggregateName) == f"^{AGGREGATE_NAME.pattern}$"
+    assert pattern(DecimalText) == f"^{DECIMAL_TEXT.pattern}$"

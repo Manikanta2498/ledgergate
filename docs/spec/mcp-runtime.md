@@ -16,8 +16,13 @@ built in M4 and tested.
 ## Terms
 
 - **Wire message**: one line of stdin, UTF-8, terminated by `\n` (the MCP stdio transport:
-  newline-delimited JSON-RPC 2.0, no embedded newlines). The server writes one line per
-  response to stdout and nothing else to stdout, ever; diagnostics go to stderr.
+  newline-delimited JSON-RPC 2.0, no embedded newlines). A final line without a trailing
+  `\n` at EOF is a message. The server writes one line per response to stdout and nothing
+  else to stdout, ever; diagnostics go to stderr.
+- **Request** vs **notification**: a message with an `id` member is a request and is always
+  answered, once, echoing its `id`; a message without an `id` member is a notification and
+  is never answered (JSON-RPC 2.0 forbids it). `id: null` is not an absent `id`: it is an
+  invalid request.
 - **Session**: from the first byte read to EOF on stdin. One process serves one session
   over one journal. There is no second connection to serialize against: the process is the
   connection owner, and the journal's `BEGIN IMMEDIATE` serializes it against any other
@@ -36,18 +41,28 @@ of it. (The server does not depend on an MCP SDK: the stdio protocol is small, a
 dependency that decodes the wire before the journal sees it is exactly what this section
 forbids.)
 
-A line the decoder refuses, or that is not a JSON-RPC 2.0 message, or whose `id` is not a
-string or integer, is answered with a JSON-RPC error (`-32700` parse error or `-32600`
-invalid request), with `id` `null` when no usable id was read. **Nothing is recorded.**
-This is the transport-class unrecorded failure `journal.md` already names; the line never
-became a value the journal could digest. A well-formed message the server does not
-implement is answered `-32601` (method not found), also unrecorded, since it is not a call.
+A line the decoder refuses is answered `-32700` (parse error) with `id` `null`. A decoded
+value that is not a JSON-RPC 2.0 request object (`jsonrpc` not `"2.0"`, `method` not a
+string, a JSON array: MCP 2025-06-18 has no batching), or whose `id` member is present but
+neither a string nor an integer (`null` included), is answered `-32600` (invalid request)
+with `id` `null`. **Nothing is recorded.** This is the transport-class unrecorded failure
+`journal.md` already names; the line never became a value the journal could digest. A
+request whose method the server does not implement is answered `-32601` (method not found),
+unrecorded, since it is not a call. A `tools/call` whose `params` is absent or not an
+object is answered `-32602` (invalid params), unrecorded: in MCP's own grammar it is not a
+call, and there is no tool name to record an attempt against.
+
+A `tools/call` sent as a *notification* (no `id`) is refused unrecorded with one stderr
+diagnostic: JSON-RPC forbids answering it, and a call whose result cannot be delivered must
+not run (a write that cannot be answered would move money the client never learns of). This
+is the one attempt against the ledger the server declines to record, and it does so because
+the transport, not the journal, is what the client violated.
 
 ## Methods
 
 | Method | Behaviour |
 | :-- | :-- |
-| `initialize` | Returns the protocol version the server speaks (`2025-06-18`), server info (`ledgergate`, the package version), and `capabilities.tools` (no `listChanged`: the tool set is the journal's definition and does not change during a session). The client's requested version is not negotiated down: a client that cannot speak this version gets an error and the session continues. |
+| `initialize` | Always succeeds, returning the one protocol version the server speaks (`2025-06-18`) whatever the client requested (MCP's negotiation: the server answers with a version it supports, and a client that cannot speak it disconnects), server info (`ledgergate`, the package version), and `capabilities.tools` (no `listChanged`: the tool set is the journal's definition and does not change during a session). A `tools/call` received before `initialize` is served like any other: the client's handshake obligation is the client's, and an attempt against the ledger is recorded whether or not the client shook hands. |
 | `notifications/initialized` | Acknowledged silently (a notification has no response). |
 | `ping` | `{}` |
 | `tools/list` | The seven tools below with their input schemas, derived from the codec's command shapes and the journal's read tools. No pagination: seven tools. |
@@ -81,24 +96,32 @@ admits the same untyped value whether or not the client validated.
 Given `params = {"name": N, "arguments": A, "_meta": M?}` on a request with JSON-RPC `id`
 `I`:
 
-1. `tool` is `N` as given. An unknown name is not a transport error: it becomes the
-   journal's `unknown_tool` and is **recorded** as `invalid`, because the client did
-   attempt a call against this ledger and the attempt is a fact about the run.
-2. `call_id` is the JSON-RPC `id`, rendered as `rpc-<id>` (`rpc-7`, `rpc-abc`). An `id` that
-   does not render to an identifier (longer than 250 characters, or not a single line) is a
-   transport error (`-32600`), unrecorded: the client has violated the transport, and no
-   identifier exists to record the attempt under. Retrying with the same `id` is the
-   client's choice; the journal records each attempt as its own invocation and the
-   idempotency key, not the call id, decides replay.
-3. `key` is `A["idempotency_key"]` if `A` is an object carrying one, lifted out of `A`;
-   `approval` is `A["approval"]`, lifted out likewise. What remains of `A` is `arguments`.
-   If `A` is not an object, or is absent, the value handed to the journal has
-   `arguments: A` as given (or omitted), and admission records `wrong_type` or a missing
-   field as `invalid`.
+1. `tool` is `N` as given, forwarded whatever its type; absent, it is omitted. An unknown,
+   missing or non-string name is not a transport error: it becomes the journal's
+   `unknown_tool`, `missing_field` or `wrong_type` and is **recorded** as `invalid`, because
+   the client did attempt a call against this ledger and the attempt is a fact about the
+   run. (This departs from MCP's suggested `-32602` for an unknown tool, deliberately: the
+   journal's record of attempts is the product.) Members of `params` other than `name`,
+   `arguments` and `_meta` are ignored.
+2. `call_id` is the JSON-RPC `id`, rendered `rpc-n<id>` for an integer and `rpc-s<id>` for a
+   string (`rpc-n7`, `rpc-sabc`; the prefix letter keeps `7` and `"7"` distinct). The
+   rendering is forwarded as given, however long or whatever it contains: the journal's
+   admission decides whether it is an identifier, records a call whose `call_id` is not one
+   as `invalid` under an unrecoverable call id (`journal.md`, admission step 3;
+   `trace-v2.md`, `invalid-<seq>`), and bounds the envelope. The server never judges an id.
+   Retrying with the same `id` is the client's choice; the journal records each attempt as
+   its own invocation and the idempotency key, not the call id, decides replay.
+3. If `A` is an object, `key` is `A["idempotency_key"]` and `approval` is `A["approval"]`,
+   each lifted out of `A` *as given* when the member is present (a `null` is lifted as
+   `null` and admission records `wrong_type`; an absent member is omitted and admission
+   records `missing_field` on a write). What remains of `A` is `arguments`. If `A` is not
+   an object it is forwarded as `arguments` as given and admission records `wrong_type`; if
+   `A` is absent, `arguments` is omitted, which admission treats as the empty object (a
+   valid `trial_balance`, an invalid write).
 4. The value handed to `Journal.handle` is exactly
-   `{"tool": N, "call_id": "rpc-<I>", "arguments": <rest>, "key": <key>?, "approval": <approval>?}`
-   with absent members omitted, never `null`. `_meta` is not forwarded and not recorded:
-   MCP reserves it for the protocol, and nothing in it is an input to the ledger.
+   `{"tool": N?, "call_id": "rpc-…", "arguments": <rest>?, "key": <key>?, "approval": <approval>?}`
+   with absent members omitted. `_meta` is not forwarded and not recorded: MCP reserves it
+   for the protocol, and nothing in it is an input to the ledger.
 
 Everything after step 4 is the journal's: admission, redaction, tokenization, disposition,
 policy, approval checks, execution, the committed response. The server adds nothing.
@@ -131,28 +154,42 @@ key is replayed from that row. No acknowledgement is recorded; the trace's
 ## Failures the server cannot record
 
 A `JournalError` raised by `handle` (the journal unavailable past its busy timeout, an I-JSON
-violation the transport bounds did not catch, a configuration fault such as a policy set
-raising or a component no longer matching the definition) is answered as a JSON-RPC error
-`-32000` with the exception's class name and message as `data`, and the server continues
-the session. Nothing was recorded, as `journal.md` states for that class. An
-`IntegrityError` (the file contradicts itself) is answered the same way and then the
-server **exits non-zero**: a journal whose rows disagree must not keep serving.
+violation the transport bounds did not catch, the journal at capacity, a configuration fault
+such as a policy set raising or a component no longer matching the definition) is answered
+as a JSON-RPC error `-32000` whose `data` is the exception's class name and its message
+truncated to 1,024 characters (so one response line stays bounded), and the server
+continues the session. Nothing was recorded, as `journal.md` states for that class. An
+`IntegrityError` (the journal's rows contradict each other, or a row was built that the
+trace could not carry) is answered the same way and then the server **exits non-zero**: a
+journal in that state must not keep serving.
 
 ## Configuration and effects
 
 `ledgergate serve --journal PATH [--create --chart chart.json] [--policy config.json]
 [--approval-key KEY] [--token-key-file FILE] [--principal NAME]`.
 
+The server lives in `ledgergate.mcp`, a layer between `cli` and `journal` that imports
+`codec` (for `loads`) and never `trace`, `derive` or `invariants`; the import-linter contract
+gains that layer in the same change, and ADR-0002's "final shape" sentence is amended to
+name it (the ADR foresaw a transport; it did not name the package).
+
 - Effects are the process's: a UTC wall clock (`SystemClock`, `datetime.now(UTC)`) and a
   cryptographically random id generator (`RandomIds`, `secrets.token_hex(16)` under the
   `entry-` prefix). Both satisfy the core's `Clock`/`IdGenerator` protocols; the journal
   already rejects a naive clock and a repeated or invalid id as effect faults.
+- `--principal` (default `local`) is validated as an identifier before anything is opened,
+  and the journal itself now refuses a principal that is not one when the object is built
+  (it is persisted in every invocation and context, and the trace requires an identifier).
 - `--policy` is a `ThresholdPolicySet` configuration document (the same JSON the definition
   stores; `ThresholdPolicySet.from_configuration`). Without it the null set runs. Custom
   sets are a library concern, not a CLI one: the CLI can only build what it can recompute.
-- `--token-key-file` selects the tokenizing admitter with that key (raw 32+ bytes); without
-  it the identity admitter runs and the server prints one stderr warning that identifiers
-  and free text will reach disk as given.
+- `--approval-key` is the Ed25519 *verification* key text the definition records; it is
+  meaningful only with `--create` (an existing journal's key is in its definition) and is
+  refused otherwise.
+- `--token-key-file` selects the tokenizing admitter with that key; the CLI requires 32 or
+  more bytes (its own policy; the `Tokenizer` accepts 16). Without it the identity admitter
+  runs and the server prints one stderr warning that identifiers and free text will reach
+  disk as given.
 - `--create` builds the journal from `--chart` (a JSON array of `AccountDoc`); without it
   the journal must exist and `open` applies every binding check the journal specifies.
   Either way the process holds the journal open for the session and closes it at EOF.
@@ -160,10 +197,15 @@ server **exits non-zero**: a journal whose rows disagree must not keep serving.
 ## Segmentation
 
 A whole-journal trace is bounded at 5,000,000 events; a busy journal reaches that. M4's
-answer is **rollover, not segmentation**: `serve` refuses to open a journal whose derived
-trace would exceed the bound (an estimate from row counts: nine events per invocation plus
-one per message, computed before serving), with a message naming the bound and the
-remedy. The remedy is a new journal: the operator creates one and points the server at it.
+answer is **rollover, not segmentation**, and the enforcer is the journal, not the server,
+because the invariant must hold on every write and not only at open: before every
+transaction the journal computes an upper bound on its derived trace (nine events per
+invocation plus one per message, the maximum of the ordinal grammar) and refuses, as an
+unrecorded `CapacityError` (a `JournalError`; added to `journal.md`'s list of failures the
+journal cannot record, which is the one `journal.md` change M4 makes), any write or message
+that would take the bound past the trace's limit. `serve` reports the refusal as `-32000`
+and keeps serving reads until the operator rolls over. The remedy is a new journal: the
+operator creates one and points the server at it.
 A rolled-over journal is complete, verifiable and closed; the two journals share nothing
 but the operator's intent, and an approval artefact is bound to one of them by `journal_id`.
 Cross-journal continuity (a trace over a sequence of journals, or a chain of definitions)

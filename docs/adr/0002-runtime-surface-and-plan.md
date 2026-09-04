@@ -68,10 +68,12 @@ every `c` the core accepts. It imposes no bound of its own; the frozen v1 path k
 accepting every integer the schema accepts, and runtime inputs are bounded by the
 transport's I-JSON contract. The JCS serializer the journal digests with, and the I-JSON decoder that admission and
 the M4 transport share, live here too. The
-resulting contract, which M2b writes into import-linter and which is the final shape:
+resulting contract, which M2b writes into import-linter and which M4 extends by one layer
+for the transport (`mcp`, between `cli` and `journal`, importing `codec` for the decoder and
+never `trace`, `derive` or `invariants`); with that layer it is the final shape:
 
 ```
-cli -> runner -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger
+cli -> runner -> {invariants, report, (derive)} -> mcp -> {trace, journal} -> codec -> ledger
 ```
 
 `derive` is in parentheses because it is an M3 package and import-linter rejects a

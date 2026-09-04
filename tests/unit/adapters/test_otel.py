@@ -680,3 +680,43 @@ class TestFourthImplementationReview:
         assert o.report is not None
         bound = [f for f in o.report.findings if f.check == "bound"]
         assert bound and bound[0].location.endswith("gen_ai.input.messages[2].parts[0]")
+
+
+class TestFifthImplementationReview:
+    def test_no_prefix_fault_when_the_presented_history_was_not_fully_examined(self) -> None:
+        mutations: list[Any] = [
+            lambda s: s[2]["attributes"].append(_kv("gen_ai.system_instructions", _s("not json"))),
+            lambda s: s[2]["attributes"].__setitem__(
+                1,
+                _kv(
+                    "gen_ai.input.messages",
+                    _sj(
+                        [{"role": "developer", "parts": [{"type": "text", "content": "x"}]}, A1, R1]
+                    ),
+                ),
+            ),
+            lambda s: s[2]["attributes"].__setitem__(
+                1,
+                _kv(
+                    "gen_ai.input.messages",
+                    _sj([{"role": "user", "parts": [{"type": "text", "content": 5}]}, A1, R1]),
+                ),
+            ),
+            lambda s: s[2]["attributes"].pop(1),
+        ]
+        for mutate in mutations:
+            spans = _two_turns()
+            mutate(spans)
+            found = _findings(_export(spans))
+            assert "prefix" not in found, found
+
+    def test_differing_service_names_are_located_per_resource(self) -> None:
+        doc = _export(_two_turns())
+        second = copy.deepcopy(doc["resourceSpans"][0])
+        second["resource"]["attributes"] = [_kv("service.name", _s("other"))]
+        second["scopeSpans"][0]["spans"] = []
+        doc["resourceSpans"].append(second)
+        o = convert(_bytes(doc))
+        assert o.report is not None
+        locs = sorted(f.location for f in o.report.findings if f.check == "service")
+        assert locs == ["[0].resourceSpans[0]", "[0].resourceSpans[1]"]

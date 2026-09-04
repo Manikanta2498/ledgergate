@@ -316,11 +316,12 @@ def _nanos(value: Any, where: Location, faults: _Faults) -> int | None:
 
 def _collect_spans(
     docs: list[Any], faults: _Faults
-) -> tuple[list[_Span], list[str], list[str], str | None]:
+) -> tuple[list[_Span], list[str], list[str], list[str], str | None]:
     """Walk every document; returns spans in file order, distinct service names, resource
     schema URLs and the GenAI scope URL (or None). Shape faults end the subtree they name."""
     spans: list[_Span] = []
     services: list[str] = []
+    service_locs: list[str] = []
     resource_urls: list[str] = []
     scope_urls: list[str] = []
     pos = 0
@@ -364,8 +365,10 @@ def _collect_spans(
                     faults.add(
                         "type", f"{rloc}.resource.attributes", "service.name is not a string"
                     )
-                elif name not in services:
-                    services.append(name)
+                else:
+                    service_locs.append(rloc)
+                    if name not in services:
+                        services.append(name)
             ss = r.get("scopeSpans", [])
             if not isinstance(ss, list):
                 faults.add("shape", f"{rloc}.scopeSpans", "not an array")
@@ -419,7 +422,7 @@ def _collect_spans(
             faults.add(
                 "convention", "scopeSpans", f"schemaUrl is not {SEMCONV}: {scope_url[:MAX_TEXT]}"
             )
-    return spans, services, resource_urls, scope_url
+    return spans, services, service_locs, resource_urls, scope_url
 
 
 def _metadata_string(value: Any, where: Location, faults: _Faults) -> bool:
@@ -611,7 +614,7 @@ def convert(data: bytes) -> Outcome:
     """Bytes of an export -> a v1 document or a report. Raises ``UnreadableError`` for exit 2."""
     docs = read_export(data)
     faults = _Faults()
-    spans, services, resource_urls, scope_url = _collect_spans(docs, faults)
+    spans, services, service_locs, resource_urls, scope_url = _collect_spans(docs, faults)
     if not spans:
         faults.add("spans", "[0]", "no spans")
     by_id: dict[str, _Span] = {}
@@ -626,7 +629,8 @@ def convert(data: bytes) -> Outcome:
         if sp.parent and sp.parent not in by_id:
             faults.add("parent", sp.loc, "parentSpanId names no span in the document")
     if len(services) > 1:
-        faults.add("service", "resourceSpans", "differing service.name values")
+        for rloc in service_locs:
+            faults.add("service", rloc, "differing service.name values across resources")
 
     inference = sorted(
         (s for s in spans if s.operation in INFERENCE_OPERATIONS), key=lambda s: s.key
@@ -672,10 +676,13 @@ def convert(data: bytes) -> Outcome:
             continue
         # step 1: presented conversation and the prefix rule
         presented: list[tuple[str, str, int, int, int]] = []  # role, text, rank, m, p
+        complete = True  # the prefix rule runs only over a fully examined presented history
         if "gen_ai.system_instructions" in s.attrs:
             parts = _instructions(
                 s.attrs["gen_ai.system_instructions"], f"{loc}.gen_ai.system_instructions", faults
             )
+            if parts is None:
+                complete = False
             for p, part in enumerate(parts or []):
                 if part.get("type") == "text":
                     if not isinstance(part.get("content"), str):
@@ -684,6 +691,7 @@ def convert(data: bytes) -> Outcome:
                             f"{loc}.gen_ai.system_instructions[{p}]",
                             "text part without string content",
                         )
+                        complete = False
                         continue
                     presented.append(("system", part["content"], 0, 0, p))
         if inputs is not None:
@@ -691,6 +699,7 @@ def convert(data: bytes) -> Outcome:
                 role = msg.get("role")
                 if role not in ("system", "user", "assistant", "tool"):
                     faults.add("role", f"{loc}.gen_ai.input.messages[{m}]", "role outside v1's set")
+                    complete = False
                     continue
                 for p, part in enumerate(msg.get("parts", [])):
                     if part.get("type") == "text":
@@ -700,10 +709,11 @@ def convert(data: bytes) -> Outcome:
                                 f"{loc}.gen_ai.input.messages[{m}].parts[{p}]",
                                 "text part without string content",
                             )
+                            complete = False
                             continue
                         presented.append((role, part["content"], 1, m, p))
         # prefix rule (not run against an input that was never examined)
-        examined = inputs is not None or "gen_ai.input.messages" not in s.attrs
+        examined = complete and inputs is not None
         prefix_ok = examined
         for i, (role, text, at_ns) in enumerate(emitted if examined else []):
             if i >= len(presented) or (presented[i][0], presented[i][1]) != (role, text):

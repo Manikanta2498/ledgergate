@@ -68,10 +68,13 @@ every `c` the core accepts. It imposes no bound of its own; the frozen v1 path k
 accepting every integer the schema accepts, and runtime inputs are bounded by the
 transport's I-JSON contract. The JCS serializer the journal digests with, and the I-JSON decoder that admission and
 the M4 transport share, live here too. The
-resulting contract, which M2b writes into import-linter and which is the final shape:
+resulting contract, which M2b writes into import-linter and which M4 extends by one layer
+for the transport (`mcp`, beside `runner` directly under `cli`, importing `journal`, `ledger`
+and `codec` for the decoder, and never `trace`, `derive`, `invariants` or `runner`; the layers
+contract alone would permit those, so a `forbidden` contract is the fence); with that layer it is the final shape:
 
 ```
-cli -> runner -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger
+cli -> {runner, mcp} -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger
 ```
 
 `derive` is in parentheses because it is an M3 package and import-linter rejects a
@@ -162,7 +165,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 | M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
 | M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
 | M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, alongside the null policy; invariant registry; scorecard; `ledgergate verify` |
-| M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call. M4's first design questions, before any transport code: the MCP mapping from `tools/call` to the journal's `Request` (call id, key and artefact extraction, malformed-call routing, `isError`), raw input through the project's I-JSON decoder before any generic decoder, one connection owner serializing calls, and segmentation of a journal whose whole-journal trace would outgrow the v2 event bound. |
+| M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call. Designed in [docs/spec/mcp-runtime.md](../spec/mcp-runtime.md), which answers M4's first design questions before any transport code: the MCP mapping from `tools/call` to the journal's `Request` (call id, key and artefact extraction, malformed-call routing, `isError`), raw input through the project's I-JSON decoder before any generic decoder, one connection owner serializing calls, and segmentation of a journal whose whole-journal trace would outgrow the v2 event bound (answered as rollover: the journal refuses, under its write lock, any transaction that would take its derived trace past the bound, and `serve` reports that; cross-journal continuity is future work). |
 | M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
 | M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels |

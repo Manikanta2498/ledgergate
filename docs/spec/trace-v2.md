@@ -264,8 +264,9 @@ journal refuses, as unrecorded configuration faults, an error message, rule or r
 1,024 characters and a policy set's subject or aggregates outside the grammars the context
 carries. So every admitted input, every served result and every persisted context is
 representable here; `events` is bounded at 5,000,000 and derivation is
-whole-journal. Segmentation of a journal that outgrows that bound is not designed; it is
-the M4 runtime's first design question, stated in ADR-0002.
+whole-journal. A journal is kept within the bound by the journal's own per-transaction capacity
+check (M4) (`journal.md`, *Failures the journal cannot record*; `mcp-runtime.md`,
+*Segmentation*), so every journal written under it is derivable, and `open` and `derive` refuse an earlier schema, so that is every journal an M4 build touches; cross-journal continuity is future work.
 
 ## Status
 

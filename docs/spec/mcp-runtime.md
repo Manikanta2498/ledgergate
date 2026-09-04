@@ -27,7 +27,8 @@ principal, and `codec.loads` is made total over its refusals (below).
   exception's *class name*, which is always a `JournalError` subclass defined in
   `ledgergate.journal` (`CapacityError`, `ConfigurationError`, `EffectError`,
   `IntegrityError`, or `JournalError` itself) and so a project identifier, never its
-  message. For a `-32700` the id kind is `undecoded`. Never the id itself (it is the
+  message; for a `-32603` the fixed label `internal`. For a `-32700` the id kind is
+  `undecoded`. The stderr vocabulary is therefore closed by construction. Never the id itself (it is the
   caller's `call_id`, a class-2 identifier the journal tokenizes), never a caller string,
   never message content: stderr is routinely captured to disk and sits outside the redactor.
 - **Line bound**: a line longer than 16 MiB is refused before decoding (`-32700`, `id`
@@ -59,9 +60,12 @@ depth and node bounds. M4 makes its refusals total: `loads` raises exactly `IJso
 the `RecursionError` Python's scanner raises on deeply nested text before the depth bound
 can be counted (converted into the depth refusal), and the `ValueError` `int()` raises on an
 integer literal over 4,300 digits (refused by literal length first: any literal longer than
-17 characters, sign included, exceeds `2**53 - 1`, so it is the safe-range refusal). A
-two-kilobyte line of brackets or a five-kilobyte line of digits is a `-32700`, not a dead
-session; the M4 totality test covers both. A generic JSON decoder would silently keep the last of two duplicate
+17 characters, sign included, exceeds `2**53 - 1`, so it is the safe-range refusal). A line
+of 100,000 brackets (the C scanner's recursion budget differs across supported interpreters;
+that depth exhausts every one of them and sits well inside the line bound) or a
+five-kilobyte line of digits is a `-32700`, not a dead session; the M4 totality test feeds
+both and asserts that exactly `IJsonError` is raised, so it fails if the conversion is
+absent. A generic JSON decoder would silently keep the last of two duplicate
 members, so the client and the journal could disagree about what was sent; the project
 decoder is therefore the only decoder on the input path, and no MCP library sits in front
 of it. (The server does not depend on an MCP SDK: the stdio protocol is small, and a
@@ -198,6 +202,13 @@ continues the session. Nothing was recorded, as `journal.md` states for that cla
 trace could not carry) is answered the same way and then the server **exits non-zero**: a
 journal in that state must not keep serving.
 
+Any exception from `handle` that is *not* a `JournalError` is a bug (`journal.md` names the
+case: a non-`LedgerError` exception from the core, rolled back by the transaction). It is
+answered `-32603` (internal error) with no `data`, the stderr diagnostic carries the fixed
+label `internal` in place of a class name, and the server **exits non-zero** after writing
+the response: a process with a bug in its command path must not keep moving money. The
+request was answered, once; the invariant "always answered" holds on this path too.
+
 ## Configuration and effects
 
 `ledgergate serve --journal PATH [--create --chart chart.json] [--policy config.json]
@@ -249,7 +260,9 @@ binding check, so two writers cannot both pass a stale count) the journal evalua
 `9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
 up to seven events, a write up to eight) and 1 for a message, nine being the number of
-ordinal slots and therefore an upper bound. A
+ordinal slots and therefore an upper bound. The message count is served by a partial index
+on `events` where `invocation IS NULL` (schema 6), so the check is a pair of index lookups
+under the lock, not a scan. A
 transaction that would fail it is refused as an unrecorded `CapacityError` (a
 `JournalError`; added to `journal.md`'s list of failures the journal cannot record, which is
 the one `journal.md` change M4 makes beyond wording). At capacity `serve` still answers

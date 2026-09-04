@@ -13,9 +13,14 @@ decide, and returns nothing the journal did not commit. ADR-0002's roadmap row f
 the four design questions this document answers before any transport code; every mechanism
 named here is built in M4 and tested. M4 changes four things outside the transport, each
 named where it applies and recorded in the document that owns it: the journal gains
-`CapacityError` and the two indexes that serve it (schema 6), the journal refuses a
-non-identifier principal when the object is built, and `codec.loads` is made total over its
-refusals (below).
+`CapacityError` and the two indexes that serve it (schema 6); the journal refuses a
+non-identifier principal when the object is built; the journal's transaction wrapper maps a
+SQLite-detected contradiction (`sqlite3.IntegrityError`: a `CHECK`, trigger or foreign key
+firing on a row the process built) and SQLite-detected corruption (`sqlite3.DatabaseError`
+other than the busy/locked `OperationalError`) to the journal's own `IntegrityError`, so the
+server's exit rule below has a mechanism for the half of "the rows contradict each other"
+that the database, not Python, detects; and `codec.loads` is made total over its refusals
+(below).
 
 ## Terms
 
@@ -35,8 +40,10 @@ refusals (below).
   process, not only for `handle`: the server installs a process-level handler so that any
   exception not already mapped (in the mapping, in encoding the response, in writing stdout,
   a broken pipe) writes only the fixed diagnostic `internal` to stderr, no traceback and no
-  message, and exits non-zero; Python's default hook, which prints the exception message,
-  never runs. Never the id itself (it is the
+  message, and exits non-zero; both `sys.excepthook` and `sys.unraisablehook` are replaced
+  (an `Exception ignored in` line from a flush at exit goes through the latter), and on the
+  broken-pipe exit path fd 1 is redirected to `/dev/null` before the interpreter's final
+  flush, so Python's default hooks, which print exception messages, never run. Never the id itself (it is the
   caller's `call_id`, a class-2 identifier the journal tokenizes), never a caller string,
   never message content: stderr is routinely captured to disk and sits outside the redactor.
 - **Line bound**: a line longer than 16 MiB is refused before decoding (`-32700`, `id`
@@ -158,7 +165,9 @@ Given `params = {"name": N, "arguments": A, "_meta": M?}` on a request with JSON
    each lifted out of `A` *as given* when the member is present: a `null` key is
    `wrong_type` on a write and `unexpected_field` on a read, a `null` approval is no
    approval (admission treats it as absent), and an absent key is `missing_field` on a
-   write. What remains of `A` is `arguments`. If `A` is not
+   write. An `approval` on a read is lifted like any other: the read schemas omit it, but
+   admission accepts it and the journal records a presentation with the verdict
+   `approval_not_applicable`, exactly as `journal.md` says for a read. What remains of `A` is `arguments`. If `A` is not
    an object it is forwarded as `arguments` as given and admission records `wrong_type`; if
    `A` is absent, `arguments` is omitted, which admission treats as the empty object (a
    valid `trial_balance`, an invalid write).

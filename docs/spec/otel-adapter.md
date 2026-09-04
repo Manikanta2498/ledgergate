@@ -31,9 +31,7 @@ what only the journal can prove.
 ## Input
 
 OTLP/JSON `ExportTraceServiceRequest` documents (`resourceSpans[].scopeSpans[].spans[]`) in
-two framings, decided by the first non-whitespace byte: `[` is a JSON array of documents,
-one text decoded in one call (so the node budget is shared across the array and the depth
-bound is one deeper); anything else is **concatenated JSON**, a sequence of documents
+two framings, decided by the first non-whitespace byte: `[` is a JSON array of documents, one text decoded in one call (so the node budget is shared across the array, and the decoder is passed `max_depth` 201 so the documents inside are admitted to the same depth as in the other framing); anything else is **concatenated JSON**, a sequence of documents
 separated by whitespace, which covers a single document (pretty-printed or not) and JSON
 Lines, the form the collector's `fileexporter` in JSON format and the SDKs' OTLP/JSON console
 exporters actually write (one line per export batch), with no line heuristic. The codec gains
@@ -45,7 +43,7 @@ spans are concatenated in file order. The whole file is decoded before any exami
 decode failure in any document, or trailing non-whitespace after the last, is exit `2` for
 the file, naming the ordinal (a truncated last line from a crashed exporter is therefore
 "cannot read", not a report: the adapter will not certify a document it could not finish
-reading); a file with zero documents (empty or whitespace only) is exit `2` likewise. It is decoded by the project's I-JSON decoder
+reading); a file with zero documents (empty or whitespace only, or the array `[]`) is exit `2` likewise. It is decoded by the project's I-JSON decoder
 before anything else looks at it, with **adapter-specific bounds**: the transport bounds
 (200,000 nodes) would refuse a real export at about a thousand spans (an OTLP `KeyValue` is
 about seven nodes), so `codec.loads` gains explicit `max_nodes`/`max_depth` parameters, the
@@ -175,7 +173,7 @@ The *resource* `schemaUrl` describes the resource attributes and is set by the S
 resource routinely says `.../1.2x.0` under a 1.37 GenAI instrumentation), so it is never a
 reason to refuse. So: the adapter refuses, with a report naming the URL, only when a
 `scopeSpans[].schemaUrl` on a scope that contains spans with `gen_ai.operation.name` is
-present and does not end in `/1.37.0`; two such scopes with differing *present* URLs are a fault, and a scope without a URL beside one with a URL takes the present one. Known consequence: an instrumentation that emits the 1.37 attribute set under a scope URL it was written against earlier (the convention is in development status and libraries lag) is refused wholesale, although the read set would have checked every attribute; that refusal is deliberate, since a URL that names another version is the producer's own statement, and an operator who knows better strips the URL. The URL echoed in a report, and recorded in `metadata`, is producer-controlled: a URL containing a line break or a control character is a located fault (a URL has neither), and one over 1,024 characters is truncated with a marker in the report and is a fault for `metadata` (the bound applies there without truncation, like every metadata value).
+present and does not end in `/1.37.0`; two such scopes with differing *present* URLs are a fault, and a scope without a URL beside one with a URL takes the present one. Known consequence: an instrumentation that emits the 1.37 attribute set under a scope URL it was written against earlier (the convention is in development status and libraries lag) is refused wholesale, although the read set would have checked every attribute; that refusal is deliberate, since a URL that names another version is the producer's own statement, and an operator who knows better strips the URL. The URL echoed in a report, and recorded in `metadata`, is producer-controlled: a URL containing a line break or a control character is a located fault (a URL has neither), and the same grammar applies to every producer string that reaches `metadata` (resource URLs, scope names and versions), and one over 1,024 characters is truncated with a marker in the report and is a fault for `metadata` (the bound applies there without truncation, like every metadata value).
 Otherwise the adapter *assumes* 1.37 and records the assumption. `metadata` carries
 `otel.semconv: "1.37"`, `otel.scope_schema_url` (the GenAI scope's URL, or `absent`),
 `otel.resource_schema_urls` (the distinct resource URLs, sorted and joined with `;`, or
@@ -188,8 +186,7 @@ does not guess at attributes it was not written for. Spans without `gen_ai.opera
 
 ## The mapping
 
-Every produced event carries `at` from a span's start or end timestamp (nanoseconds since
-epoch, rendered as a UTC `Timestamp`; span-event `timeUnixNano` values are not used, since the
+Every produced event carries `at` from a span's start or end timestamp (nanoseconds since epoch, rendered as a UTC `Timestamp` by *truncation* to the microsecond, never rounding, so rendering is monotone and `seq` order and `at` order never invert; span-event `timeUnixNano` values are not used, since the
 event form of a content attribute describes the span it is attached to) and `seq` from the
 ordering below.
 
@@ -249,7 +246,7 @@ ordering below.
    or the fixed label `otel.status_error` when the instrumentation set none, and
    `error.message` = the status message, or the empty string when OTLP carries none (v1
    requires the field), a fault if over 1,024 characters; `result`
-   = `gen_ai.tool.call.result` if captured, at the span's end time); else the first `tool_call_response` part, in processing order, in an inference span **not earlier than the emitting span** (the *not-earlier* predicate: its `startTimeUnixNano` is greater than or equal to the emitter's; the same predicate as the response-before-call row, so the two never disagree) whose `gen_ai.input.messages` carries an `id` that matches (`ok: true` meaning *a response was observed*,
+   = `gen_ai.tool.call.result` if captured, at the span's end time); else the first `tool_call_response` part, in processing order, in an inference span **other than the emitter and not earlier than it** (the *not-earlier* predicate: a different span whose `startTimeUnixNano` is greater than or equal to the emitter's; a response to a call the same span emits is never legitimate, whatever the clock; the same predicate as the response-before-call row, so the two never disagree; coarse-clock residual: a span with the emitter's start but an earlier end or file position also satisfies it, and the adapter cannot tell it from a legitimate later presentation, a stated consequence like the others) whose `gen_ai.input.messages` carries an `id` that matches (`ok: true` meaning *a response was observed*,
    not that the tool succeeded, since the response body may itself be the tool's error;
    `result` = `response`, and a part without a `response` member is a located fault, like a
    text part without `content`; at that span's start time). Both sources commonly exist for one
@@ -306,7 +303,7 @@ The adapter checks, before producing a trace, and reports every failure it can r
 | every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
 | every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent, an object, or a string that parses to an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
 | every `tool_call` has a selected result, and it is after the call in `seq` (the ordering key of step 4, decided in nanoseconds) | v1's pairing rule |
-| every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span *not earlier* than the span that emitted its call (`startTimeUnixNano` greater than or equal to the emitter's, step 3's predicate) | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
+| every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span other than, and *not earlier* than, the span that emitted its call (step 3's predicate) | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
 | every `execute_tool` span's `gen_ai.tool.name`, when present, equals the matched call's `name` | the record must not say a different tool ran than was called |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
 | every item of an inference span's presented prefix was emitted by a span whose *nanosecond* timestamp (start for input items, end for output items) is no later than this span's `startTimeUnixNano`; compared in the ordering key's unit, never in the rendered microsecond `at` (equivalently, a non-error inference span does not start before the end of the span whose output it re-presents) | a message shown to the model before the trace says it was said is a fact out of order; the prefix rule sees sequence, not time, and without this row the ordered trace would silently contradict the conversation it just validated, the text analogue of the response-before-call row |
@@ -315,7 +312,7 @@ The adapter checks, before producing a trace, and reports every failure it can r
 | the mapping produced at least one event | a document with no inference span, only error-status ones, or only unmapped part types observed no conversation; v1 admits an empty `events`, so this is the adapter's rule, not the model's |
 | every non-error inference span carries `gen_ai.input.messages` (attribute or event) | a chat request always carries at least one message; a span with output and no input is a partial capture, and without this row it would yield an assistant-only conversation or a prefix fault blamed on the wrong span |
 | `service.name`, when present on several resources, is one value | `agent.name` must be a function of the document; differing names are a fault naming the resources |
-| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug: the CLI exits `70`, prints no report, and prints the validation errors *without input values* (pydantic's `errors(include_input=False)`; a raw traceback would echo message text), so a bug is never mistaken for a completeness finding and never echoes message text or payloads (a self-check message may name a call id, which is an identifier) |
+| every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug: the CLI exits `70`, prints no report, and prints, per validation error, only its `type` and `msg` (never `input`, never `loc`, whose path can name an argument key: agent content), so a bug is never mistaken for a completeness finding and never echoes message text or payloads (a self-check message may name a call id, which is an identifier) |
 
 A report lists each failing check with the span ids, attribute keys, message and part
 indices concerned (locations only, never content: the report is what an operator files, and

@@ -64,8 +64,9 @@ else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter
 **OTLP/JSON encoding.** Attribute values arrive typed (`stringValue`, `boolValue`,
 `intValue` and the nano timestamp fields as *decimal strings*, `doubleValue`, `arrayValue`,
 `kvlistValue`, `bytesValue`); `status.code` is an integer (`0` unset, `1` ok, `2` error). The
-nano timestamp fields must match `^[0-9]{1,20}$` and render to a `datetime` (at most
-year 9999, about 2.5e20); anything else is a completeness fault naming the span. A producer
+nano timestamp fields must match `^[0-9]{1,19}$` (at most 1e19 - 1 ns, year 2286; the
+grammar is the only bound and it renders to a `datetime` without overflow); anything else is
+a completeness fault naming the span. A producer
 that emits them as JSON *numbers* is refused at decode (exit `2`), since 1.7e18 exceeds the
 I-JSON safe integer and the decoder cannot represent it; the adapter cannot know the offending
 integer was a timestamp (no structure exists yet), so when the decoder raises
@@ -77,13 +78,22 @@ fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a 
 (a repeated key is a fault, located by index path below the top-level attribute, since keys
 inside `arguments` are agent content); `bytesValue` is a fault (the conventions carry no bytes
 the adapter reads). Normalisation, and therefore every fault in this paragraph, applies to
-the attributes the adapter *reads* (those the conventions table names, on spans it maps, plus
-`service.name`); an attribute on an unmapped span, or one the table does not name, is never
-normalised and can fault nothing, since nothing of it is recorded. Content attributes may be a JSON *string* (the attribute form) or a native
+exactly the attributes the adapter *reads*, enumerated as (span class, attribute) pairs:
+inference span whose status is not error: `gen_ai.system_instructions`,
+`gen_ai.input.messages`, `gen_ai.output.messages`; inference span whose status is error:
+`gen_ai.input.messages` only (its `tool_call_response` parts are a result source);
+`execute_tool` span: `gen_ai.tool.call.id`, `gen_ai.tool.name`, `gen_ai.tool.call.result`,
+`error.type`; `invoke_agent` span: `gen_ai.agent.name` only (its content attributes are not
+read); every span: `gen_ai.operation.name`, the timestamps, `status`; resource:
+`service.name`. Anything else is never normalised and can fault nothing, since nothing of it
+is recorded. An `intValue` string must match `^-?[0-9]{1,17}$` before it is parsed (the
+codec's own literal-length rule, so `int()` is never asked about a 4,300-digit string). Content attributes may be a JSON *string* (the attribute form) or a native
 structure (the event form); a string is parsed with the same decoder under the adapter's
 bounds (50,000,000 nodes, depth 200; a per-attribute bound would refuse long histories the
 payload bound per event later admits), an inner-parse refusal is a completeness fault located
-by span and attribute key (exit `1`, since the document itself decoded), and the two forms are
+by span and attribute key only, never forwarding the decoder's message (which names the
+duplicate key: agent content) (exit `1`, since the document itself decoded); a
+`tool_call` part's `arguments` string is parsed the same way, under the same bounds, and the two forms are
 then one shape. One span carries one copy of each content key: a content key present both as
 an attribute and in a `gen_ai.client.inference.operation.details` event, more than one such
 event on a span, or a repeated key in a span's top-level `attributes[]` is a fault located by
@@ -97,8 +107,10 @@ nothing. A `doubleValue` arriving as the proto3 JSON strings `NaN`, `Infinity` o
 Span fields used: `traceId`, `spanId`, `parentSpanId`, `name`, `startTimeUnixNano`,
 `endTimeUnixNano`, `attributes[]` (`key`, `value` in OTLP's typed encoding: `stringValue`,
 `intValue`, `boolValue`, `doubleValue`, `arrayValue`, `kvlistValue`), `events[]`
-(`timeUnixNano`, `name`, `attributes[]`), `status`. Resource and scope attributes are read
-for `service.name` (the agent's name) and the instrumentation scope's version.
+(`name`, `attributes[]`; `timeUnixNano` is not used), `status`. Attributes read are exactly
+the (span class, attribute) pairs enumerated under *OTLP/JSON encoding*, including
+`gen_ai.tool.call.result` on tool spans; resource attributes are read for `service.name` and
+the instrumentation scope for its name and library version.
 
 ## Semantic conventions targeted
 
@@ -109,7 +121,7 @@ development). The adapter reads:
 | :-- | :-- |
 | `gen_ai.operation.name` on a span: `chat`, `generate_content`, `text_completion` | an **inference span**: its output messages become `message` events (role `assistant`) and its tool-call parts become `tool_call` events |
 | `gen_ai.operation.name` = `invoke_agent` | a **structural span**: the parent of inference and tool spans. It produces no events and its content attributes, if any, are ignored (they repeat its children's), so a tool call is never emitted twice; it contributes only `gen_ai.agent.name` (preferred over `service.name` for `agent.name`) and its time bounds |
-| `gen_ai.operation.name` = `execute_tool` | a tool execution span: `gen_ai.tool.call.id`, `gen_ai.tool.name`; its result is the `tool_result` |
+| `gen_ai.operation.name` = `execute_tool` | a tool execution span: `gen_ai.tool.call.id`, `gen_ai.tool.name`, `gen_ai.tool.call.result` (opt-in; recorded as the normalised `AnyValue` *as is*, a string staying a string, since a tool's result is a payload and parsing would make `"42"` and `42` indistinguishable; then the payload bound applies); its result is the `tool_result`. A span without `gen_ai.tool.call.id` (the attribute is opt-in) can match nothing and is a located fault |
 | `gen_ai.input.messages`, `gen_ai.output.messages` (opt-in content attributes, JSON text) | message content, tool-call parts (`type: tool_call`, `id`, `name`, `arguments`) and tool-response parts (`type: tool_call_response`, `id`, `response`) |
 | `gen_ai.system_instructions` | a `message` with role `system` |
 | span events named `gen_ai.client.inference.operation.details` | the same content when the instrumentation emits it as an event rather than an attribute |
@@ -148,7 +160,8 @@ ordering below.
    `(role, text)` items. For each span it builds the span's *presented conversation*: each
    text part of `gen_ai.system_instructions` as `(system, text)`, then, for each message in
    `gen_ai.input.messages` (a message has a `role`; its `parts` have a `type`), each `text`
-   part as `(role, text)`. The emitted conversation must be a positional prefix of the
+   part as `(role, content)`, `content` being the part's string member (a missing or
+   non-string `content` is a located fault). The emitted conversation must be a positional prefix of the
    presented one; the suffix is emitted as `message` events at the span's start time and
    appended to the emitted conversation. If it is not a prefix (the history the agent was
    shown diverged from what was emitted: an edited, dropped or reordered turn) that is a
@@ -169,7 +182,10 @@ ordering below.
    check (a response the agent was shown was observed, whatever the inference then did), so a
    call whose only observed response was presented to a failed final inference has a result.
    A consequence of skipping: an `execute_tool` span for a call the failed inference
-   requested has no `tool_call` to match and is reported as a result without a call. A second
+   requested has no `tool_call` to match and is reported as a result without a call. A
+   related consequence of reading calls only from *output* messages: a first inference span
+   whose history already contains `tool_call_response` parts from an earlier session is
+   reported with one orphan per such part, since the calls they answer were never observed. A second
    known consequence: the emitted conversation is one sequence, so a fan-out or
    multi-agent run (two `invoke_agent` subtrees with their own histories) presents two
    diverging histories and is reported as a prefix fault; per-subtree conversations are not
@@ -242,7 +258,7 @@ first:
 | every `execute_tool` span and every `tool_call_response` id matches a `tool_call` | a result without a call is a hole in the record |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
 | timestamps are present, non-zero, end ≥ start, and every `intValue` the adapter reads is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
-| the document has at least one span, and `spanId` values are unique | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
+| the document has at least one span; every `spanId` is present and 16 lowercase hex characters, and values are unique | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
 | `service.name`, when present on several resources, is one value | `agent.name` must be a function of the document; differing names are a fault naming the resources |
 | every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug |
 

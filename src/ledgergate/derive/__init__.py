@@ -33,6 +33,7 @@ from ledgergate.trace.models import (
     ToolResultEvent,
 )
 from ledgergate.trace.v2 import (
+    ApprovalPresentation,
     ApprovalRef,
     CommandIntent,
     InvocationResolution,
@@ -142,6 +143,10 @@ class _Derivation:
                 for a in chart
             ),
             policy_set_version=d["policy_set_version"],
+            policy_config_digest=d["policy_config"],
+            policy_configuration=None
+            if d["policy_configuration"] is None
+            else json.loads(d["policy_configuration"]),
             events=events,
         )
 
@@ -158,7 +163,7 @@ class _Derivation:
         if response is None:
             raise DerivationError(f"invocation {seq} has no response row")
         presentations = self.c.execute(
-            "SELECT journal_sequence FROM approvals WHERE invocation = ?", (seq,)
+            "SELECT * FROM approvals WHERE invocation = ?", (seq,)
         ).fetchall()
         if len(presentations) > 1:
             raise DerivationError(f"invocation {seq} has {len(presentations)} presentations")
@@ -235,17 +240,40 @@ class _Derivation:
                     attempted_digest=digest,
                     presentation_ref=None
                     if presentation is None
-                    else presentation_ref(presentation[0]),
+                    else presentation_ref(presentation["journal_sequence"]),
                 ),
             )
         )
 
-        # 3: decision
+        # 3: presentation
+        if presentation is not None:
+            pr = presentation
+            out.append(
+                (
+                    3,
+                    ApprovalPresentation(
+                        seq=1,
+                        at=at,
+                        intent_id=iid,
+                        presentation_ref=presentation_ref(pr["journal_sequence"]),
+                        verified=bool(pr["verified"]),
+                        check_result=pr["check_result"],
+                        journal_id=pr["journal_id"],
+                        fingerprint=pr["fingerprint"],
+                        issued_at=datetime.fromisoformat(pr["issued_at"]),
+                        expires_at=datetime.fromisoformat(pr["expires_at"]),
+                        approval_id=pr["approval_id"],
+                        approver=pr["approver"],
+                    ),
+                )
+            )
+
+        # 4: decision
         decision = self.c.execute("SELECT * FROM decisions WHERE invocation = ?", (seq,)).fetchone()
         if decision is not None:
             out.append(
                 (
-                    3,
+                    4,
                     PolicyDecision(
                         seq=1,
                         at=at,
@@ -280,7 +308,7 @@ class _Derivation:
             cid = command_id(inv["operation"])
             out.append(
                 (
-                    4,
+                    5,
                     LedgerCommandEvent(
                         seq=1,
                         at=at,
@@ -290,7 +318,7 @@ class _Derivation:
                     ),
                 )
             )
-            out.append((5, self._ledger_result(outcome, cid, at)))
+            out.append((6, self._ledger_result(outcome, cid, at)))
 
         # 6: read_result
         if disposition == "read":
@@ -298,7 +326,7 @@ class _Derivation:
             if rd is not None:
                 out.append(
                     (
-                        6,
+                        7,
                         ReadResult(
                             seq=1,
                             at=at,
@@ -310,10 +338,10 @@ class _Derivation:
                     )
                 )
 
-        # 7: tool_result
+        # 8: tool_result
         out.append(
             (
-                7,
+                8,
                 ToolResultEvent(
                     seq=1,
                     at=at,

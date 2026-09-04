@@ -198,6 +198,10 @@ fingerprint and the hash chain are the core's own length-prefixed encoding. Two 
 (`none`), which allows everything and still writes a complete decision row, and
 `ThresholdPolicySet` (see *Policy and approvals*).
 
+**Known limit.** Approval single use is enforced within one writable journal file; a byte
+copy of a journal enforces it separately, so operators keep exactly one writable copy until
+an external consumption authority lands (M8).
+
 **Policy and approvals (M3).** A policy set is a deterministic, versioned function of an
 explicit `PolicyContext`: principal, subject, the command's kind and amount, every
 historical aggregate the rules read (as decimal strings, so the decision replays without
@@ -217,7 +221,10 @@ yields exactly one `invocation_resolution` naming what the runtime did and the e
 that answered it; a `policy_decision` appears only when this invocation was decided, by the
 policy set or by the runtime on a rejected approval (marked with a `runtime.` rule), and
 carries the whole context; a ledger pair appears only after an `allow`. A v1 document is
-lifted under a `legacy` grammar that invents neither tool events nor policy evidence.
+lifted under a `legacy` grammar that invents neither tool events nor policy evidence. The
+trace carries the policy set's declarative configuration, and `verify` recomputes every
+decision from the persisted context; a trace proves the *committed response payload*, not
+that the caller received it.
 `ledgergate verify <trace-or-journal>` runs the invariant registry and reports each
 invariant, and the whole, as `pass`, `fail` or `no_evidence`; a trace that carries nothing
 to check is `NO_EVIDENCE` (exit 3), never a pass by absence:
@@ -232,8 +239,9 @@ pass         context_matches_decision
 pass         ledger_pairs_replay
 pass         books_balance_and_chain_verifies
 pass         read_observed_the_recorded_head
-pass         caller_was_told_what_happened
+pass         committed_response_matches_journal
 pass         read_result_binds_the_served_value
+pass         decision_recomputes
 no_evidence  legacy_carries_no_policy_evidence
 PASS: 7 intents, 3 ledger commands
 ```

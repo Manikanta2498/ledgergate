@@ -14,6 +14,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from tests.unit.journal.support import CHART, open_txn, rows
 
+from ledgergate.codec import digest
 from ledgergate.journal import (
     Approval,
     ApprovalError,
@@ -632,7 +633,7 @@ class TestConfigurationBinding:
         same = Journal.open(path, clock=SteppingClock(EPOCH), ids=SequentialIds(), policy=POLICY)
         same.close()
         assert POLICY.configuration_digest() != looser.configuration_digest()
-        assert NullPolicySet().configuration_digest() == "none"
+        assert NullPolicySet().configuration_digest() == digest(NullPolicySet().configuration())
 
     def test_unverified_presentation_row_holds_no_identity_under_tokenizing_admitter(
         self, tmp_path: Path

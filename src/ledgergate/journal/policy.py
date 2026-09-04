@@ -139,11 +139,13 @@ class NullPolicySet:
 
     version = "none"
 
-    def configuration_digest(self) -> str:
-        return "none"
-
     def configuration(self) -> Mapping[str, Any] | None:
         return {"set": "NullPolicySet", "version": "none"}
+
+    def configuration_digest(self) -> str:
+        from ledgergate.codec import digest
+
+        return digest(self.configuration())
 
     def gates_read(self, tool: str) -> bool:
         return False

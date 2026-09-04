@@ -26,8 +26,10 @@ from ledgergate.ledger import GENESIS_HASH, LedgerError
 from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent, ToolResultEvent
 from ledgergate.trace.replay import replay_trace
 from ledgergate.trace.v2 import (
+    CommandIntent,
     InvocationResolution,
     PolicyDecision,
+    ReadIntent,
     ReadResult,
     TraceV2,
     _ref_number,
@@ -342,67 +344,44 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
 
 
 def context_matches_decision(t: TraceV2) -> list[Finding]:
-    """The persisted context agrees with the decision row about the approval verdict, names the
-    same policy set, was computed over the digest the resolution attempted, and on a failed
-    verdict carries no policy-derived subject or aggregates (no policy code ran)."""
+    """The persisted context is about this intent: its digest and kind are the resolution's,
+    its command kind, amount and currency are the command intent's, it was evaluated at the
+    invocation's time, and on a runtime decision it carries no policy-derived subject or
+    aggregates (no policy code ran). Verdict and set agreement are model-enforced."""
     out = []
-    attempted = {r.intent_id: r.attempted_digest for r in t.resolutions()}
-    kinds = {
-        r.intent_id: ("request" if r.disposition == "read" else "fingerprint")
-        for r in t.resolutions()
-    }
+    by_id = {r.intent_id: r for r in t.resolutions()}
+    intents = {e.intent_id: e for e in t.events if isinstance(e, CommandIntent | ReadIntent)}
     for iid, d in _decided(t).items():
-        if d.context.get("digest_kind") != kinds.get(iid):
-            out.append(
-                Finding(
-                    "context_matches_decision",
-                    "error",
-                    f"{iid}: digest_kind {d.context.get('digest_kind')!r} does not fit"
-                    " the disposition",
-                    iid,
-                )
-            )
-        if d.context.get("command_digest") != attempted.get(iid):
-            out.append(
-                Finding(
-                    "context_matches_decision",
-                    "error",
-                    f"{iid}: context digest differs from the resolution's attempted digest",
-                    iid,
-                )
-            )
-        ctx_approval = d.context.get("approval")
-        recorded = None if d.approval is None else d.approval.verdict
-        ctx_verdict = None if not isinstance(ctx_approval, dict) else ctx_approval.get("verdict")
-        if ctx_verdict != recorded:
-            out.append(
-                Finding(
-                    "context_matches_decision",
-                    "error",
-                    f"{iid}: context verdict {ctx_verdict!r} differs from decision {recorded!r}",
-                    iid,
-                )
-            )
-        if d.runtime_written and (
-            d.context.get("subject") is not None or d.context.get("aggregates")
-        ):
-            out.append(
-                Finding(
-                    "context_matches_decision",
-                    "error",
-                    f"{iid}: runtime decision carries policy-derived context",
-                    iid,
-                )
-            )
-        if d.context.get("policy_set_version") != d.policy_set_version:
-            out.append(
-                Finding(
-                    "context_matches_decision",
-                    "error",
-                    f"{iid}: context names a different policy set than the decision",
-                    iid,
-                )
-            )
+        r = by_id[iid]
+        c = d.context
+
+        def bad(message: str, iid: str = iid) -> None:
+            out.append(Finding("context_matches_decision", "error", f"{iid}: {message}", iid))
+
+        kind = "request" if r.disposition == "read" else "fingerprint"
+        if c.digest_kind != kind:
+            bad(f"digest_kind {c.digest_kind!r} does not fit the disposition")
+        if c.command_digest != r.attempted_digest:
+            bad("context digest differs from the resolution's attempted digest")
+        if c.evaluated_at != d.at:
+            bad("context was evaluated at a time other than the invocation's")
+        intent = intents.get(iid)
+        if isinstance(intent, CommandIntent):
+            cmd = intent.command
+            money = getattr(cmd, "amount", None) or getattr(cmd, "money", None)
+            expected_amount = None if money is None else str(money.amount)
+            expected_currency = None if money is None else money.currency
+            if (c.command_kind, c.amount, c.currency) != (
+                cmd.kind,
+                expected_amount,
+                expected_currency,
+            ):
+                bad("context kind, amount or currency differ from the command intent's")
+        elif isinstance(intent, ReadIntent):
+            if c.command_kind is not None or c.amount is not None or c.currency is not None:
+                bad("a read's context carries no command kind or amount")
+        if d.runtime_written and (c.subject is not None or c.aggregates):
+            bad("runtime decision carries policy-derived context")
     return out
 
 
@@ -504,9 +483,10 @@ def _tool_results(t: TraceV2) -> dict[str, ToolResultEvent]:
     return out
 
 
-def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
-    """The tool_result closing each runtime intent says what the journal did (the two
-    decision-to-outcome tables): success iff a read was not denied or the ledger applied;
+def committed_response_matches_journal(t: TraceV2) -> list[Finding]:
+    """The committed response (the tool_result closing each runtime intent: the outbound event
+    the journal committed, not proof the caller received it) says what the journal did (the
+    two decision-to-outcome tables): success iff a read was not denied or the ledger applied;
     otherwise the error type of the path taken (AdmissionError, IdempotencyConflictError,
     PolicyDenied, ApprovalRequired, ApprovalRejected, or the core's own error); a denial
     carries the decision's rule and reason; an applied write's served head, sequence and entry
@@ -525,7 +505,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
         if tr is None:
             out.append(
                 Finding(
-                    "caller_was_told_what_happened",
+                    "committed_response_matches_journal",
                     "error",
                     f"{r.intent_id}: no tool_result",
                     r.intent_id,
@@ -548,7 +528,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 if message != f"{d.matched_rule}: {d.reason}":
                     out.append(
                         Finding(
-                            "caller_was_told_what_happened",
+                            "committed_response_matches_journal",
                             "error",
                             f"{r.intent_id}: denial message does not carry the decision's rule"
                             " and reason",
@@ -561,7 +541,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
             if told is None:
                 out.append(
                     Finding(
-                        "caller_was_told_what_happened",
+                        "committed_response_matches_journal",
                         "error",
                         f"{r.intent_id}: replay of an outcome no earlier invocation was told about",
                         r.intent_id,
@@ -580,7 +560,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
             if not exact:
                 out.append(
                     Finding(
-                        "caller_was_told_what_happened",
+                        "committed_response_matches_journal",
                         "error",
                         f"{r.intent_id}: replay was not told exactly what {producer} was told",
                         r.intent_id,
@@ -600,7 +580,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 if message != f"{d.matched_rule}: {d.reason}":
                     out.append(
                         Finding(
-                            "caller_was_told_what_happened",
+                            "committed_response_matches_journal",
                             "error",
                             f"{r.intent_id}: denial message does not carry the decision's rule"
                             " and reason",
@@ -612,7 +592,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 if lr is None:
                     out.append(
                         Finding(
-                            "caller_was_told_what_happened",
+                            "committed_response_matches_journal",
                             "error",
                             f"{r.intent_id}: allowed write without a ledger result",
                             r.intent_id,
@@ -625,7 +605,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 if not lr.ok and tr.error != lr.error:
                     out.append(
                         Finding(
-                            "caller_was_told_what_happened",
+                            "committed_response_matches_journal",
                             "error",
                             f"{r.intent_id}: served error differs from the ledger result's",
                             r.intent_id,
@@ -638,7 +618,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
                 ):
                     out.append(
                         Finding(
-                            "caller_was_told_what_happened",
+                            "committed_response_matches_journal",
                             "error",
                             f"{r.intent_id}: served head, sequence or entry differ from the"
                             " ledger result",
@@ -649,7 +629,7 @@ def caller_was_told_what_happened(t: TraceV2) -> list[Finding]:
         if tr.ok != expected_ok or actual_error != expected_error:
             out.append(
                 Finding(
-                    "caller_was_told_what_happened",
+                    "committed_response_matches_journal",
                     "error",
                     f"{r.intent_id}: caller was told ok={tr.ok} {actual_error or ''} but the"
                     f" journal did ok={expected_ok} {expected_error or ''}",
@@ -680,6 +660,77 @@ def read_result_binds_the_served_value(t: TraceV2) -> list[Finding]:
                         e.intent_id,
                     )
                 )
+    return out
+
+
+RECOMPUTABLE_SETS = frozenset({"ThresholdPolicySet", "NullPolicySet"})
+"""The sets whose rules are wholly declarative; a subclass or a custom set is code, and its
+decisions are evidence only (``no_evidence`` for recomputation)."""
+
+
+def _recomputable(t: TraceV2) -> bool:
+    config = t.policy_configuration
+    return bool(t.decisions()) and config is not None and config.get("set") in RECOMPUTABLE_SETS
+
+
+def decision_recomputes(t: TraceV2) -> list[Finding]:
+    """Re-running the trace's declarative policy configuration over each persisted context
+    reproduces the recorded decision, rule and reason. Needs the configuration; a set whose
+    rules are code reports no evidence. Runtime-written decisions are not policy output and
+    are skipped; a failed-verdict context never reached the set."""
+    from ledgergate.journal.policy import PolicyContext, ThresholdPolicySet
+
+    out = []
+    config = t.policy_configuration
+    assert config is not None
+    if config.get("set") == "NullPolicySet":
+        for iid, d in _decided(t).items():
+            if not d.runtime_written and (d.decision, d.matched_rule) != (
+                "allow",
+                "none.allow_all",
+            ):
+                out.append(
+                    Finding("decision_recomputes", "error", f"{iid}: null set did not allow", iid)
+                )
+        return out
+    try:
+        policy = ThresholdPolicySet.from_configuration(config)
+    except (KeyError, TypeError, ValueError) as exc:
+        return [Finding("decision_recomputes", "error", f"configuration does not load: {exc}")]
+    for iid, d in _decided(t).items():
+        if d.runtime_written:
+            continue
+        c = d.context
+        context = PolicyContext(
+            c.principal,
+            c.subject,
+            c.command_digest,
+            c.digest_kind,
+            c.evaluated_at,
+            c.policy_set_version,
+            c.command_kind,
+            c.amount,
+            c.currency,
+            dict(c.aggregates),
+            None
+            if c.approval is None
+            else {"presentation": c.approval.presentation, "verdict": c.approval.verdict},
+        )
+        try:
+            got = policy.evaluate(context)
+        except ValueError as exc:
+            out.append(Finding("decision_recomputes", "error", f"{iid}: {exc}", iid))
+            continue
+        if (got.decision, got.matched_rule, got.reason) != (d.decision, d.matched_rule, d.reason):
+            out.append(
+                Finding(
+                    "decision_recomputes",
+                    "error",
+                    f"{iid}: recorded {d.decision} by {d.matched_rule}; recomputed {got.decision}"
+                    f" by {got.matched_rule}",
+                    iid,
+                )
+            )
     return out
 
 
@@ -773,10 +824,10 @@ REGISTRY: tuple[Invariant, ...] = (
         lambda t: any(isinstance(e, ReadResult) for e in t.events),
     ),
     Invariant(
-        "caller_was_told_what_happened",
-        caller_was_told_what_happened.__doc__ or "",
+        "committed_response_matches_journal",
+        committed_response_matches_journal.__doc__ or "",
         "docs/spec/journal.md, decision-to-outcome tables",
-        caller_was_told_what_happened,
+        committed_response_matches_journal,
         lambda t: any(r.disposition != "legacy" for r in t.resolutions()),
     ),
     Invariant(
@@ -785,6 +836,13 @@ REGISTRY: tuple[Invariant, ...] = (
         "docs/spec/journal.md, read protocol (result_digest)",
         read_result_binds_the_served_value,
         lambda t: any(isinstance(e, ReadResult) for e in t.events),
+    ),
+    Invariant(
+        "decision_recomputes",
+        decision_recomputes.__doc__ or "",
+        "docs/spec/trace-v2.md, invariants and verification (recomputation)",
+        decision_recomputes,
+        _recomputable,
     ),
     Invariant(
         "legacy_carries_no_policy_evidence",

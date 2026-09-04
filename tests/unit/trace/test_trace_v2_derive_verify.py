@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -166,7 +166,7 @@ class TestDerivation:
         assert decisions[by["approval"].intent_id].approval is not None
         assert decisions[by["approval"].intent_id].approval.verdict == "approval_valid"  # type: ignore[union-attr]
         assert decisions[by["approval"].intent_id].consumption_ref is not None
-        assert decisions[by["read"].intent_id].context["digest_kind"] == "request"
+        assert decisions[by["read"].intent_id].context.digest_kind == "request"
         assert t.journal_id is not None and t.policy_set_version == "p"
 
     def test_derivation_is_deterministic_and_round_trips(self, journal_path: str) -> None:
@@ -228,6 +228,7 @@ class TestDerivation:
 
 class TestGrammar:
     AT = EPOCH.isoformat()
+    CMD: ClassVar[dict[str, Any]] = {"kind": "reverse", "key": "k", "entry_id": "e"}
 
     def _base(self, events: list[Any]) -> dict[str, Any]:
         return {
@@ -236,6 +237,8 @@ class TestGrammar:
             "started_at": self.AT,
             "ended_at": self.AT,
             "policy_set_version": "none",
+            "currencies": [],
+            "chart": [{"account_id": "cash", "kind": "asset", "currency": "USD"}],
             "events": events,
         }
 
@@ -249,14 +252,54 @@ class TestGrammar:
             **{"attempted_digest": "0" * 64, **kw},
         }
 
-    def _bracketed(self, *inner: dict[str, Any], call_id: str = "c") -> list[dict[str, Any]]:
+    def _fp(self) -> str:
+        from ledgergate.codec import decode_command
+        from ledgergate.ledger import CURRENCIES, command_fingerprint
+
+        return command_fingerprint(decode_command(self.CMD, CURRENCIES))
+
+    def _intent(self) -> dict[str, Any]:
+        return {
+            "type": "command_intent",
+            "seq": 1,
+            "at": self.AT,
+            "intent_id": "intent-5",
+            "call_id": "c",
+            "command": self.CMD,
+        }
+
+    def _decision(self, **over: Any) -> dict[str, Any]:
+        return {
+            "type": "policy_decision",
+            "seq": 1,
+            "at": self.AT,
+            "intent_id": "intent-5",
+            "policy_set_version": "none",
+            "decision": "deny",
+            "matched_rule": "r",
+            "reason": "x",
+            "context": {
+                "principal": "local",
+                "command_digest": self._fp(),
+                "digest_kind": "fingerprint",
+                "evaluated_at": self.AT,
+                "policy_set_version": "none",
+                "command_kind": "reverse",
+            },
+            **over,
+        }
+
+    def _bracketed(
+        self, *inner: dict[str, Any], call_id: str = "c", write: bool = False
+    ) -> list[dict[str, Any]]:
         call = {
             "type": "tool_call",
             "seq": 1,
             "at": self.AT,
             "call_id": call_id,
-            "tool": "x",
-            "arguments": {},
+            "tool": "reverse" if write else "x",
+            "arguments": {"entry_id": "e"} if write else {},
+            **({"idempotency_key": "k"} if write else {}),
         }
         result = {
             "type": "tool_result",
@@ -269,8 +312,8 @@ class TestGrammar:
         events = [call, *inner, result]
         return [{**e, "seq": i + 1} for i, e in enumerate(events)]
 
-    def _validate(self, *inner: dict[str, Any]) -> TraceV2:
-        return TraceV2.model_validate(self._base(self._bracketed(*inner)))
+    def _validate(self, *inner: dict[str, Any], write: bool = False) -> TraceV2:
+        return TraceV2.model_validate(self._base(self._bracketed(*inner, write=write)))
 
     def test_invalid_carries_nothing_else(self) -> None:
         self._validate(self._res("intent-5", "invalid"))
@@ -285,66 +328,46 @@ class TestGrammar:
         }
         with pytest.raises(ValidationError, match="invalid carries no intent"):
             self._validate(read, self._res("intent-5", "invalid"))
+        with pytest.raises(ValidationError, match=r"presents nothing|approval_presentation iff"):
+            self._validate(self._res("intent-5", "invalid", presentation_ref="presentation-6"))
 
     def test_new_requires_a_decision_and_replay_forbids_one(self) -> None:
-        from ledgergate.codec import decode_command
-        from ledgergate.ledger import CURRENCIES, command_fingerprint
-
-        cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
-        fp = command_fingerprint(decode_command(cmd, CURRENCIES))
-        intent = {
-            "type": "command_intent",
-            "seq": 1,
-            "at": self.AT,
-            "intent_id": "intent-5",
-            "call_id": "c",
-            "command": cmd,
-        }
-        decision = {
-            "type": "policy_decision",
-            "seq": 1,
-            "at": self.AT,
-            "intent_id": "intent-5",
-            "policy_set_version": "none",
-            "decision": "deny",
-            "matched_rule": "r",
-            "reason": "x",
-            "context": {},
-        }
-        with pytest.raises(ValidationError, match="exactly one policy_decision"):
-            self._validate(
-                intent,
-                self._res(
-                    "intent-5",
-                    "new",
-                    operation_id="command-4",
-                    outcome_ref="outcome-6",
-                    attempted_digest=fp,
-                ),
-            )
-        with pytest.raises(ValidationError, match="never carries a policy_decision"):
-            self._validate(
-                intent,
-                self._res(
-                    "intent-5",
-                    "replay",
-                    operation_id="command-4",
-                    outcome_ref="outcome-6",
-                    attempted_digest=fp,
-                ),
-                decision,
-            )
-        self._validate(
-            intent,
-            self._res(
-                "intent-5",
-                "new",
-                operation_id="command-4",
-                outcome_ref="outcome-6",
-                attempted_digest=fp,
-            ),
-            decision,
+        fp = self._fp()
+        intent, decision = self._intent(), self._decision()
+        new = self._res(
+            "intent-5",
+            "new",
+            operation_id="command-4",
+            outcome_ref="outcome-6",
+            attempted_digest=fp,
         )
+        with pytest.raises(ValidationError, match="exactly one policy_decision"):
+            self._validate(intent, new, write=True)
+        with pytest.raises(ValidationError, match="never carries a policy_decision"):
+            self._validate(intent, {**new, "disposition": "replay"}, decision, write=True)
+        self._validate(intent, new, decision, write=True)
+
+    def test_the_call_must_decode_to_the_intents_command(self) -> None:
+        fp = self._fp()
+        new = self._res(
+            "intent-5",
+            "new",
+            operation_id="command-4",
+            outcome_ref="outcome-6",
+            attempted_digest=fp,
+        )
+        events = self._bracketed(self._intent(), new, self._decision(), write=True)
+        events[0]["arguments"] = {"entry_id": "other"}
+        with pytest.raises(ValidationError, match="not the intent's command"):
+            TraceV2.model_validate(self._base(events))
+        events = self._bracketed(self._intent(), new, self._decision(), write=True)
+        events[0]["idempotency_key"] = "different-key"
+        with pytest.raises(ValidationError, match="not the intent's command"):
+            TraceV2.model_validate(self._base(events))
+        events = self._bracketed(self._res("intent-5", "invalid"))
+        events[0]["arguments"] = {"raw": "should-not-be-in-trace"}
+        with pytest.raises(ValidationError, match="invalid call carries no arguments"):
+            TraceV2.model_validate(self._base(events))
 
     def test_resolution_shape(self) -> None:
         with pytest.raises(ValidationError, match="carries no operation"):
@@ -370,6 +393,17 @@ class TestGrammar:
     def test_each_intent_has_exactly_one_resolution(self) -> None:
         with pytest.raises(ValidationError, match="exactly one invocation_resolution"):
             self._validate(self._res("intent-5", "invalid"), self._res("intent-5", "invalid"))
+
+    def test_a_derived_trace_needs_its_chart_and_a_dense_seq(self) -> None:
+        doc = self._base(self._bracketed(self._res("intent-5", "invalid")))
+        doc.pop("chart")
+        with pytest.raises(ValidationError, match="chart and currencies"):
+            TraceV2.model_validate(doc)
+        doc = self._base(self._bracketed(self._res("intent-5", "invalid")))
+        for e in doc["events"]:
+            e["seq"] *= 10
+        with pytest.raises(ValidationError, match="dense"):
+            TraceV2.model_validate(doc)
 
 
 class TestLift:
@@ -449,19 +483,32 @@ class TestInvariants:
         d = next(
             e for e in doc2["events"] if e["type"] == "policy_decision" and e["decision"] == "allow"
         )
-        d["matched_rule"] = "runtime.invented"
+        d["matched_rule"] = "runtime.invented"  # not a rule the runtime writes: refused at load
+        with pytest.raises(ValidationError, match="not a rule the runtime writes"):
+            TraceV2.model_validate(doc2)
+        doc2 = t.model_dump(mode="json")
+        d = next(
+            e for e in doc2["events"] if e["type"] == "policy_decision" and e["decision"] == "allow"
+        )
+        d["matched_rule"] = "runtime.approval_rejected"  # the real rule, on an allow
         card2 = check(TraceV2.model_validate(doc2))
         assert (
             next(r for r in card2.results if r.name == "runtime_decisions_are_verdicts").status
             == "fail"
         )
-        # a context that disagrees with its decision about the verdict
+        # a context that disagrees with its decision about the verdict is refused at load
         doc3 = t.model_dump(mode="json")
         d3 = next(e for e in doc3["events"] if e["type"] == "policy_decision" and e.get("approval"))
         d3["context"]["approval"] = {"presentation": 1, "verdict": "approval_expired"}
-        card3 = check(TraceV2.model_validate(doc3))
+        with pytest.raises(ValidationError, match="disagree about the approval verdict"):
+            TraceV2.model_validate(doc3)
+        # a context evaluated at another time fails the row
+        doc4 = t.model_dump(mode="json")
+        d4 = next(e for e in doc4["events"] if e["type"] == "policy_decision")
+        d4["context"]["evaluated_at"] = "2030-01-01T00:00:00+00:00"
+        card4 = check(TraceV2.model_validate(doc4))
         assert (
-            next(r for r in card3.results if r.name == "context_matches_decision").status == "fail"
+            next(r for r in card4.results if r.name == "context_matches_decision").status == "fail"
         )
 
     def test_registry_entries_are_grounded(self) -> None:
@@ -514,11 +561,14 @@ class TestVerifyCli:
 
 def test_schema_artefact_matches_the_models() -> None:
     """schema/trace/v2.json is generated from the models and must not drift."""
+    from ledgergate.trace.v2 import json_schema
+
     checked_in = json.loads(Path("schema/trace/v2.json").read_text())
-    generated = TraceV2.model_json_schema()
-    for key in ("$schema", "$id"):
-        checked_in.pop(key, None)
-    assert checked_in == generated
+    assert checked_in == json_schema()
+    # discriminators and the schema version are required, not defaulted, so the schema and
+    # the model accept the same language
+    assert "type" in checked_in["$defs"]["MessageEvent"]["required"]
+    assert "schema_version" in checked_in["required"]
 
 
 def test_ledger_command_owner_grammar_rejects_orphan_pairs() -> None:
@@ -645,7 +695,7 @@ class TestEveryDispositionTheSpecSinglesOut:
         assert failed.outcome_ref == awaiting.outcome_ref  # the pending tip, produced earlier
         d = decisions[failed.intent_id]
         assert d.runtime_written and d.reason == "approval_expired" and d.approval is not None
-        assert d.approval.verdict == "approval_expired" and d.context["subject"] is None
+        assert d.approval.verdict == "approval_expired" and d.context.subject is None
         assert conflict.presentation_ref is not None and conflict.intent_id not in decisions
         assert read.intent_id in decisions and decisions[read.intent_id].decision == "deny"
         assert not any(e.type == "read_result" for e in t.events)
@@ -707,6 +757,8 @@ class TestBoundaryGrammar:
             "started_at": at,
             "ended_at": at,
             "policy_set_version": "none",
+            "currencies": [],
+            "chart": [{"account_id": "cash", "kind": "asset", "currency": "USD"}],
         }
         res = {
             "type": "invocation_resolution",
@@ -753,17 +805,7 @@ class TestBoundaryGrammar:
             "operation_id": "command-4",
             "outcome_ref": "outcome-6",
         }
-        decision = {
-            "type": "policy_decision",
-            "seq": 4,
-            "at": at,
-            "intent_id": "intent-5",
-            "policy_set_version": "none",
-            "decision": "deny",
-            "matched_rule": "r",
-            "reason": "x",
-            "context": {},
-        }
+        decision = TestGrammar()._decision(seq=4, at=at)
         with pytest.raises(ValidationError, match="differs from its tool_call"):
             TraceV2.model_validate(
                 {
@@ -829,12 +871,16 @@ class TestSecondReviewFindings:
         assert statuses["ledger_pairs_replay"] == "no_evidence"
 
     def test_duplicate_command_ids_are_refused_at_load(self) -> None:
-        from ledgergate.codec import decode_command
-        from ledgergate.ledger import CURRENCIES, command_fingerprint
+        from pydantic import TypeAdapter
+
+        from ledgergate.codec import digest
+        from ledgergate.trace.models import CommandDoc
 
         at = EPOCH.isoformat()
         cmd = {"kind": "reverse", "key": "k", "entry_id": "e"}
-        fp = command_fingerprint(decode_command(cmd, CURRENCIES))
+        fp = digest(
+            TypeAdapter(CommandDoc).validate_python(cmd).model_dump(mode="json", exclude_none=True)
+        )
         events = []
         for i, cid in enumerate(("dup", "dup")):
             base = i * 4
@@ -871,6 +917,17 @@ class TestSecondReviewFindings:
                     "command": cmd,
                 },
             ]
+        for i in range(2):
+            events.append(
+                {
+                    "type": "tool_result",
+                    "seq": 100 + i,
+                    "at": at,
+                    "call_id": f"c{i}",
+                    "ok": True,
+                    "result": {},
+                }
+            )
         events.append(
             {
                 "type": "ledger_result",
@@ -883,6 +940,8 @@ class TestSecondReviewFindings:
                 "sequence": 0,
             }
         )
+        for n, e in enumerate(events):
+            e["seq"] = n + 1
         with pytest.raises(ValidationError, match="unique"):
             TraceV2.model_validate(
                 {
@@ -1136,9 +1195,15 @@ class TestFifthReviewFindings:
         )
         d.pop("approval")
         d["context"]["approval"] = None
-        card = check(TraceV2.model_validate(doc))
-        assert not card.passed
-        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+        # the model refuses it: a decision after a presentation carries its verdict
+        with pytest.raises(ValidationError, match="carries its verdict"):
+            TraceV2.model_validate(doc)
+        # and the registry catches the same shape on a document built without validation
+        from ledgergate.invariants import runtime_decisions_are_verdicts
+
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        assert any("carry the verdict" in f.message for f in runtime_decisions_are_verdicts(built))
 
     def test_a_consumption_without_any_approval_fails(self, journal_path: str) -> None:
         doc = derive(journal_path).model_dump(mode="json")
@@ -1159,8 +1224,8 @@ class TestFifthReviewFindings:
             "verdict": "approval_not_applicable",
         }
         d["context"]["approval"] = {"presentation": 999, "verdict": "approval_not_applicable"}
-        card = check(TraceV2.model_validate(doc))
-        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+        with pytest.raises(ValidationError, match="presentation the intent lacks"):
+            TraceV2.model_validate(doc)
 
     def test_a_replay_must_name_the_outcome_current_at_the_time(self, tmp_path: Path) -> None:
         t = derive(self._failed_approval_journal(tmp_path))
@@ -1246,8 +1311,17 @@ class TestSixthReviewFindings:
         )
         intent["command"]["draft"]["postings"][0]["money"]["amount"] = 1
         intent["command"]["draft"]["postings"][1]["money"]["amount"] = 1
+        with pytest.raises(ValidationError, match="not the intent's command"):
+            TraceV2.model_validate(doc)  # the boundary call no longer decodes to the intent
+        call = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "tool_call" and e["call_id"] == intent["call_id"]
+        )
+        call["arguments"]["draft"]["postings"][0]["money"]["amount"] = 1
+        call["arguments"]["draft"]["postings"][1]["money"]["amount"] = 1
         with pytest.raises(ValidationError, match="not the command's fingerprint"):
-            TraceV2.model_validate(doc)
+            TraceV2.model_validate(doc)  # both sides changed: the digest gives it away
         doc = t.model_dump(mode="json")
         pair = next(e for e in doc["events"] if e["type"] == "ledger_command")
         pair["command"]["draft"]["postings"][0]["money"]["amount"] = 1
@@ -1269,7 +1343,7 @@ class TestSixthReviewFindings:
             if e["type"] == "command_intent" and e["intent_id"] == replay_res["intent_id"]
         )
         intent["command"]["draft"]["description"] = "changed"
-        with pytest.raises(ValidationError, match="not the command's fingerprint"):
+        with pytest.raises(ValidationError, match="not the intent's command"):
             TraceV2.model_validate(doc)
 
     def test_a_stray_boundary_pair_is_refused_in_a_runtime_trace(self, journal_path: str) -> None:
@@ -1540,8 +1614,10 @@ class TestEighthReviewFindings:
         new["approval"] = {"presentation_ref": f"presentation-{n + 1}", "verdict": "approval_valid"}
         new["context"]["approval"] = {"presentation": n + 1, "verdict": "approval_valid"}
         new["consumption_ref"] = f"consumption-{n + 2}"
-        card = check(TraceV2.model_validate(doc))
-        assert {r.name: r.status for r in card.results}["runtime_decisions_are_verdicts"] == "fail"
+        with pytest.raises(
+            ValidationError, match=r"presentation the intent lacks|approval_presentation iff"
+        ):
+            TraceV2.model_validate(doc)
 
     def test_a_consumption_before_its_presentation_fails(self, tmp_path: Path) -> None:
         path = str(tmp_path / "order.journal")
@@ -1585,6 +1661,7 @@ class TestNinthReviewFindings:
                 e["presentation_ref"] = "presentation-1"
             if e.get("approval"):
                 e["approval"]["presentation_ref"] = "presentation-1"
+                e["context"]["approval"]["presentation"] = 1
         with pytest.raises(ValidationError, match="not written by this invocation"):
             TraceV2.model_validate(doc)
         doc = t.model_dump(mode="json")
@@ -1625,7 +1702,7 @@ class TestNinthReviewFindings:
         next(e for e in doc["events"] if e["type"] == "invocation_resolution")[
             "attempted_digest"
         ] = "0" * 64
-        with pytest.raises(ValidationError, match="not the command's fingerprint"):
+        with pytest.raises(ValidationError, match="not the command's digest"):
             TraceV2.model_validate(doc)
 
 
@@ -1640,7 +1717,7 @@ class TestTenthReviewFindings:
     def test_caller_told_applied_on_a_pending_intent_fails(self, journal_path: str) -> None:
         t = derive(journal_path)
         assert {r.name: r.status for r in check(t).results}[
-            "caller_was_told_what_happened"
+            "committed_response_matches_journal"
         ] == "pass"
         doc = t.model_dump(mode="json")
         awaiting = next(
@@ -1653,7 +1730,7 @@ class TestTenthReviewFindings:
         tr = next(e for e in events[i:] if e["type"] == "tool_result")
         tr.update({"ok": True, "result": {"faked": "yes"}})
         tr.pop("error", None)
-        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        assert self._statuses(doc)["committed_response_matches_journal"] == "fail"
 
     def test_replay_must_be_told_what_the_producer_was_told(self, journal_path: str) -> None:
         doc = derive(journal_path).model_dump(mode="json")
@@ -1667,7 +1744,7 @@ class TestTenthReviewFindings:
         tr = next(e for e in events[i:] if e["type"] == "tool_result")
         tr.update({"ok": False, "error": {"type": "PolicyDenied", "message": "no"}})
         tr.pop("result", None)
-        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        assert self._statuses(doc)["committed_response_matches_journal"] == "fail"
 
     def test_a_served_balance_must_match_the_reads_digest(self, journal_path: str) -> None:
         t = derive(journal_path)
@@ -1705,7 +1782,7 @@ class TestTenthReviewFindings:
             if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
         )
         replay["presentation_ref"] = f"presentation-{_n(replay['intent_id']) + 1}"
-        with pytest.raises(ValidationError, match="is an approval"):
+        with pytest.raises(ValidationError, match=r"is an approval|approval_presentation iff"):
             TraceV2.model_validate(doc)
 
     def test_a_lifted_pair_must_carry_the_intents_command(self) -> None:
@@ -1740,10 +1817,10 @@ class TestEleventhReviewFindings:
         tr = self._replay_result(doc)
         assert tr["ok"] and tr["result"]["replayed"] is True
         tr["result"]["head"] = "f" * 64
-        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        assert self._statuses(doc)["committed_response_matches_journal"] == "fail"
         doc = t.model_dump(mode="json")
         self._replay_result(doc)["result"].pop("replayed")
-        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        assert self._statuses(doc)["committed_response_matches_journal"] == "fail"
 
     def test_denial_message_must_carry_rule_and_reason(self, journal_path: str) -> None:
         doc = derive(journal_path).model_dump(mode="json")
@@ -1756,7 +1833,7 @@ class TestEleventhReviewFindings:
         i = next(i for i, e in enumerate(events) if e.get("intent_id") == awaiting["intent_id"])
         tr = next(e for e in events[i:] if e["type"] == "tool_result")
         tr["error"]["message"] = "some.other_rule: swapped"
-        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        assert self._statuses(doc)["committed_response_matches_journal"] == "fail"
 
     def test_applied_write_must_serve_the_ledger_results_head(self, journal_path: str) -> None:
         doc = derive(journal_path).model_dump(mode="json")
@@ -1765,7 +1842,7 @@ class TestEleventhReviewFindings:
         tr = events[events.index(lr) + 1]
         assert tr["type"] == "tool_result" and tr["result"]["head"] == lr["head"]
         tr["result"]["head"] = "e" * 64
-        assert self._statuses(doc)["caller_was_told_what_happened"] == "fail"
+        assert self._statuses(doc)["committed_response_matches_journal"] == "fail"
 
 
 class TestTwelfthReviewFindings:
@@ -1793,12 +1870,14 @@ class TestTwelfthReviewFindings:
         assert tr["error"]["message"] == "d.no_reads: reads are refused"
         tr["error"]["message"] = "other.rule: swapped"
         card = check(TraceV2.model_validate(doc))
-        assert {r.name: r.status for r in card.results}["caller_was_told_what_happened"] == "fail"
+        assert {r.name: r.status for r in card.results}[
+            "committed_response_matches_journal"
+        ] == "fail"
 
 
 class TestPostApprovalTightening:
     def test_scalar_replay_results_are_compared(self, journal_path: str) -> None:
-        from ledgergate.invariants import caller_was_told_what_happened
+        from ledgergate.invariants import committed_response_matches_journal
 
         doc = derive(journal_path).model_dump(mode="json")
         events = doc["events"]
@@ -1813,7 +1892,9 @@ class TestPostApprovalTightening:
         producer_tr["result"], replay_tr["result"] = 1, 2
         built = TraceV2.model_construct(**doc)
         object.__setattr__(built, "events", tuple(_to_event(e) for e in events))
-        assert any("not told exactly" in f.message for f in caller_was_told_what_happened(built))
+        assert any(
+            "not told exactly" in f.message for f in committed_response_matches_journal(built)
+        )
 
     def test_rejected_write_served_error_is_the_ledger_results(self, journal_path: str) -> None:
         doc = derive(journal_path).model_dump(mode="json")
@@ -1823,7 +1904,9 @@ class TestPostApprovalTightening:
         assert tr["type"] == "tool_result" and tr["error"] == lr["error"]
         tr["error"]["message"] = "softened"
         card = check(TraceV2.model_validate(doc))
-        assert {r.name: r.status for r in card.results}["caller_was_told_what_happened"] == "fail"
+        assert {r.name: r.status for r in card.results}[
+            "committed_response_matches_journal"
+        ] == "fail"
 
     def test_a_policy_set_naming_the_runtime_namespace_is_refused(self, tmp_path: Path) -> None:
         from ledgergate.journal import ConfigurationError
@@ -1843,3 +1926,222 @@ class TestPostApprovalTightening:
         with pytest.raises(ConfigurationError, match="reserved"):
             j.handle(_open("k", "c", 5))
         j.close()
+
+
+class TestWholeProjectReviewFindings:
+    def test_removing_the_chart_makes_a_derived_document_unreadable(
+        self, journal_path: str
+    ) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        doc.pop("chart")
+        doc.pop("currencies")
+        with pytest.raises(ValidationError, match="chart and currencies"):
+            TraceV2.model_validate(doc)
+
+    def test_a_replay_with_a_different_key_is_refused(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        replay = next(
+            e
+            for e in events
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        i = events.index(replay)
+        intent = events[i - 1]
+        call = events[i - 2]
+        assert intent["type"] == "command_intent" and call["type"] == "tool_call"
+        intent["command"]["key"] = call["idempotency_key"] = "different-key"
+        with pytest.raises(ValidationError, match="another operation's key"):
+            TraceV2.model_validate(doc)
+
+    def test_a_foreign_boundary_call_is_refused(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        events = doc["events"]
+        replay = next(
+            e
+            for e in events
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        call = events[events.index(replay) - 2]
+        call.update(
+            {"tool": "refund", "arguments": {"unrelated": 1}, "idempotency_key": "third-key"}
+        )
+        with pytest.raises(
+            ValidationError, match=r"tool_call tool differs|not the intent's command"
+        ):
+            TraceV2.model_validate(doc)
+
+    def test_presentation_events_carry_the_check_result(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "p.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=POLICY,
+            approval_key=verification_key_text(SIGNER),
+        )
+        j.handle(_open("big", "c1", 500))
+        j.handle(
+            _open(
+                "big",
+                "c2",
+                500,
+                approval=_artefact(j, "big", expires_at=EPOCH + timedelta(seconds=1)),
+            )
+        )
+        j.handle(_open("big", "c3", 500, approval=_artefact(j, "big")))
+        j.close()
+        t = derive(path)
+        from ledgergate.trace.v2 import ApprovalPresentation
+
+        pres = [e for e in t.events if isinstance(e, ApprovalPresentation)]
+        assert [p.check_result for p in pres] == ["approval_expired", "checks_passed"]
+        assert all(p.verified and p.approver == "cfo" for p in pres)
+        assert check(t).passed
+        # a fabricated presentation reference on a terminal replay now needs an event
+        doc = t.model_dump(mode="json")
+        j2 = Journal.open(
+            path,
+            clock=SteppingClock(EPOCH + timedelta(hours=1)),
+            ids=SequentialIds(start=50),
+            policy=POLICY,
+        )
+        j2.handle(_open("big", "c4", 500))
+        j2.close()
+        doc = derive(path).model_dump(mode="json")
+        replay = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["disposition"] == "replay"
+        )
+        replay["presentation_ref"] = f"presentation-{_n(replay['intent_id']) + 1}"
+        with pytest.raises(ValidationError, match="approval_presentation iff"):
+            TraceV2.model_validate(doc)
+
+    def test_decisions_recompute_from_the_carried_configuration(self, journal_path: str) -> None:
+        t = derive(journal_path)
+        assert t.policy_configuration is not None and t.policy_config_digest != "none"
+        statuses = {r.name: r.status for r in check(t).results}
+        assert statuses["decision_recomputes"] == "pass"
+        doc = t.model_dump(mode="json")
+        d = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision" and e["decision"] == "approval_required"
+        )
+        d["decision"], d["matched_rule"], d["reason"] = "allow", "p.within_limits", "fine"
+        # keep the grammar happy: an allow needs a pair; so tamper the other way instead
+        doc = t.model_dump(mode="json")
+        d = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "policy_decision"
+            and e["decision"] == "allow"
+            and e["context"].get("command_kind") == "post"
+        )
+        d["decision"], d["matched_rule"], d["reason"] = "deny", "p.deny_above", "forged"
+        res = next(
+            e
+            for e in doc["events"]
+            if e["type"] == "invocation_resolution" and e["intent_id"] == d["intent_id"]
+        )
+        # remove the pair so the grammar accepts a deny, and fix the tool_result
+        cid = res["operation_id"]
+        doc["events"] = [
+            e
+            for e in doc["events"]
+            if not (e["type"] in ("ledger_command", "ledger_result") and e["command_id"] == cid)
+        ]
+        i = next(i for i, e in enumerate(doc["events"]) if e is d)
+        tr = next(e for e in doc["events"][i:] if e["type"] == "tool_result")
+        tr.update(
+            {"ok": False, "error": {"type": "PolicyDenied", "message": "p.deny_above: forged"}}
+        )
+        tr.pop("result", None)
+        for n, e in enumerate(doc["events"]):
+            e["seq"] = n + 1
+        card = check(TraceV2.model_validate(doc))
+        assert {r.name: r.status for r in card.results}["decision_recomputes"] == "fail"
+
+    def test_a_context_stripped_of_fields_is_refused(self, journal_path: str) -> None:
+        doc = derive(journal_path).model_dump(mode="json")
+        d = next(e for e in doc["events"] if e["type"] == "policy_decision")
+        d["context"] = {
+            k: v
+            for k, v in d["context"].items()
+            if k in ("digest_kind", "command_digest", "policy_set_version")
+        }
+        with pytest.raises(ValidationError, match="required"):
+            TraceV2.model_validate(doc)
+        doc = derive(journal_path).model_dump(mode="json")
+        doc["policy_set_version"] = "DIFFERENT"
+        with pytest.raises(ValidationError, match="other than the trace's"):
+            TraceV2.model_validate(doc)
+
+    def test_lift_is_total_over_valid_v1_documents(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # no ended_at
+        minimal = {
+            "schema_version": "1",
+            "trace_id": "t",
+            "agent": {"name": "a"},
+            "started_at": EPOCH.isoformat(),
+            "events": [
+                {
+                    "type": "message",
+                    "seq": 1,
+                    "at": EPOCH.isoformat(),
+                    "role": "user",
+                    "content": "hi",
+                }
+            ],
+        }
+        lifted = load_any(json.dumps(minimal))
+        assert lifted.ended_at == EPOCH
+        # a command the core refuses to construct, recorded with its rejection
+        unbalanced = {
+            "kind": "post",
+            "key": "k",
+            "draft": {
+                "postings": [
+                    {"account": "cash", "side": "debit", "money": {"amount": 5, "currency": "USD"}},
+                    {
+                        "account": "revenue",
+                        "side": "credit",
+                        "money": {"amount": 7, "currency": "USD"},
+                    },
+                ]
+            },
+        }
+        doc = {
+            **minimal,
+            "chart": [
+                {"account_id": "cash", "kind": "asset", "currency": "USD"},
+                {"account_id": "revenue", "kind": "revenue", "currency": "USD"},
+            ],
+            "events": [
+                {
+                    "type": "ledger_command",
+                    "seq": 1,
+                    "at": EPOCH.isoformat(),
+                    "command_id": "c1",
+                    "command": unbalanced,
+                },
+                {
+                    "type": "ledger_result",
+                    "seq": 2,
+                    "at": EPOCH.isoformat(),
+                    "command_id": "c1",
+                    "ok": False,
+                    "error": {"type": "UnbalancedEntryError", "message": "x"},
+                    "head": "0" * 64,
+                    "sequence": 0,
+                },
+            ],
+        }
+        p = tmp_path / "v1.json"
+        p.write_text(json.dumps(doc))
+        assert main(["verify", str(p)]) == 1  # verifies; invented message fails
+        assert "recomputed 'entry does not balance" in capsys.readouterr().out

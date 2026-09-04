@@ -115,6 +115,12 @@ would fork the identifier space silently: the same raw idempotency key would app
 and a `settle` would miss the transaction its `open` stored. The label alone cannot detect
 that; the check value does.
 
+**The request digest excludes the artefact.** A read's `request_digest` and the digest an
+`invalid` envelope keeps are unkeyed SHA-256 over the admitted request *without* any
+approval artefact: until its signature verifies an artefact's fields are the presenter's
+words, and a digest over them would let anyone holding the row confirm a guessed approver or
+approval id offline. The artefact is bound by its own signature and by the presentation row.
+
 **Approval artefact fields.** An artefact is issued by the approver against what the
 journal already holds: `ledgergate approve` takes `--key` only as a selector that must
 equal a stored key, and reads the artefact's `key` and `subject` (the command's stored

@@ -228,8 +228,8 @@ it, a `tools/call` becomes exactly one value handed to `Journal.handle` (the ide
 and any approval artefact lifted out of the arguments, the JSON-RPC id rendered as the call
 id), and the response is the journal's committed result with `isError` for every
 disposition that is not a success. Malformed calls that reach the journal are recorded as
-`invalid`; only what is not a message at all (parse errors, non-request objects, a call sent
-as a notification) is refused unrecorded. The journal refuses, under its write lock, any
+`invalid`; what never becomes a call (parse errors, non-request objects, unknown methods,
+params that are not an object, a call sent as a notification) is refused unrecorded. The journal refuses, under its write lock, any
 transaction that would take its derived trace past the trace's event bound, so every journal
 `serve` writes is verifiable; stderr carries error codes, sizes and class names, never caller
 content. `docs/spec/mcp-runtime.md` is the contract.

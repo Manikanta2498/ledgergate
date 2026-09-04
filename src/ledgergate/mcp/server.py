@@ -132,8 +132,9 @@ class Server:
 
     # ---- one line
 
-    def handle_line(self, line: bytes, oversized: bool = False) -> None:
-        length = len(line)
+    def handle_line(self, line: bytes, oversized: int = 0) -> None:
+        """One message. ``oversized`` is the drained byte total of a line the bound refused."""
+        length = oversized or len(line)
         if oversized:
             self._diagnostic(PARSE_ERROR, length, "undecoded", "unknown")
             self._error(None, PARSE_ERROR, "line exceeds the transport bound")
@@ -153,7 +154,10 @@ class Server:
         ):
             rpc_id = message.get("id") if isinstance(message, dict) else None
             echo = rpc_id if _valid_id(rpc_id) else None
-            self._diagnostic(INVALID_REQUEST, length, _id_kind(message), "unknown")
+            shown = message.get("method") if isinstance(message, dict) else None
+            self._diagnostic(
+                INVALID_REQUEST, length, _id_kind(message), shown if isinstance(shown, str) else ""
+            )
             self._error(echo, INVALID_REQUEST, "invalid request")
             return
         method: str = message["method"]
@@ -235,28 +239,28 @@ class Server:
         return 0
 
 
-def _lines(stdin: IO[bytes]) -> Iterator[tuple[bytes, bool]]:
-    """Newline-delimited lines with the 16 MiB bound applied *before* decoding. An over-long
-    line yields once, flagged, after its remainder is drained to the next newline in bounded
-    chunks (never materialised), so it cannot smuggle a second message in its tail."""
+def _lines(stdin: IO[bytes]) -> Iterator[tuple[bytes, int]]:
+    """Newline-delimited lines with the 16 MiB bound applied *before* decoding, to the content
+    excluding its terminator, so the same payload has the same fate with or without a final
+    newline. An over-long line yields once as ``(b"", drained_total)`` after its remainder is
+    drained to the next newline in bounded chunks (never materialised), so it cannot smuggle
+    a second message in its tail; a normal line yields ``(content, 0)``. Blank lines are
+    messages too and are refused like any undecodable line."""
     while True:
-        line = stdin.readline(MAX_LINE_BYTES + 1)
+        line = stdin.readline(MAX_LINE_BYTES + 2)
         if not line:
             return
-        if len(line) > MAX_LINE_BYTES or (
-            len(line) == MAX_LINE_BYTES + 1 and not line.endswith(b"\n")
-        ):
+        content = line.rstrip(b"\r\n") if line.endswith(b"\n") else line
+        if len(content) > MAX_LINE_BYTES:
             drained = len(line)
             while not line.endswith(b"\n"):
                 line = stdin.readline(MAX_LINE_BYTES)
                 if not line:
                     break
                 drained += len(line)
-            yield b"x" * min(drained, MAX_LINE_BYTES + 1), True  # length only; content discarded
+            yield b"", drained
             continue
-        stripped = line.rstrip(b"\r\n")
-        if stripped:
-            yield stripped, False
+        yield content, 0
 
 
 def _install_hooks(stderr: IO[str]) -> None:

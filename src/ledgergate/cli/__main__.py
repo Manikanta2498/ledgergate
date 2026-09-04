@@ -228,7 +228,7 @@ def serve_command(args: argparse.Namespace) -> int:
         ThresholdPolicySet,
         TokenizingAdmitter,
     )
-    from ledgergate.ledger import InvalidIdentifierError
+    from ledgergate.ledger import InvalidIdentifierError, LedgerError
     from ledgergate.ledger.identifiers import require_identifier
     from ledgergate.mcp import RandomIds, SystemClock, serve
 
@@ -299,7 +299,7 @@ def serve_command(args: argparse.Namespace) -> int:
             )
     except (JournalError, ConfigurationError) as exc:
         return fail(f"cannot open journal: {type(exc).__name__}")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, LookupError, LedgerError) as exc:
         return fail(f"cannot read --chart: {type(exc).__name__}")
     return serve(journal)
 

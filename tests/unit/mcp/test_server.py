@@ -119,9 +119,7 @@ class TestWireGrammar:
             {"jsonrpc": "2.0", "id": 1, "method": "notifications/initialized"},
         )
         assert [r.get("error", {}).get("code") for r in responses] == [-32601]
-        assert err == [
-            "ledgergate serve: -32600 bytes=161 id=absent method=tools/call unanswerable"
-        ] or any("unanswerable" in e for e in err)
+        assert err[0].endswith("id=absent method=tools/call unanswerable") and len(err) == 2
         conn = sqlite3.connect(j.path)
         assert conn.execute("SELECT COUNT(*) FROM invocations").fetchone()[0] == 0
         conn.close()
@@ -278,6 +276,22 @@ class TestFailureRouting:
         assert err[-1].endswith("IntegrityError")
         j.close()
 
+    def test_a_module_raised_programming_error_takes_the_bug_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        j = _journal(tmp_path)
+        conn = j._conn
+
+        def boom(_value: Any) -> Any:
+            conn.execute("SELECT ?", (1, 2))  # incorrect number of bindings: ProgrammingError
+            raise AssertionError("unreachable")
+
+        monkeypatch.setattr(j, "handle", boom)
+        responses, err, code = _run(j, _call(1, "trial_balance"))
+        assert responses[0]["error"] == {"code": -32603, "message": "internal error"} and code == 4
+        assert err[-1].endswith("internal")
+        j.close()
+
     def test_a_bug_is_32603_without_data_and_exits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -322,7 +336,30 @@ class TestLineBound:
         responses = [json.loads(line) for line in out.getvalue().splitlines()]
         assert [r.get("error", {}).get("code", "ok") for r in responses] == [-32700, "ok"]
         assert responses[1]["id"] == 2
-        assert "bytes=" in err.getvalue() and "x" * 50 not in err.getvalue()
+        assert f"bytes={len(big)}" in err.getvalue() and "x" * 50 not in err.getvalue()
+        j.close()
+
+    def test_the_bound_is_on_content_with_or_without_a_terminator(self, tmp_path: Path) -> None:
+        j = _journal(tmp_path)
+        prefix = b'{"jsonrpc":"2.0","id":5,"method":"ping","pad":"'
+        suffix = b'"}'
+        exact = prefix + b"x" * (MAX_LINE_BYTES - len(prefix) - len(suffix)) + suffix
+        assert len(exact) == MAX_LINE_BYTES
+        for payload in (exact + b"\n", exact):  # exactly at the bound: a message either way
+            out = io.StringIO()
+            Server(j, out, io.StringIO()).run(io.BytesIO(payload))
+            assert json.loads(out.getvalue())["result"] == {}
+        over = prefix + b"x" * (MAX_LINE_BYTES - len(prefix) - len(suffix) + 1) + suffix
+        for payload in (over + b"\n", over):  # one byte over: refused either way
+            out = io.StringIO()
+            Server(j, out, io.StringIO()).run(io.BytesIO(payload))
+            assert json.loads(out.getvalue())["error"]["code"] == -32700
+        j.close()
+
+    def test_blank_and_whitespace_lines_are_parse_errors(self, tmp_path: Path) -> None:
+        j = _journal(tmp_path)
+        responses, _, _ = _run(j, b"", b"   ", b"\r")
+        assert [r["error"]["code"] for r in responses] == [-32700, -32700, -32700]
         j.close()
 
 
@@ -357,6 +394,14 @@ class TestTools:
         for tool, example in examples.items():
             jsonschema.validate(example, TOOL_SCHEMAS[tool])
         assert [t["name"] for t in tool_list()] == sorted(TOOL_SCHEMAS)
+        # every bound in a schema is the codec's constant, not a copy
+        from ledgergate.codec import MAX_POSTINGS, MAX_TAGS, MAX_TEXT
+
+        draft = TOOL_SCHEMAS["post"]["properties"]["draft"]["properties"]
+        assert draft["postings"]["maxItems"] == MAX_POSTINGS
+        assert draft["description"]["maxLength"] == MAX_TEXT
+        assert draft["tags"]["maxProperties"] == MAX_TAGS
+        assert TOOL_SCHEMAS["reverse"]["properties"]["description"]["maxLength"] == MAX_TEXT
 
 
 class TestJournalChanges:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ledgergate.codec import MAX_POSTINGS, MAX_TAGS, MAX_TEXT
 from ledgergate.journal.admission import READ_TOOLS, WRITE_TOOLS
 
 IDEMPOTENCY_KEY = "idempotency_key"
@@ -39,12 +40,12 @@ _POSTING: dict[str, Any] = {
 _DRAFT: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "postings": {"type": "array", "items": _POSTING, "minItems": 2, "maxItems": 1000},
-        "description": {"type": "string", "maxLength": 1024},
+        "postings": {"type": "array", "items": _POSTING, "minItems": 2, "maxItems": MAX_POSTINGS},
+        "description": {"type": "string", "maxLength": MAX_TEXT},
         "tags": {
             "type": "object",
-            "additionalProperties": {"type": "string", "maxLength": 1024},
-            "maxProperties": 100,
+            "additionalProperties": {"type": "string", "maxLength": MAX_TEXT},
+            "maxProperties": MAX_TAGS,
         },
     },
     "required": ["postings"],
@@ -57,7 +58,7 @@ _APPROVAL: dict[str, Any] = {
 
 _ARGUMENTS: dict[str, dict[str, Any]] = {
     "post": {"draft": _DRAFT},
-    "reverse": {"entry_id": _IDENTIFIER, "description": {"type": "string", "maxLength": 1024}},
+    "reverse": {"entry_id": _IDENTIFIER, "description": {"type": "string", "maxLength": MAX_TEXT}},
     "open_transaction": {"transaction_id": _IDENTIFIER, "amount": _MONEY},
     "advance": {
         "transaction_id": _IDENTIFIER,

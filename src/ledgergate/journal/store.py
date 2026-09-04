@@ -1051,7 +1051,10 @@ class Journal:
         try:
             self._conn.execute("BEGIN IMMEDIATE")
         except sqlite3.Error as exc:  # SQLITE_BUSY past the timeout, a locked or corrupt file
-            raise _classify(exc, "journal unavailable") from exc
+            mapped = _classify(exc, "journal unavailable")
+            if mapped is exc:
+                raise
+            raise mapped from exc
         try:
             yield
             self._conn.execute("COMMIT")
@@ -1060,7 +1063,9 @@ class Journal:
             if self._conn.in_transaction:
                 self._conn.execute("ROLLBACK")  # a failure here escapes unmapped: a bug path
             if isinstance(exc, sqlite3.Error):
-                raise _classify(exc, "journal write failed") from exc
+                mapped = _classify(exc, "journal write failed")
+                if mapped is not exc:
+                    raise mapped from exc
             raise
         self._advance_projection()
 

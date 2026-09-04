@@ -30,14 +30,16 @@ Python 3.11) is `SQLITE_CORRUPT` or `SQLITE_NOTADB` becomes `IntegrityError` too
 `sqlite3.Error` (`SQLITE_BUSY`, `SQLITE_LOCKED`, `SQLITE_FULL`, `SQLITE_IOERR`,
 `SQLITE_READONLY` and the rest: the journal unavailable or the environment failing) is the
 base `JournalError`, answered `-32000` with the session continuing; the M4 tests include a
-module-raised `ProgrammingError` taking the `-32603` path; and `codec.loads` is made total
+module-raised `ProgrammingError` raised from `handle` taking the `-32603` path; and `codec.loads` is made total
 over its refusals (below).
 
 ## Terms
 
 - **Wire message**: one line of stdin, UTF-8, terminated by `\n` (the MCP stdio transport:
   newline-delimited JSON-RPC 2.0, no embedded newlines). A final line without a trailing
-  `\n` at EOF is a message. The server writes one line per response to stdout and nothing
+  `\n` at EOF is a message; so is an empty line, which is refused like any undecodable one
+  (`-32700`), since JSON has no empty document. The line bound applies to the content
+  excluding its terminator, so a payload's fate does not depend on how it was terminated. The server writes one line per response to stdout and nothing
   else to stdout, ever; diagnostics go to stderr, and a diagnostic carries only the JSON-RPC
   error code, the byte length of the line, the *kind* of id (`integer`, `string`, `absent`,
   `invalid`, `undecoded`), the method **only if it is one of the five the server implements** (else
@@ -45,7 +47,8 @@ over its refusals (below).
   exception's *class name*, which is always a `JournalError` subclass defined in
   `ledgergate.journal` (`CapacityError`, `ConfigurationError`, `EffectError`,
   `IntegrityError`, or `JournalError` itself) and so a project identifier, never its
-  message; for a `-32603` the fixed label `internal`. For a `-32700` the id kind is
+  message; for a `-32603` the fixed label `internal`; for a `tools/call` sent as a
+  notification the fixed label `unanswerable`. For a `-32700` the id kind is
   `undecoded`. The class name is emitted by mechanism, not by argument: `type(exc).__name__`
   only if it is one of the five, else `JournalError`. The vocabulary is closed for the whole
   process, not only for `handle`: the server installs a process-level handler so that any
@@ -146,8 +149,10 @@ before the journal sees the arguments:
 - `approval` (object, optional on write tools): an approval artefact, passed through verbatim
   for the journal to validate.
 
-The schemas are generated from one source in code (`ledgergate.mcp.tools`), and a test
-asserts that every example the codec accepts validates against the schema for its tool and
+The schemas are maintained in one place in code (`ledgergate.mcp.tools`), mirroring the
+codec's shapes and bounds (`MAX_POSTINGS`, `MAX_TEXT`, `MAX_TAGS`, imported from the codec
+rather than copied), and a test asserts that one example per tool the codec accepts
+validates against its schema, that every bound in a schema equals the codec's constant, and
 that the reserved members are named exactly `idempotency_key` and `approval` in every write
 schema. The schema is advisory to the client; **admission does not trust it**: the journal
 admits the same untyped value whether or not the client validated.

@@ -29,6 +29,7 @@ from ledgergate.codec import (
     CODEC_VERSION,
     MAX_PAYLOAD_NODES,
     MAX_TEXT,
+    MAX_TRACE_EVENTS,
     CodecError,
     IJsonError,
     canonical_text,
@@ -124,6 +125,25 @@ def _bounded_aggregates(aggregates: Any) -> dict[str, str]:
     return dict(aggregates)
 
 
+EVENTS_PER_INVOCATION = 9
+_BUGS = (sqlite3.ProgrammingError, sqlite3.InterfaceError, sqlite3.NotSupportedError)
+_CORRUPTION = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
+
+
+def _classify(exc: sqlite3.Error, what: str) -> BaseException:
+    """Every ``sqlite3.Error`` the transaction wrapper sees, by mechanism and in order: the
+    class test first (module-raised bugs carry no result code and are re-raised as the bug
+    they are), then a constraint the process built a row against, then a corruption code,
+    else the journal unavailable or the environment failing."""
+    if isinstance(exc, _BUGS):
+        return exc
+    if isinstance(exc, sqlite3.IntegrityError):
+        return IntegrityError(f"{what}: the rows contradict: {exc}")
+    if getattr(exc, "sqlite_errorcode", 0) & 0xFF in _CORRUPTION:
+        return IntegrityError(f"{what}: the file is corrupt: {exc}")
+    return JournalError(f"{what}: {exc}")
+
+
 def _configuration_text(policy: PolicySet) -> str | None:
     doc = policy.configuration()
     return None if doc is None else canonical_text(doc)
@@ -135,6 +155,11 @@ MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 class JournalError(Exception):
     """A failure the journal cannot record: the transaction is rolled back and nothing is
     written. Stated rather than hidden; see the specification's failure list."""
+
+
+class CapacityError(JournalError):
+    """The journal's derived trace would exceed the trace's event bound; the transaction is
+    refused before any row. The remedy is a new journal (mcp-runtime, *Segmentation*)."""
 
 
 class IntegrityError(JournalError):
@@ -284,13 +309,33 @@ class Journal:
         super().__setattr__(name, value)
 
     def __post_init__(self) -> None:
-        # A set's version label is persisted in the definition and in every decision, and
-        # the trace carries it as an identifier; a set whose label is not one would produce a
-        # journal the trace refuses, so it is refused here, before any file exists.
+        # A set's version label and the principal are persisted in every decision, and the
+        # trace carries both as identifiers; a value that is not one would produce a journal
+        # the trace refuses, so it is refused here, before any file exists.
         try:
             require_identifier(self.policy.version, "policy set version")
         except (InvalidIdentifierError, TypeError) as exc:
             raise ConfigurationError(f"policy set version is not an identifier: {exc}") from exc
+        try:
+            require_identifier(self.principal, "principal")
+        except (InvalidIdentifierError, TypeError) as exc:
+            raise ConfigurationError(f"principal is not an identifier: {exc}") from exc
+
+    def _check_capacity(self, cost: int) -> None:
+        """Immediately after the binding check, under the write lock: the derived trace of
+        this journal plus this transaction must fit the trace's event bound. Nine slots per
+        invocation is the ordinal grammar's upper bound (a write derives at most eight events,
+        a read seven); a message derives one."""
+        (invocations,) = self._conn.execute("SELECT COUNT(*) FROM invocations").fetchone()
+        (messages,) = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE invocation IS NULL"
+        ).fetchone()
+        if EVENTS_PER_INVOCATION * invocations + messages + cost > MAX_TRACE_EVENTS:
+            raise CapacityError(
+                f"journal at capacity: {invocations} invocations and {messages} messages derive"
+                f" up to {EVENTS_PER_INVOCATION * invocations + messages} events against a bound"
+                f" of {MAX_TRACE_EVENTS}; start a new journal"
+            )
 
     def _check_binding(self) -> None:
         """Re-assert, at the start of every transaction, that the components in use are the
@@ -322,6 +367,7 @@ class Journal:
         admitter: Admitter | None = None,
         policy: PolicySet | None = None,
         approval_key: str = "none",
+        principal: str = LOCAL_PRINCIPAL,
     ) -> Journal:
         """``approval_key`` is the base64url Ed25519 verification key approvals must verify
         against; ``none`` means no artefact can ever verify."""
@@ -334,7 +380,9 @@ class Journal:
                 "the policy set can require approval but the journal has no verification key,"
                 " so nothing could ever approve; supply approval_key or drop approve_above"
             )
-        self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
+        self = cls(
+            path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet(), principal
+        )
         self._approval_key = approval_key
         target = Path(path)
         if target.exists() and target.stat().st_size > 0:
@@ -442,8 +490,11 @@ class Journal:
         ids: IdGenerator,
         admitter: Admitter | None = None,
         policy: PolicySet | None = None,
+        principal: str = LOCAL_PRINCIPAL,
     ) -> Journal:
-        self = cls(path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet())
+        self = cls(
+            path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet(), principal
+        )
         try:
             probe(path)  # read-only: a foreign file is refused before any pragma touches it
             row = _read_definition_row(path)  # also read-only; refuses another schema version
@@ -544,6 +595,7 @@ class Journal:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
         with self._txn():
             self._check_binding()
+            self._check_capacity(EVENTS_PER_INVOCATION)
             self._ensure_current()  # step 2
             scope = AdmissionScope(
                 self._definition.registry, self._definition.chart, self.principal, self._ledger
@@ -565,6 +617,7 @@ class Journal:
             raise ValueError(f"message content exceeds {MAX_MESSAGE_CHARS} characters")
         with self._txn():
             self._check_binding()
+            self._check_capacity(1)
             seq = self._alloc("events")
             self._conn.execute(
                 "INSERT INTO events VALUES (?,?,?,?)",
@@ -997,17 +1050,17 @@ class Journal:
         self._pending_projection = None
         try:
             self._conn.execute("BEGIN IMMEDIATE")
-        except sqlite3.Error as exc:  # SQLITE_BUSY past the timeout, or a locked file
-            raise JournalError(f"journal unavailable: {exc}") from exc
+        except sqlite3.Error as exc:  # SQLITE_BUSY past the timeout, a locked or corrupt file
+            raise _classify(exc, "journal unavailable") from exc
         try:
             yield
             self._conn.execute("COMMIT")
         except BaseException as exc:
             self._pending_projection = None
             if self._conn.in_transaction:
-                self._conn.execute("ROLLBACK")
+                self._conn.execute("ROLLBACK")  # a failure here escapes unmapped: a bug path
             if isinstance(exc, sqlite3.Error):
-                raise JournalError(f"journal write failed: {exc}") from exc
+                raise _classify(exc, "journal write failed") from exc
             raise
         self._advance_projection()
 

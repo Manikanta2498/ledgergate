@@ -42,6 +42,7 @@ from ledgergate.journal.schema import FACT_TABLES, SCHEMA_VERSION, connect, crea
 from ledgergate.journal.store import (
     ENVELOPE_BOUND,
     LOCAL_PRINCIPAL,
+    CapacityError,
     ConfigurationError,
     Definition,
     EffectError,
@@ -64,6 +65,7 @@ __all__ = [
     "Admitter",
     "Approval",
     "ApprovalError",
+    "CapacityError",
     "ConfigurationError",
     "Decision",
     "Definition",

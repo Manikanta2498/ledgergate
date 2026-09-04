@@ -21,7 +21,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, JsonValue, StrictBool, StrictInt, model_validator
 
-from ledgergate.codec import digest
+from ledgergate.codec import MAX_TRACE_EVENTS, digest
 from ledgergate.ledger import CURRENCIES, ChartOfAccounts
 from ledgergate.trace.models import (
     AccountDoc,
@@ -317,7 +317,7 @@ class TraceV2(_Strict):
     """The set's declarative rules, when it has any: what a verifier recomputes decisions
     from. Its JCS digest is ``policy_config_digest``, the value the journal's definition
     recorded and compared at every open."""
-    events: Annotated[tuple[V2Event, ...], Field(max_length=5_000_000)]
+    events: Annotated[tuple[V2Event, ...], Field(max_length=MAX_TRACE_EVENTS)]
     metadata: StringMap = Field(default_factory=dict)
 
     # ------------------------------------------------------------ grammar

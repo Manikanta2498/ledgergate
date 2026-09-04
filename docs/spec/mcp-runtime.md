@@ -11,7 +11,7 @@ the journal one untyped JSON value, and encode what the journal committed. It ho
 state of its own that the journal does not hold, decides nothing the journal does not
 decide, and returns nothing the journal did not commit. ADR-0002's roadmap row for M4 names
 the four design questions this document answers before any transport code; every mechanism
-named here is built in M4 and tested. M4 changes four things outside the transport, each
+named here is built and tested (`ledgergate.mcp`, `tests/unit/mcp`). M4 changes four things outside the transport, each
 named where it applies and recorded in the document that owns it: the journal gains
 `CapacityError` and the two indexes that serve it (schema 6); the journal refuses a
 non-identifier principal when the object is built; the journal's transaction wrapper

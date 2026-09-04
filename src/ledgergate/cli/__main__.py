@@ -10,6 +10,7 @@ import sqlite3
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from ledgergate import __version__
 from ledgergate.journal import FACT_TABLES, SCHEMA_VERSION
@@ -25,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(handler=None)
 
     sub = parser.add_subparsers(
-        dest="command", metavar="{journal,approve,run,verify,record,report}"
+        dest="command", metavar="{journal,approve,serve,run,verify,record,report}"
     )
     for name, help_text in (
         ("run", "run an agent against the corpus and score it"),
@@ -47,6 +48,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="also write the v2 trace that was checked (derived from a journal, or lifted)",
     )
     verify.set_defaults(handler=verify_command)
+
+    serve = sub.add_parser(
+        "serve", help="serve one journal as MCP tools over stdio (docs/spec/mcp-runtime.md)"
+    )
+    serve.add_argument("--journal", required=True, type=Path, help="path to the journal file")
+    serve.add_argument("--create", action="store_true", help="create the journal from --chart")
+    serve.add_argument("--chart", type=Path, help="JSON array of accounts (AccountDoc shape)")
+    serve.add_argument("--policy", type=Path, help="ThresholdPolicySet configuration document")
+    serve.add_argument("--approval-key", help="Ed25519 verification key text; with --create only")
+    serve.add_argument("--token-key-file", type=Path, help="tokenizer key, 32+ raw bytes")
+    serve.add_argument("--principal", default="local", help="the one local principal")
+    serve.set_defaults(handler=serve_command)
 
     journal = sub.add_parser("journal", help="inspect a journal file")
     journal_sub = journal.add_subparsers(dest="journal_command", metavar="{dump,pending}")
@@ -200,6 +213,95 @@ def journal_approve(args: argparse.Namespace) -> int:
     )
     print(json.dumps(artefact.to_json(), sort_keys=True))
     return 0
+
+
+def serve_command(args: argparse.Namespace) -> int:
+    """Build the journal from the flags per mcp-runtime.md *Configuration and effects*, then
+    hand it to the transport. The chart file is parsed here (the cli may import trace); mcp
+    never does."""
+    from ledgergate.journal import (
+        ConfigurationError,
+        IdentityAdmitter,
+        Journal,
+        JournalError,
+        NullPolicySet,
+        ThresholdPolicySet,
+        TokenizingAdmitter,
+    )
+    from ledgergate.ledger import InvalidIdentifierError
+    from ledgergate.ledger.identifiers import require_identifier
+    from ledgergate.mcp import RandomIds, SystemClock, serve
+
+    def fail(message: str) -> int:
+        print(f"ledgergate serve: {message}", file=sys.stderr)
+        return 2
+
+    try:
+        require_identifier(args.principal, "--principal")
+    except InvalidIdentifierError as exc:
+        return fail(str(exc))
+    if args.approval_key is not None and not args.create:
+        return fail("--approval-key is meaningful only with --create")
+    if args.create != (args.chart is not None):
+        return fail("--create and --chart go together")
+
+    policy: Any = NullPolicySet()
+    if args.policy is not None:
+        try:
+            policy = ThresholdPolicySet.from_configuration(json.loads(args.policy.read_text()))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return fail(f"cannot load --policy: {type(exc).__name__}")
+    admitter: Any = IdentityAdmitter()
+    if args.token_key_file is not None:
+        from ledgergate.codec import Tokenizer
+
+        try:
+            key = args.token_key_file.read_bytes()
+        except OSError as exc:
+            return fail(f"cannot read --token-key-file: {type(exc).__name__}")
+        if len(key) < 32:
+            return fail("--token-key-file must hold at least 32 bytes")
+        admitter = TokenizingAdmitter(Tokenizer(key, domain="mcp", key_version="v1"))
+    else:
+        print(
+            "ledgergate serve: warning: no --token-key-file; identifiers and free text reach"
+            " disk as given",
+            file=sys.stderr,
+        )
+
+    try:
+        if args.create:
+            from pydantic import TypeAdapter
+
+            from ledgergate.ledger import CURRENCIES, ChartOfAccounts
+            from ledgergate.trace.models import AccountDoc
+
+            docs = TypeAdapter(list[AccountDoc]).validate_json(args.chart.read_text())
+            chart = ChartOfAccounts(a.to_account(CURRENCIES) for a in docs)
+            journal = Journal.create(
+                str(args.journal),
+                chart,
+                clock=SystemClock(),
+                ids=RandomIds(),
+                admitter=admitter,
+                policy=policy,
+                principal=args.principal,
+                approval_key=args.approval_key or "none",
+            )
+        else:
+            journal = Journal.open(
+                str(args.journal),
+                clock=SystemClock(),
+                ids=RandomIds(),
+                admitter=admitter,
+                policy=policy,
+                principal=args.principal,
+            )
+    except (JournalError, ConfigurationError) as exc:
+        return fail(f"cannot open journal: {type(exc).__name__}")
+    except (OSError, ValueError) as exc:
+        return fail(f"cannot read --chart: {type(exc).__name__}")
+    return serve(journal)
 
 
 def verify_command(args: argparse.Namespace) -> int:

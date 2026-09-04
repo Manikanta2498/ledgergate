@@ -20,7 +20,8 @@ from pathlib import Path
 
 # 2: token_check; 3: policy_config, nullable approval identity; 4: message rows carry `at`;
 # 5: definition.policy_configuration, approvals.invocation UNIQUE, decision<->consumption link
-SCHEMA_VERSION = 5
+# 6: indexes serving the capacity check (events messages, invocations disposition)
+SCHEMA_VERSION = 6
 
 FACT_TABLES = (
     "definition",
@@ -225,6 +226,10 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE UNIQUE INDEX IF NOT EXISTS events_one_per_direction
     ON events(invocation, direction) WHERE invocation IS NOT NULL;
+
+-- Capacity check: count(*) walks the smallest b-tree, so give each count a compact one.
+CREATE INDEX IF NOT EXISTS events_messages ON events(journal_sequence) WHERE invocation IS NULL;
+CREATE INDEX IF NOT EXISTS invocations_disposition ON invocations(disposition);
 
 CREATE TABLE IF NOT EXISTS reads (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),

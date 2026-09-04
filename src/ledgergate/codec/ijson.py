@@ -25,6 +25,10 @@ MAX_TRANSPORT_NODES = 200_000
 row is written, like a value that is not I-JSON. Every later stage (JCS, envelopes, the
 trace models) then has a bounded input and recursion cannot escape it."""
 
+MAX_TRACE_EVENTS = 5_000_000
+"""The trace schema's bound on events; the journal's capacity check keeps every journal under
+it (nine events per invocation plus one per message, as an upper bound)."""
+
 MAX_PAYLOAD_DEPTH = 32
 MAX_PAYLOAD_NODES = 10_000
 """Payload-class limits, shared by journal admission and the trace models, so anything the
@@ -35,7 +39,15 @@ class IJsonError(ValueError):
     """The input is JSON but not I-JSON, so it cannot be digested faithfully."""
 
 
+MAX_INT_LITERAL = 17  # sign included: 2**53 - 1 has 16 digits
+
+
 def _int(text: str) -> int:
+    # Refuse by literal length before int(): Python raises a bare ValueError on literals over
+    # 4,300 digits, which would escape the decoder; anything longer than 17 characters is
+    # outside the safe range regardless.
+    if len(text) > MAX_INT_LITERAL:
+        raise IJsonError("integer literal is outside the I-JSON safe range")
     value = int(text)
     if abs(value) > MAX_SAFE_INTEGER:
         raise IJsonError(f"integer {text} is outside the I-JSON safe range")
@@ -116,18 +128,24 @@ def payload_size(value: Any) -> tuple[int, int]:
 
 
 def loads(text: str | bytes) -> Any:
-    """Decode I-JSON. Raises :class:`IJsonError` for any RFC 7493 violation and
-    ``json.JSONDecodeError`` for text that is not JSON at all."""
+    """Decode I-JSON. Raises :class:`IJsonError` for any RFC 7493 violation or transport
+    bound and ``json.JSONDecodeError`` for text that is not JSON at all; nothing else escapes,
+    whatever the input."""
     if isinstance(text, bytes):
         try:
             text = text.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise IJsonError("input is not valid UTF-8") from exc
-    value = json.loads(
-        text,
-        parse_int=_int,
-        parse_float=_float,
-        parse_constant=_constant,
-        object_pairs_hook=_pairs,
-    )
+    try:
+        value = json.loads(
+            text,
+            parse_int=_int,
+            parse_float=_float,
+            parse_constant=_constant,
+            object_pairs_hook=_pairs,
+        )
+    except RecursionError as exc:
+        # The C scanner recurses per nesting level and gives up before the depth bound can
+        # be counted; that is the depth refusal, not a crash.
+        raise IJsonError(f"value nesting exceeds {MAX_TRANSPORT_DEPTH}") from exc
     return require_ijson(value)

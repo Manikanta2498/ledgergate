@@ -157,11 +157,11 @@ root_package = "ledgergate"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layered architecture: cli -> runner -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger"
+name = "Layered architecture: cli -> {runner, mcp} -> {invariants, report, (derive)} -> {trace, journal} -> codec -> ledger"
 type = "layers"
 layers = [
   "ledgergate.cli",
-  "ledgergate.runner",
+  "ledgergate.runner | ledgergate.mcp",
   "ledgergate.invariants | ledgergate.report | (ledgergate.derive)",
   "ledgergate.trace | ledgergate.journal",
   "ledgergate.codec",
@@ -184,6 +184,19 @@ forbidden_modules = [
   "pathlib",
   "sqlite3",
   "pydantic",
+]
+
+[[tool.importlinter.contracts]]
+name = "The MCP transport is only a transport: no trace, derive, invariants or runner"
+type = "forbidden"
+source_modules = ["ledgergate.mcp"]
+forbidden_modules = [
+  "ledgergate.trace",
+  "ledgergate.derive",
+  "ledgergate.invariants",
+  "ledgergate.runner",
+  "ledgergate.report",
+  "ledgergate.adapters",
 ]
 
 [[tool.importlinter.contracts]]

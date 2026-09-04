@@ -85,7 +85,7 @@ _DESCRIPTIONS = {
     "post": "Post a balanced journal entry.",
     "reverse": "Reverse a posted entry by id.",
     "open_transaction": "Open a payment transaction for an amount.",
-    "advance": "Advance a transaction's lifecycle; settle and refund events carry an entry.",
+    "advance": "Advance a transaction's lifecycle; a settle carries its entry.",
     "refund": "Refund part or all of a settled transaction, with the entry that moves it.",
     "balance": "The balance of one account, with the journal cursor it was read at.",
     "trial_balance": "Every account's debits and credits, with the journal cursor.",

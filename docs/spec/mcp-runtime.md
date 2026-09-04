@@ -41,7 +41,8 @@ over its refusals (below).
   (`-32700`), since JSON has no empty document. The line bound applies to the content
   excluding its terminator, so a payload's fate does not depend on how it was terminated. The server writes one line per response to stdout and nothing
   else to stdout, ever; diagnostics go to stderr, and a diagnostic carries only the JSON-RPC
-  error code, the byte length of the line, the *kind* of id (`integer`, `string`, `absent`,
+  error code, the byte length of the line (the content excluding its terminator; for a line
+  the bound refused, the drained total including terminators), the *kind* of id (`integer`, `string`, `absent`,
   `invalid`, `undecoded`), the method **only if it is one of the five the server implements** (else
   `unknown`, mirroring the envelope's rule for tool names), and for a `-32000` the
   exception's *class name*, which is always a `JournalError` subclass defined in

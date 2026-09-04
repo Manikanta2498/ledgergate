@@ -627,3 +627,51 @@ class TestServeCli:
         from ledgergate.cli.__main__ import main
 
         assert main(["verify", str(journal)]) == 0
+
+
+class TestWrapperClassificationEndToEnd:
+    def test_a_bug_inside_the_transaction_wrapper_is_32603(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        j = _journal(tmp_path)
+        conn = j._conn
+
+        def bad_binding() -> None:
+            conn.execute("SELECT ?", (1, 2))  # module-raised ProgrammingError, inside _txn
+
+        monkeypatch.setattr(j, "_check_binding", bad_binding)
+        responses, err, code = _run(j, _call(1, "trial_balance"))
+        assert responses[0]["error"]["code"] == -32603 and code == 4
+        assert err[-1].endswith("internal")
+        j.close()
+
+    def test_a_constraint_the_process_violates_inside_the_wrapper_is_integrity_and_exits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        j = _journal(tmp_path)
+        conn = j._conn
+
+        def bad_binding() -> None:
+            conn.execute("INSERT INTO definition SELECT * FROM definition")  # duplicate key
+
+        monkeypatch.setattr(j, "_check_binding", bad_binding)
+        responses, err, code = _run(j, _call(1, "trial_balance"))
+        assert responses[0]["error"]["code"] == -32000
+        assert responses[0]["error"]["data"]["class"] == "IntegrityError" and code == 3
+        assert err[-1].endswith("IntegrityError")
+        j.close()
+
+    def test_policy_and_approval_key_flag_errors_are_named(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ledgergate.cli.__main__ import main
+
+        bad_policy = tmp_path / "p.json"
+        bad_policy.write_text("[1]")
+        assert main(["serve", "--journal", str(tmp_path / "j"), "--policy", str(bad_policy)]) == 2
+        assert "cannot load --policy" in capsys.readouterr().err
+        chart = tmp_path / "chart.json"
+        chart.write_text(json.dumps([{"account_id": "cash", "kind": "asset", "currency": "USD"}]))
+        create = ["serve", "--journal", str(tmp_path / "j"), "--create", "--chart", str(chart)]
+        assert main([*create, "--approval-key", "not-a-key"]) == 2
+        assert "--approval-key is not" in capsys.readouterr().err

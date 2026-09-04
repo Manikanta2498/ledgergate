@@ -242,14 +242,24 @@ def serve_command(args: argparse.Namespace) -> int:
         return fail(str(exc))
     if args.approval_key is not None and not args.create:
         return fail("--approval-key is meaningful only with --create")
+    if args.approval_key is not None:
+        from ledgergate.journal import verification_key
+
+        try:
+            verification_key(args.approval_key)
+        except ValueError as exc:
+            return fail(f"--approval-key is not an Ed25519 verification key: {type(exc).__name__}")
     if args.create != (args.chart is not None):
         return fail("--create and --chart go together")
 
     policy: Any = NullPolicySet()
     if args.policy is not None:
         try:
-            policy = ThresholdPolicySet.from_configuration(json.loads(args.policy.read_text()))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            doc = json.loads(args.policy.read_text())
+            if not isinstance(doc, dict):
+                raise TypeError("configuration must be an object")
+            policy = ThresholdPolicySet.from_configuration(doc)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             return fail(f"cannot load --policy: {type(exc).__name__}")
     admitter: Any = IdentityAdmitter()
     if args.token_key_file is not None:

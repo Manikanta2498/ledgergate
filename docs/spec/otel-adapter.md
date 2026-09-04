@@ -42,9 +42,14 @@ transport's 64: in OTLP/JSON the *native* (span-event) form of a content attribu
 nesting about 30 before the first `arguments` member and each further JSON object level costs
 four more (`value -> kvlistValue -> values -> kv`), so 64 would admit about eight levels of
 arguments natively against the 32 the string form allows; 64 + 4 * 32 admits both forms
-alike (`require_ijson` is iterative and the scanner's recursion budget is far above 200). A
-file within the byte bound but over the node or depth bound is reported (exit `1`,
-"document exceeds N nodes"), not tracebacked. The payload
+alike (`require_ijson` is iterative and the scanner's recursion budget is far above 200).
+Every refusal before any OTLP structure exists (not JSON, not I-JSON, over the byte, node or
+depth bound) is exit `2`, "cannot read", with the decoder's message: the codec raises one
+`IJsonError` for all of them, and the adapter does not string-match messages to tell them
+apart. Exit `1` is reserved for a completeness report, which presupposes a decoded document.
+Fifty million nodes materialised as Python objects is several gigabytes of heap; the byte
+bound does not prevent that, and an operator with such an export should split it by trace
+first. Stated, so it is not rediscovered as a bug. The payload
 bounds of the *produced* events are the v1 model's and are checked per event (below). Anything
 else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter reads a file.
 
@@ -54,8 +59,10 @@ else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter
 nano timestamp fields must match `^[0-9]{1,20}$` and render to a `datetime` (at most
 year 9999, about 2.5e20); anything else is a completeness fault naming the span. A producer
 that emits them as JSON *numbers* is refused at decode (exit `2`), since 1.7e18 exceeds the
-I-JSON safe integer and the decoder cannot represent it; the report says so by name, because
-this is the one common producer deviation with an unhelpful default message.
+I-JSON safe integer and the decoder cannot represent it; the adapter cannot know the offending
+integer was a timestamp (no structure exists yet), so when the decoder's refusal is the
+safe-range one the CLI appends a fixed *hint*: "OTLP timestamps emitted as JSON numbers are
+the common cause".
 The adapter normalises an `AnyValue` to JSON before any mapping: strings, booleans and
 doubles as themselves; `intValue` parsed, and a value outside the I-JSON safe range is a
 fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a JSON object
@@ -87,13 +94,20 @@ development). The adapter reads:
 | `error.type`, span `status` | a failed `tool_result` (`ok: false`, `error.type` as the type) |
 
 The mapping is versioned by that convention version. An export carries no convention
-version except the optional `schemaUrl` on `resourceSpans[]`/`scopeSpans[]`, which most GenAI
-instrumentations leave empty; the instrumentation scope's version is the library's release,
-not the convention's. So: when a `schemaUrl` is present and does not end in `/1.37.0`, the
-adapter refuses with a report naming the URL found; when absent, the adapter *assumes* 1.37
-and records that assumption. `metadata` carries `otel.semconv: "1.37"`, `otel.schema_url`
-(the URL, or `absent`) and `otel.scope: <instrumentation scope name and its library
-version>`. A later convention is a new mapping, reviewed against this document; the adapter
+version except the optional `schemaUrl` fields, which most GenAI instrumentations leave
+empty; the instrumentation scope's version is the library's release, not the convention's.
+The *resource* `schemaUrl` describes the resource attributes and is set by the SDK (a Java SDK
+resource routinely says `.../1.2x.0` under a 1.37 GenAI instrumentation), so it is never a
+reason to refuse. So: the adapter refuses, with a report naming the URL, only when a
+`scopeSpans[].schemaUrl` on a scope that contains spans with `gen_ai.operation.name` is
+present and does not end in `/1.37.0`; two such scopes with differing URLs are a fault.
+Otherwise the adapter *assumes* 1.37 and records the assumption. `metadata` carries
+`otel.semconv: "1.37"`, `otel.scope_schema_url` (the GenAI scope's URL, or `absent`),
+`otel.resource_schema_urls` (the distinct resource URLs, sorted and joined with `;`, or
+`absent`) and `otel.scope` (the GenAI scopes' names and library versions, sorted and joined
+with `;`). Every `metadata` value is a string of at most 1,024 characters (v1's `StringMap`);
+`otel.spans` and `otel.agents` are decimal strings; a value that would exceed the bound is a
+fault naming the key. A later convention is a new mapping, reviewed against this document; the adapter
 does not guess at attributes it was not written for. Spans without `gen_ai.operation.name`,
 or with one this document does not map (`embeddings`, `create_agent`, ...), produce no events;
 they are counted in `otel.spans` and take part in the parent check.
@@ -124,7 +138,14 @@ epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
    becomes a `message` (role `assistant`) at the span's end time and is appended. An
    inference span whose status is error (`status.code` 2) produces no events and is skipped
    entirely, prefix check included: a failed inference is not conversation, and its
-   presented history may legitimately be the one the next successful span re-presents.
+   presented history may legitimately be the one the next successful span re-presents. Its
+   `tool_call_response` parts are still a *result source* and still subject to the orphan
+   check (a response the agent was shown was observed, whatever the inference then did), so a
+   call whose only observed response was presented to a failed final inference has a result.
+   A second known consequence: the emitted conversation is one sequence, so a fan-out or
+   multi-agent run (two `invoke_agent` subtrees with their own histories) presents two
+   diverging histories and is reported as a prefix fault; per-subtree conversations are not
+   designed in M5 and `otel.agents` records the count.
 2. **Tool calls.** Each `tool_call` part in an inference span's `gen_ai.output.messages`
    becomes a `tool_call` event at the span's end time with `call_id` = the part's `id`,
    `tool` = the part's `name`, `arguments` = the part's `arguments` (an object; a string is
@@ -193,9 +214,10 @@ first:
 
 A report lists each failing check with the span ids, attribute keys, message and part
 indices concerned (locations only, never content: the report is what an operator files, and
-message text is the most sensitive thing in the document). The CLI exit code is `1` for a
+message text is the most sensitive thing in the document); a span whose `spanId` is missing
+or malformed is named by its index path `resourceSpans[i].scopeSpans[j].spans[k]`. The CLI exit code is `1` for a
 report, `0` for a trace, `2` for a file that cannot be read or decoded at all (not JSON,
-not I-JSON, over the byte bound).
+not I-JSON, over the byte, node or depth bound).
 
 ## Redaction
 
@@ -224,10 +246,10 @@ name is the roadmap's; "record" is what the adapter does with an observation. Th
 live-capture meaning the stub carried ("record a cassette from a live agent run", the
 `cli` help text) is withdrawn by M5's implementation: nothing in M5 attaches to a running agent, and
 a wrapper that did would be the "thin framework wrapper" ADR-0002 names as a convenience
-over this adapter, not shipped in M5. This change also updates the README (the adapters line
-of the diagram marks `openai | anthropic | langgraph` as future conveniences over OTel; the
-M5 roadmap row drops "thin framework wrappers") and ADR-0002 §6 (completeness is validated
-against the **v1** contract, the ingest format, and the result lifts to v2).
+over this adapter, not shipped in M5. The README (the adapters line of the diagram marks
+`openai | anthropic | langgraph` as future conveniences over OTel; the M5 roadmap row drops
+"thin framework wrappers") and ADR-0002 §6 (completeness is validated against the **v1**
+contract, the ingest format, and the result lifts to v2) say the same.
 
 ## What this document does not claim
 
@@ -235,7 +257,7 @@ against the **v1** contract, the ingest format, and the result lifts to v2).
   diagram marks them as future conveniences over OTel.
 - **Joining observation to journal**: an observational trace and a journal-derived trace of
   the same run are two documents; correlating them by `call_id` is future work, named in
-  ADR-0002 §6 by this change.
+  ADR-0002 §6.
 - **Live receivers**: file input only.
-- **Conventions other than 1.37**: refused when a `schemaUrl` says so; otherwise assumed,
-  and the assumption is recorded in `metadata`.
+- **Conventions other than 1.37**: refused when a GenAI scope's `schemaUrl` says so;
+  otherwise assumed, and the assumption is recorded in `metadata`.

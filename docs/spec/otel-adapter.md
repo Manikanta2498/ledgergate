@@ -143,7 +143,7 @@ located fault; part types this document does not map (`reasoning`, blobs, ...) p
 nothing. A `doubleValue` arriving as the proto3 JSON strings `NaN`, `Infinity` or
 `-Infinity` is a fault: I-JSON has no such number.
 
-Span fields used: `traceId`, `spanId`, `parentSpanId`, `name`, `startTimeUnixNano`,
+Span fields used: `traceId`, `spanId`, `parentSpanId`, `startTimeUnixNano`,
 `endTimeUnixNano`, `attributes[]` (`key`, `value` in OTLP's typed encoding: `stringValue`,
 `intValue`, `boolValue`, `doubleValue`, `arrayValue`, `kvlistValue`), `events[]`
 (`name`, `attributes[]`; `timeUnixNano` is not used), `status`. Attributes read are exactly
@@ -200,8 +200,7 @@ ordering below.
    shown diverged from what was emitted: an edited, dropped or reordered turn) that is a
    completeness fault naming the span and the first differing position. This is a prefix
    rule, not a set rule: a genuine repeated turn (`user "yes"` twice) is two messages,
-   because it lengthens the presented sequence. A known consequence: context-window
-   trimming, where an agent framework drops early turns before the next inference, presents
+   because it lengthens the presented sequence. A known consequence: an inference sampled with several candidate outputs (`n > 1`) appends every candidate's text, and the next span re-presents one, so the prefix rule reports an edited history; the adapter does not guess which candidate was the continuation. Another: context-window trimming, where an agent framework drops early turns before the next inference, presents
    a *shorter* history and is reported as a fault; the adapter cannot tell trimming from
    editing, and says so rather than guessing. A message `role` outside v1's set (`system`,
    `user`, `assistant`, `tool`) is a located fault. The invariant: after the last inference
@@ -244,7 +243,7 @@ ordering below.
    or the fixed label `otel.status_error` when the instrumentation set none, and
    `error.message` = the status message, or the empty string when OTLP carries none (v1
    requires the field), a fault if over 1,024 characters; `result`
-   = `gen_ai.tool.call.result` if captured, at the span's end time); else the first `tool_call_response` part, in processing order, in an inference span **other than the emitter and not earlier than it** (the *not-earlier* predicate: a different span whose `startTimeUnixNano` is greater than or equal to the emitter's; a response to a call the same span emits is never legitimate, whatever the clock; the same predicate as the response-before-call row, so the two never disagree; coarse-clock residual: a span with the emitter's start but an earlier end or file position also satisfies it, and the adapter cannot tell it from a legitimate later presentation, a stated consequence like the others) whose `gen_ai.input.messages` carries an `id` that matches (`ok: true` meaning *a response was observed*,
+   = `gen_ai.tool.call.result` if captured, at the span's end time); else the first `tool_call_response` part, in processing order, in an inference span **other than the emitter and not earlier than it** (the *not-earlier* predicate: a different span whose `startTimeUnixNano` is greater than or equal to the emitter's; a response to a call the same span emits is never legitimate, whatever the clock; the same predicate as the response-before-call row, so the two never disagree; coarse-clock residual: a span with the emitter's start and an earlier end satisfies it, but its result then precedes the call in nanoseconds and the pairing row reports it; only a span fully coincident with the emitter, all four timestamps equal, is undecidable, and there `R` orders the result last, a stated consequence like the others) whose `gen_ai.input.messages` carries an `id` that matches (`ok: true` meaning *a response was observed*,
    not that the tool succeeded, since the response body may itself be the tool's error;
    `result` = `response` (a JSON `null` response renders as no `result` member, indistinguishable from "not captured", since v1 omits a null payload), and a part without a `response` member is a located fault, like a text part without `content`; at that span's start time). Both sources commonly exist for one
    call, and the response part recurs in every later span's history; the adapter selects by
@@ -263,7 +262,7 @@ ordering below.
    where a span's start and end coincide the presented history still precedes the response
    and never interleaves with it; then, for the same part, the mapping step. So a `tool_call_response`
    part and the user turn that follows it in the same input keep the document's order, and
-   text and `tool_call` parts of one output keep theirs. One more *key component* precedes the processing key: `R(e)`, which is `1` for a `tool_result` whose selected `tool_call` shares its nanosecond and whose emitting span shares the result's span processing key (start *and* end equal, a fully coarse clock) and `0` for every other event, so such a result sorts after every event at that instant, its call included (and, in that one case, after a user turn that followed the response in the presenting span's input: the coarse-clock residual, in which the adapter cannot order those two and places the result last, stated here so the document-order sentence above is read with this exception), and the *ordering* of a result against its own call is never decided by export order, which is not a fact about the run (the response-before-call row uses the *not-earlier* predicate of step 3, on `startTimeUnixNano` alone, so it too never turns on file position; processing order falls back to file position only for two spans with equal start *and* end, the stated consequence of step 1); a third event at the same instant sorts by the remaining
+   text and `tool_call` parts of one output keep theirs. One more *key component* precedes the processing key: `R(e)`, which is `1` for a `tool_result` whose selected `tool_call` shares its nanosecond **and whose emitting span has the same `startTimeUnixNano` and `endTimeUnixNano` as the result's span** (two distinct spans, fully coincident: a fully coarse clock; file position is deliberately *not* part of this test, since two spans never share one) and `0` for every other event, so such a result sorts after every event at that instant, its call included (and, in that one case, after a user turn that followed the response in the presenting span's input: the coarse-clock residual, in which the adapter cannot order those two and places the result last, stated here so the document-order sentence above is read with this exception), and the *ordering* of a result against its own call is never decided by export order, which is not a fact about the run (the response-before-call row uses the *not-earlier* predicate of step 3, on `startTimeUnixNano` alone, so it too never turns on file position; processing order falls back to file position only for two spans with equal start *and* end, the stated consequence of step 1); a third event at the same instant sorts by the remaining
    components as usual. The key is therefore (ns, R, span start, span end, file position, source position, step), a total order on produced events, where the source position of a
    `tool_result` produced from an `execute_tool` span is the empty tuple (it is the only event
    of its span): every event has a distinct (span, attribute rank, message index, part index, step) tuple, and every component of that tuple is a component of the key or determined by one (the span by its start and file position), so ties are impossible and `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
@@ -334,7 +333,7 @@ completeness check.
 
 ## CLI
 
-`ledgergate record --from-otel export.json [--out trace.json]` writes the v1 trace (to stdout by default; `--out` writes to a temporary path beside the target and renames, so a crash never leaves a partial trace) and exits `0`, or prints the completeness report to stderr and exits `1`; `2` and
+`ledgergate record --from-otel export.json [--out trace.json]` writes the v1 trace (to stdout by default; `--out` writes to a temporary path beside the target, `<target>.tmp`, and renames, so a crash never leaves a partial *target*; a crash between write and rename leaves the `.tmp`, which the next run overwrites and which is not a trace) and exits `0`, or prints the completeness report to stderr and exits `1`; `2` and
 `70` as above. `--from-otel` is the
 only source in M5 and is required; the parser refuses `record` without it. The subcommand
 name is the roadmap's; "record" is what the adapter does with an observation. The

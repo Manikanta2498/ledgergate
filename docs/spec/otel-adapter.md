@@ -30,9 +30,15 @@ what only the journal can prove.
 
 ## Input
 
-One OTLP/JSON document (`ExportTraceServiceRequest`: `resourceSpans[].scopeSpans[].spans[]`)
-as written by the OpenTelemetry file exporter or a collector's file exporter, or a JSON array
-of such documents (one per export batch). It is decoded by the project's I-JSON decoder
+OTLP/JSON `ExportTraceServiceRequest` documents (`resourceSpans[].scopeSpans[].spans[]`) in
+one of three framings: a single JSON document; a JSON array of documents; or **JSON Lines**,
+one document per line, which is what the collector's `fileexporter` in JSON format and the
+SDKs' OTLP/JSON console exporters actually write (one line per export batch). The framing is
+decided before decoding: a file whose first non-whitespace byte is `[` is an array, one with
+more than one non-blank line is JSON Lines, else a single document. Each document is decoded
+separately under the bounds below (the byte bound applies to the file, the node and depth
+bounds to each document), `[d]` in a report is the array index or the line index, and the
+documents' spans are concatenated in file order. It is decoded by the project's I-JSON decoder
 before anything else looks at it, with **adapter-specific bounds**: the transport bounds
 (200,000 nodes) would refuse a real export at about a thousand spans (an OTLP `KeyValue` is
 about seven nodes), so `codec.loads` gains explicit `max_nodes`/`max_depth` parameters, the
@@ -172,9 +178,7 @@ with `;`). Every `metadata` value is a string of at most 1,024 characters (v1's 
 `otel.spans` and `otel.agents` (the number of distinct `gen_ai.agent.name` values across
 `invoke_agent` spans, `0` when there are none) are always present, as decimal strings; a value
 that would exceed the bound is a fault naming the key. A later convention is a new mapping, reviewed against this document; the adapter
-does not guess at attributes it was not written for. Spans without `gen_ai.operation.name`,
-or with one this document does not map (`embeddings`, `create_agent`, ...), produce no events;
-they are counted in `otel.spans` and take part in the parent check.
+does not guess at attributes it was not written for. Spans without `gen_ai.operation.name`, or with one this document does not map (`embeddings`, `create_agent`, ...), produce no events; they are counted in `otel.spans` and take part in the parent check. A document with spans but no inference span observed nothing of an agent, and is a completeness fault ("no inference span"), not an empty trace: an empty trace would pass every downstream tool while saying nothing.
 
 ## The mapping
 
@@ -202,9 +206,7 @@ ordering below.
    `user`, `assistant`, `tool`) is a located fault. The invariant: after the last inference
    span whose status is not error, the emitted conversation equals that span's presented
    conversation followed by its output. Then each `text` part of `gen_ai.output.messages`
-   becomes a `message` (role `assistant`) at the span's end time and is appended. An
-   inference span whose status is error (`status.code` 2) produces no events and is skipped
-   entirely, prefix check included: a failed inference is not conversation, and its
+   becomes a `message` (role `assistant`) at the span's end time and is appended. An inference span whose status is error (`status.code` 2) produces no events and is skipped entirely, prefix check included, while keeping its position in the processing order (start time, then file position), which the result-selection and response-before-call rules use: a failed inference is not conversation, and its
    presented history may legitimately be the one the next successful span re-presents. An
    output message's `role` is not examined: the convention fixes it to `assistant`, the
    adapter emits `assistant`, and a differing value would be a fact about the instrumentation,
@@ -258,23 +260,21 @@ ordering below.
 4. **Ordering.** Events are ordered by a total key: the timestamp in *nanoseconds* (compared
    before it is rendered to the microsecond `Timestamp`, so two events a nanosecond apart
    keep their order); then the producing span's start time and file position; then the
-   *source position* within the span: system-instruction parts first (index `-1`, part
-   index), then `(message index, part index)` within `gen_ai.input.messages`, then
-   `(message index, part index)` within `gen_ai.output.messages` (which follow, being at the
-   span's end time); then, for the same part, the mapping step. So a `tool_call_response`
+   *source position* within the span, a triple `(attribute rank, message index, part index)`
+   with rank `0` for `gen_ai.system_instructions` (message index `0`), `1` for
+   `gen_ai.input.messages` and `2` for `gen_ai.output.messages`, so that under a coarse clock
+   where a span's start and end coincide the presented history still precedes the response
+   and never interleaves with it; then, for the same part, the mapping step. So a `tool_call_response`
    part and the user turn that follows it in the same input keep the document's order, and
    text and `tool_call` parts of one output keep theirs. One more *key component* precedes
    file position: `R(e)`, which is `1` for a `tool_result` whose selected `tool_call` shares
    its nanosecond and span-start prefix (a coarse clock, a child span starting and ending
    with its parent) and `0` for every other event, so such a result sorts after every event
-   at that instant, its call included, and pairing is never decided by export order, which is
-   not a fact about the run; a third event at the same instant sorts by the remaining
+   at that instant, its call included, and the *ordering* of a result against its own call is never decided by export order, which is not a fact about the run (processing order, used by the response-before-call row, does fall back to file position for two spans with equal start; that row tolerates equal `(ns, span start)` for the same reason `R` does); a third event at the same instant sorts by the remaining
    components as usual. The key is therefore (ns, R, span start, file position, source
    position, step), a total order on produced events, where the source position of a
    `tool_result` produced from an `execute_tool` span is the empty tuple (it is the only event
-   of its span): every event has a distinct (span,
-   attribute, message index, part index, step) tuple, so ties are impossible and `seq` (dense
-   from 1) is a function of the document. v1 also requires a `tool_result`
+   of its span): every event has a distinct (span, attribute rank, message index, part index, step) tuple, and every component of that tuple is a component of the key or determined by one (the span by its start and file position), so ties are impossible and `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
    after its `tool_call`; the completeness check enforces it.
 5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 hex characters in either
    case (OTLP/JSON ids are case-insensitive hex; the adapter compares, matches and emits ids
@@ -294,8 +294,7 @@ asserts it on every cassette.
 
 ## Completeness validation
 
-The adapter checks, before producing a trace, and reports every failure rather than the
-first:
+The adapter checks, before producing a trace, and reports every failure it can reach rather than the first (a shape fault ends examination of the subtree it names: a `spans` member that is not an array has no spans to examine):
 
 | Check | Why it is required |
 | :-- | :-- |
@@ -304,7 +303,7 @@ first:
 | every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
 | every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent, an object, or a string that parses to an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
 | every `tool_call` has a selected result, and it is after the call in `seq` (the ordering key of step 4, decided in nanoseconds) | v1's pairing rule |
-| every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span processed *after* the span that emitted its call | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
+| every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span processed after the span that emitted its call, or in one with an equal `(start, ns)` prefix (a coarse clock), never in one processed before it | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
 | every `execute_tool` span's `gen_ai.tool.name`, when present, equals the matched call's `name` | the record must not say a different tool ran than was called |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
 | every item of an inference span's presented prefix was emitted by a span whose *nanosecond* timestamp (start for input items, end for output items) is no later than this span's `startTimeUnixNano`; compared in the ordering key's unit, never in the rendered microsecond `at` (equivalently, a non-error inference span does not start before the end of the span whose output it re-presents) | a message shown to the model before the trace says it was said is a fact out of order; the prefix rule sees sequence, not time, and without this row the ordered trace would silently contradict the conversation it just validated, the text analogue of the response-before-call row |
@@ -335,7 +334,7 @@ rather than offering a half-redaction.
 
 ## Cassettes
 
-`corpus/cassettes/otel/` holds pairs: a synthesized OTLP/JSON input and the v1 trace the
+`corpus/cassettes/otel/` holds pairs (the stray empty root `cassettes/` directory is removed when M5 lands): a synthesized OTLP/JSON input and the v1 trace the
 adapter produces from it (or the completeness report). They are the contract tests for this
 document: a change to the mapping that changes any cassette's output is a change to this
 contract and is reviewed as one. Cassettes are Apache-2.0 data like the rest of `corpus/`

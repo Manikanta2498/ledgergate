@@ -71,7 +71,15 @@ class Posting:
         return Posting(self.account_id, self.side.opposite, self.money)
 
     def canonical(self) -> str:
-        return encode(self.account_id, self.side.value, str(self.money.amount), self.currency.code)
+        # The exponent is part of what the amount means: 100 USD/2 and 100 USD/3 are
+        # different requests and must never share a fingerprint or a hash.
+        return encode(
+            self.account_id,
+            self.side.value,
+            str(self.money.amount),
+            self.currency.code,
+            str(self.currency.exponent),
+        )
 
 
 def debit(account_id: str, money: Money) -> Posting:
@@ -108,7 +116,10 @@ class EntryDraft:
         # into tuples *first*, then validate the copies, so what was checked is what is
         # kept. Every element is checked too, so a stray non-Posting cannot ride along.
         postings = tuple(self.postings)
-        tags = tuple((str(k), str(v)) for k, v in self.tags)
+        # Tags are a map, not a list: their order is not part of the request, so the
+        # canonical order is by key, here and in every codec, or a round trip would change
+        # the fingerprint.
+        tags = tuple(sorted((str(k), str(v)) for k, v in self.tags))
         object.__setattr__(self, "postings", postings)
         object.__setattr__(self, "tags", tags)
 
@@ -136,6 +147,12 @@ class EntryDraft:
     def account_ids(self) -> frozenset[str]:
         return frozenset(p.account_id for p in self.postings)
 
+    @property
+    def account_order(self) -> tuple[str, ...]:
+        """Distinct account ids in first-appearance order: the deterministic iteration order
+        for anything whose *result* depends on which account is examined first."""
+        return tuple(dict.fromkeys(p.account_id for p in self.postings))
+
     def tag(self, key: str) -> str | None:
         return dict(self.tags).get(key)
 
@@ -153,6 +170,17 @@ class EntryDraft:
             ),
             currency,
         )
+
+    def moved(self, currency: Currency) -> Money:
+        """The amount that actually changes hands in ``currency``: the sum of each account's
+        positive net movement. A debit and a credit of the same amount to one account net to
+        zero and move nothing, however large the gross; this is what a lifecycle event must
+        equal, so a self-cancelling entry cannot mark a transaction settled."""
+        net: dict[str, int] = {}
+        for p in self.postings:
+            if p.currency == currency:
+                net[p.account_id] = net.get(p.account_id, 0) + p.signed_amount
+        return Money(sum(n for n in net.values() if n > 0), currency)
 
     def reversed(self, description: str = "") -> EntryDraft:
         return EntryDraft(

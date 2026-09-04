@@ -83,10 +83,12 @@ class Currency:
     exponent: int
 
     def __post_init__(self) -> None:
-        if not _CODE.match(self.code):
+        if not isinstance(self.code, str) or not _CODE.fullmatch(self.code):
             raise InvalidAmountError(
                 f"currency code must be three uppercase letters, got {self.code!r}"
             )
+        if isinstance(self.exponent, bool) or not isinstance(self.exponent, int):
+            raise InvalidAmountError(f"currency exponent must be an int, got {self.exponent!r}")
         if not 0 <= self.exponent <= 6:
             raise InvalidAmountError(f"currency exponent must be 0..6, got {self.exponent}")
 
@@ -227,6 +229,8 @@ class Money:
         self, factor: Fraction | int, rounding: RoundingMode = RoundingMode.HALF_EVEN
     ) -> Money:
         """Multiply by an exact rational factor, rounding once at the end."""
+        if isinstance(factor, bool) or not isinstance(factor, int | Fraction):
+            raise InvalidAmountError(f"scale factor must be an int or Fraction, got {factor!r}")
         return Money(
             round_fraction(Fraction(self.amount) * Fraction(factor), rounding), self.currency
         )
@@ -239,6 +243,8 @@ class Money:
         The rate is between *major* units, so the minor-unit exponents are accounted for
         here rather than pushed onto every caller.
         """
+        if not isinstance(rate, Fraction):
+            raise InvalidAmountError(f"exchange rate must be a Fraction, got {rate!r}")
         if rate <= 0:
             raise InvalidAmountError(f"exchange rate must be positive, got {rate}")
         major = Fraction(self.amount, self.currency.unit)

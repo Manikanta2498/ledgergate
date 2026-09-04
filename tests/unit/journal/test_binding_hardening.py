@@ -336,3 +336,47 @@ class TestEverythingAdmittedIsRepresentable:
         with pytest.raises(ConfigurationError, match="1024"):
             j.handle(_open("k", 5))
         j.close()
+
+
+class TestContextsAreRepresentable:
+    def test_a_long_account_name_is_refused_at_create(self, tmp_path: Path) -> None:
+        chart = ChartOfAccounts([Account("cash", AccountType.ASSET, USD, name="n" * 2000)])
+        with pytest.raises(ConfigurationError, match="account name"):
+            Journal.create(
+                str(tmp_path / "n.journal"), chart, clock=SteppingClock(EPOCH), ids=SequentialIds()
+            )
+
+    def test_a_set_returning_an_unusable_subject_or_aggregates_is_a_configuration_fault(
+        self, tmp_path: Path
+    ) -> None:
+        from typing import Any as _Any
+
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class OddSubject(NullPolicySet):
+            version = "odd"
+
+            def subject_of(self, command: _Any) -> str | None:
+                return "s" * 300
+
+            def evaluate(self, context: PolicyContext) -> Decision:
+                return Decision("allow", "odd.ok", "fine")
+
+        class OddAggregates(NullPolicySet):
+            version = "odd2"
+
+            def aggregates_for(self, command: _Any, now: _Any, history: _Any) -> dict[str, _Any]:
+                return {"my.count": "abc"}
+
+            def evaluate(self, context: PolicyContext) -> Decision:
+                return Decision("allow", "odd2.ok", "fine")
+
+        j = _journal(tmp_path, policy=OddSubject())
+        with pytest.raises(ConfigurationError, match="subject"):
+            j.handle(_open("k", 5))
+        j.close()
+        (tmp_path / "b").mkdir()
+        j = _journal(tmp_path / "b", policy=OddAggregates())
+        with pytest.raises(ConfigurationError, match="aggregates"):
+            j.handle(_open("k", 5))
+        j.close()

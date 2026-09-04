@@ -2237,3 +2237,15 @@ class TestAggregateWitnessing:
         from ledgergate.invariants import decision_recomputes
 
         assert any("trace witnesses 2000" in f.message for f in decision_recomputes(built))
+        # a forged subject cannot dodge the witness: the subject is derived from the intent
+        doc = t.model_dump(mode="json")
+        d = next(
+            e for e in doc["events"] if e["type"] == "policy_decision" and e["decision"] == "deny"
+        )
+        d["context"]["subject"] = "someone-else"
+        d["context"]["aggregates"]["applied.refund.USD.3600s"] = "0"
+        d["decision"], d["matched_rule"], d["reason"] = "allow", "w.within_limits", "x"
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        findings = decision_recomputes(built)
+        assert any("is not the command's" in f.message for f in findings)

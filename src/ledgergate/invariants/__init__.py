@@ -675,10 +675,12 @@ def _recomputable(t: TraceV2) -> bool:
 
 
 def decision_recomputes(t: TraceV2) -> list[Finding]:
-    """Re-running the trace's declarative policy configuration over each persisted context
-    reproduces the recorded decision, rule and reason. Needs the configuration; a set whose
-    rules are code reports no evidence. Runtime-written decisions are not policy output and
-    are skipped; a failed-verdict context never reached the set."""
+    """Every set-derived input in the persisted context is recomputed from the trace (the
+    subject from the command intent, each aggregate from the applied ledger commands before
+    this decision within its window), and re-running the trace's declarative configuration
+    over that context reproduces the recorded decision, rule and reason. Needs the
+    configuration; a set whose rules are code reports no evidence. Runtime-written decisions
+    are not policy output and are skipped."""
     from ledgergate.journal.policy import NullPolicySet, ThresholdPolicySet
 
     out = []
@@ -713,6 +715,7 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
     except (KeyError, TypeError, ValueError) as exc:
         return [Finding("decision_recomputes", "error", f"configuration does not load: {exc}")]
     witnessed = _witnessed_aggregates(t)
+    intents = {e.intent_id: e for e in t.events if isinstance(e, CommandIntent)}
     for iid, d in _decided(t).items():
         if d.runtime_written:
             continue
@@ -720,8 +723,22 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
         # The aggregates the set read are witnessed by the trace itself: the applied ledger
         # commands of that kind, currency and subject before this decision, within the
         # window. A recorded aggregate the trace does not support is a forged input.
+        intent = intents.get(iid)
+        derived_subject = None
+        if isinstance(intent, CommandIntent):
+            derived_subject = getattr(intent.command, "transaction_id", None)
+        if c.subject != derived_subject:
+            out.append(
+                Finding(
+                    "decision_recomputes",
+                    "error",
+                    f"{iid}: context subject {c.subject!r} is not the command's"
+                    f" {derived_subject!r}",
+                    iid,
+                )
+            )
         for name, recorded in c.aggregates.items():
-            expected_total = witnessed(iid, name, c.subject, c.evaluated_at)
+            expected_total = witnessed(iid, name, derived_subject, c.evaluated_at)
             if expected_total != recorded:
                 out.append(
                     Finding(

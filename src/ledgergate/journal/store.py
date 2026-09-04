@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 import warnings
@@ -92,6 +93,35 @@ LOCAL_PRINCIPAL = "local"
 ENVELOPE_BOUND = 4096  # bytes of UTF-8, per the specification
 MAX_MESSAGE_CHARS = 65536  # the trace schema's bound on message content
 _BOUND = frozenset({"path", "clock", "ids", "admitter", "policy", "principal"})
+
+
+AGGREGATE_NAME = re.compile(r"applied\.[a-z_]+\.[A-Z]{3}\.[1-9][0-9]*s")
+DECIMAL_TEXT = re.compile(r"-?[0-9]{1,40}")
+
+
+def _bounded_subject(subject: Any) -> str | None:
+    """A set's subject is an identifier or nothing; anything else is a configuration fault,
+    so the context a trace carries is always one the trace models accept."""
+    if subject is None:
+        return None
+    try:
+        return require_identifier(subject, "policy subject")
+    except (InvalidIdentifierError, TypeError) as exc:
+        raise ConfigurationError(f"policy set returned an unusable subject: {exc}") from exc
+
+
+def _bounded_aggregates(aggregates: Any) -> dict[str, str]:
+    """Aggregates are ``applied.<kind>.<CCY>.<W>s -> decimal string``, the grammar the trace
+    enforces; a set returning anything else is misconfigured."""
+    if not isinstance(aggregates, Mapping) or any(
+        not isinstance(k, str)
+        or not isinstance(v, str)
+        or not AGGREGATE_NAME.fullmatch(k)
+        or not DECIMAL_TEXT.fullmatch(v)
+        for k, v in aggregates.items()
+    ):
+        raise ConfigurationError("policy set returned aggregates outside the recorded grammar")
+    return dict(aggregates)
 
 
 def _configuration_text(policy: PolicySet) -> str | None:
@@ -636,7 +666,7 @@ class Journal:
             principal=self.principal,
             subject=None
             if failed_verdict
-            else self._guarded(lambda: self.policy.subject_of(command)),
+            else _bounded_subject(self._guarded(lambda: self.policy.subject_of(command))),
             command_digest=fingerprint,
             digest_kind="fingerprint",
             evaluated_at=now,
@@ -646,7 +676,9 @@ class Journal:
             currency=None if money is None else money.currency.code,
             aggregates={}
             if failed_verdict
-            else self._guarded(lambda: self.policy.aggregates_for(command, now, _History(self))),
+            else _bounded_aggregates(
+                self._guarded(lambda: self.policy.aggregates_for(command, now, _History(self)))
+            ),
             approval=approval_ctx,
         )
         if failed_verdict:
@@ -1267,6 +1299,12 @@ def _applied_result(applied: Applied) -> dict[str, Any]:
     return out
 
 
+def _bounded_name(name: str) -> str:
+    if len(name) > MAX_TEXT:
+        raise ConfigurationError(f"account name exceeds {MAX_TEXT} characters after redaction")
+    return name
+
+
 def _encode_chart(chart: ChartOfAccounts, admitter: Admitter) -> list[dict[str, Any]]:
     return [
         {
@@ -1274,7 +1312,7 @@ def _encode_chart(chart: ChartOfAccounts, admitter: Admitter) -> list[dict[str, 
             "kind": a.kind.value,
             "currency": a.currency.code,
             "allow_negative": a.allow_negative,
-            "name": admitter.redact_text(a.name),  # definition free text: class 1
+            "name": _bounded_name(admitter.redact_text(a.name)),  # definition free text: class 1
         }
         for a in chart.values()
     ]

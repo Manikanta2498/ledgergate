@@ -467,7 +467,7 @@ fault of this process's injected effects (an id generator that repeats an id the
 already holds or produces an invalid one, a clock that returns a naive datetime; these are
 not verdicts on the command and must never spend its key), a transport-level I-JSON
 violation (a number outside the JCS-safe range, a non-finite
-double, an unpaired surrogate, a duplicate member name, nesting deeper than 64 levels or more than 200,000 nodes never reaches admission; these transport-class bounds are what let every later stage recurse safely), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, or a
+double, an unpaired surrogate, a duplicate member name, nesting deeper than 64 levels or more than 200,000 nodes never reaches admission; these transport-class bounds are what let every later stage recurse safely), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, a policy set returning a rule or reason over 1,024 characters, a subject that is not an identifier or aggregates outside the `applied.<kind>.<CCY>.<W>s -> decimal string` grammar, an error message over 1,024 characters (a bug in whoever built it), or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error. This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the

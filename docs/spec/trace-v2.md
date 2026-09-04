@@ -224,8 +224,13 @@ declarative, `policy_configuration`, the JCS document the digest is over; the mo
 the two to agree and every decision to name the trace's set. `PolicyDecision.context` is a
 typed `PolicyContextDoc`, not an open object: every field the journal persists, with fixed
 grammars, and the model requires its verdict and presentation to agree with the decision's.
-A registry row (`decision_recomputes`) re-runs the configuration over each persisted context
-and requires the recorded decision, rule and reason; it needs a configuration for a set whose
+A registry row (`decision_recomputes`) first recomputes every set-derived input in the
+persisted context from the trace itself: the subject from the command intent
+(`transaction_id`, or none), and each aggregate `applied.<kind>.<CCY>.<W>s` as the sum of the
+applied ledger commands of that kind, currency and subject produced by earlier intents whose
+requested time lies within the window ending at the evaluation time; a context whose subject
+or aggregates the trace does not support fails. It then re-runs the configuration over the
+context and requires the recorded decision, rule and reason; it needs a configuration for a set whose
 rules are wholly declarative (`ThresholdPolicySet`, `NullPolicySet`) and reports
 `no_evidence` for a subclass or a custom set, whose rules are code. `runtime.` rules are a
 closed registry (`runtime.approval_rejected`); any other is refused at load.
@@ -251,10 +256,13 @@ the key that created it, since the fingerprint excludes the key by design.
 
 Journal admission enforces every bound the trace has on what the journal admits or serves:
 the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per entry,
-1,024 characters for any short text (descriptions, tag keys and values, error messages,
-rules and reasons), 100 tags per entry, 65,536 characters per message, and, at `create`, a
-chart whose trial balance fits the payload bound; so every admitted input and every served
-result is representable here; `events` is bounded at 5,000,000 and derivation is
+1,024 characters for descriptions, tag keys and values, 100 tags per entry, 65,536
+characters per message; `create` refuses a chart whose trial balance would not fit the
+payload bound or an account name over 1,024 characters; and before any row is written the
+journal refuses, as unrecorded configuration faults, an error message, rule or reason over
+1,024 characters and a policy set's subject or aggregates outside the grammars the context
+carries. So every admitted input, every served result and every persisted context is
+representable here; `events` is bounded at 5,000,000 and derivation is
 whole-journal. Segmentation of a journal that outgrows that bound is not designed; it is
 the M4 runtime's first design question, stated in ADR-0002.
 

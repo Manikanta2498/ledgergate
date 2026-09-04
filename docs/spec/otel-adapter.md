@@ -63,7 +63,16 @@ else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter
 
 **OTLP/JSON encoding.** Attribute values arrive typed (`stringValue`, `boolValue`,
 `intValue` and the nano timestamp fields as *decimal strings*, `doubleValue`, `arrayValue`,
-`kvlistValue`, `bytesValue`); `status.code` is an integer (`0` unset, `1` ok, `2` error). The
+`kvlistValue`, `bytesValue`); `status.code` is an integer (`0` unset, `1` ok, `2` error).
+OTLP/JSON is proto3 JSON, which *omits* a member holding its default: an absent `status` or
+`status.code` is `0`; absent `attributes`, `events`, `resourceSpans`, `scopeSpans` or `spans`
+are empty arrays; an absent `parentSpanId` is the empty string (a root). A member that is
+*present* with the wrong type is the shape fault above; absence is never one. For an
+attribute outside the read set only `key` is examined (a missing or non-string `key` is a
+shape fault, since the read set cannot be decided without it); its `value` is not looked at,
+though a document-level decode refusal (an `intValue` emitted as a JSON number above 2^53
+anywhere in the file) is unaffected by the read set, since it happens before any structure
+exists. The
 nano timestamp fields must match `^[0-9]{1,19}$` (at most 1e19 - 1 ns, year 2286; the
 grammar is the only bound and it renders to a `datetime` without overflow); anything else is
 a completeness fault naming the span. A producer
@@ -81,15 +90,18 @@ exactly the attributes the adapter *reads*, enumerated as (span class, attribute
 inference span whose status is not error: `gen_ai.system_instructions`,
 `gen_ai.input.messages`, `gen_ai.output.messages`; inference span whose status is error:
 `gen_ai.input.messages` only (its `tool_call_response` parts are a result source);
-`execute_tool` span: `gen_ai.tool.call.id`, `gen_ai.tool.name` (checked: a fault when it
-differs from the matched `tool_call`'s `name`, since a span saying a different tool ran than
-was called is a completeness signal, and an identifier, not a body), `gen_ai.tool.call.result`,
+`execute_tool` span: `gen_ai.tool.call.id`, `gen_ai.tool.name` (checked when present: a
+fault when it differs from the matched `tool_call`'s `name`, since a span saying a different
+tool ran than was called is a completeness signal, and an identifier, not a body; the
+convention makes it recommended, and an absent name is not checked), `gen_ai.tool.call.result`,
 `error.type`; `invoke_agent` span: `gen_ai.agent.name` only (its content attributes are not
 read); every span: `gen_ai.operation.name`, the timestamps, `status`; resource:
 `service.name`. Anything else is never normalised and can fault nothing, since nothing of it
-is recorded. An `intValue` string must match `^-?[0-9]{1,16}$` before it is parsed (2^53 - 1 has sixteen
-digits, so this is the safe range by grammar and `int()` is never asked about a 4,300-digit
-string); an `intValue` that is a JSON *number* rather than a string is the shape fault of
+is recorded. An `intValue` string must match `^-?[0-9]{1,16}$` before it is parsed, a *length pre-filter*
+(so `int()` is never asked about a 4,300-digit string; sixteen digits admit values above
+2^53 - 1), and the parsed value is then compared with the I-JSON safe range, a fault when
+outside it, because nothing downstream would catch it (`load_trace` is pydantic, not the
+codec, and the payload check counts nodes, not magnitude); an `intValue` that is a JSON *number* rather than a string is the shape fault of
 the sentence above, located by span and key. A `status.code` outside 0, 1, 2 is a located
 fault. The one-copy rule below applies to every attribute in the read set, not only content
 keys: two `gen_ai.tool.call.id` or two `gen_ai.operation.name` attributes on one span are a
@@ -234,9 +246,12 @@ ordering below.
    `(message index, part index)` within `gen_ai.output.messages` (which follow, being at the
    span's end time); then, for the same part, the mapping step. So a `tool_call_response`
    part and the user turn that follows it in the same input keep the document's order, and
-   text and `tool_call` parts of one output keep theirs. Every produced event has a distinct
-   (span, attribute, message index, part index, step) tuple, so ties are impossible and
-   `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
+   text and `tool_call` parts of one output keep theirs. One more rule precedes file position:
+   when a `tool_result` and its own `tool_call` share an exact nanosecond (a coarse clock, a
+   child span starting and ending with its parent), the result is placed after the call, so
+   that pairing is never decided by export order, which is not a fact about the run. Every
+   produced event has a distinct (span, attribute, message index, part index, step) tuple,
+   so ties are impossible and `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
    after its `tool_call`; the completeness check enforces it.
 5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 hex characters in either
    case (OTLP/JSON ids are case-insensitive hex; the adapter compares, matches and emits ids
@@ -267,7 +282,7 @@ first:
 | every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent, an object, or a string that parses to an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
 | every `tool_call` has a selected result, and it is after the call in `seq` (the ordering key of step 4, decided in nanoseconds) | v1's pairing rule |
 | every `execute_tool` span and every `tool_call_response` id matches a `tool_call`, and a `tool_call_response` part appears only in a span processed *after* the span that emitted its call | a result without a call is a hole in the record; a response shown to the model before the call existed is a fact out of order that the prefix rule (text parts only) cannot see |
-| every `execute_tool` span's `gen_ai.tool.name` equals the matched call's `name` | the record must not say a different tool ran than was called |
+| every `execute_tool` span's `gen_ai.tool.name`, when present, equals the matched call's `name` | the record must not say a different tool ran than was called |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
 | timestamps are present, non-zero, end ≥ start, and every `intValue` the adapter reads is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
 | the document has at least one span; every `spanId` is present and 16 hex characters in either case, and values are unique when lowercased; `parentSpanId` matches by lowercased value | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
@@ -280,7 +295,8 @@ message text is the most sensitive thing in the document); a span whose `spanId`
 or malformed is named by its index path `resourceSpans[i].scopeSpans[j].spans[k]`, prefixed
 `[d].` when the top level is an array of documents. The CLI exit code is `1` for a
 report, `0` for a trace, `2` for a file that cannot be read or decoded at all (not JSON,
-not I-JSON, over the byte, node or depth bound).
+not I-JSON, over the byte, node or depth bound), and `70` for a self-check failure, which is
+a bug.
 
 ## Redaction
 
@@ -303,7 +319,8 @@ completeness check.
 ## CLI
 
 `ledgergate record --from-otel export.json [--out trace.json]` writes the v1 trace (to stdout
-by default) or prints the completeness report to stderr and exits `1`. `--from-otel` is the
+by default) and exits `0`, or prints the completeness report to stderr and exits `1`; `2` and
+`70` as above. `--from-otel` is the
 only source in M5 and is required; the parser refuses `record` without it. The subcommand
 name is the roadmap's; "record" is what the adapter does with an observation. The
 live-capture meaning the stub carried ("record a cassette from a live agent run", the

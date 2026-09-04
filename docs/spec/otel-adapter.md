@@ -36,20 +36,32 @@ of such documents (one per export batch). It is decoded by the project's I-JSON 
 before anything else looks at it, with **adapter-specific bounds**: the transport bounds
 (200,000 nodes) would refuse a real export at about a thousand spans (an OTLP `KeyValue` is
 about seven nodes), so `codec.loads` gains explicit `max_nodes`/`max_depth` parameters, the
-adapter calls it with 50,000,000 nodes and depth 64, and the file itself is refused before
-decoding if it exceeds 256 MiB (read with a limit). A file within the byte bound but over the
-node bound is reported (exit `1`, "document exceeds N nodes"), not tracebacked. The payload
+adapter calls it with 50,000,000 nodes and depth 200, and the file itself is refused before
+decoding if it exceeds 256 MiB (read with a limit). The depth bound is 200, not the
+transport's 64: in OTLP/JSON the *native* (span-event) form of a content attribute reaches
+nesting about 30 before the first `arguments` member and each further JSON object level costs
+four more (`value -> kvlistValue -> values -> kv`), so 64 would admit about eight levels of
+arguments natively against the 32 the string form allows; 64 + 4 * 32 admits both forms
+alike (`require_ijson` is iterative and the scanner's recursion budget is far above 200). A
+file within the byte bound but over the node or depth bound is reported (exit `1`,
+"document exceeds N nodes"), not tracebacked. The payload
 bounds of the *produced* events are the v1 model's and are checked per event (below). Anything
 else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter reads a file.
 
 **OTLP/JSON encoding.** Attribute values arrive typed (`stringValue`, `boolValue`,
 `intValue` and the nano timestamp fields as *decimal strings*, `doubleValue`, `arrayValue`,
-`kvlistValue`, `bytesValue`); `status.code` is an integer (`0` unset, `1` ok, `2` error).
+`kvlistValue`, `bytesValue`); `status.code` is an integer (`0` unset, `1` ok, `2` error). The
+nano timestamp fields must match `^[0-9]{1,20}$` and render to a `datetime` (at most
+year 9999, about 2.5e20); anything else is a completeness fault naming the span. A producer
+that emits them as JSON *numbers* is refused at decode (exit `2`), since 1.7e18 exceeds the
+I-JSON safe integer and the decoder cannot represent it; the report says so by name, because
+this is the one common producer deviation with an unhelpful default message.
 The adapter normalises an `AnyValue` to JSON before any mapping: strings, booleans and
 doubles as themselves; `intValue` parsed, and a value outside the I-JSON safe range is a
 fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a JSON object
-(a repeated key is a fault); `bytesValue` is a fault (the conventions carry no bytes the
-adapter reads). Content attributes may be a JSON *string* (the attribute form) or a native
+(a repeated key is a fault, located by index path below the top-level attribute, since keys
+inside `arguments` are agent content); `bytesValue` is a fault (the conventions carry no bytes
+the adapter reads). Content attributes may be a JSON *string* (the attribute form) or a native
 structure (the event form); a string is parsed with the same decoder and the two are then one
 shape.
 
@@ -74,10 +86,17 @@ development). The adapter reads:
 | span events named `gen_ai.client.inference.operation.details` | the same content when the instrumentation emits it as an event rather than an attribute |
 | `error.type`, span `status` | a failed `tool_result` (`ok: false`, `error.type` as the type) |
 
-The mapping is versioned by that convention version and the adapter records it in the
-trace's `metadata` (`otel.semconv: "1.37"`, `otel.scope: <instrumentation scope name and
-version>`). A later convention is a new mapping, reviewed against this document; the
-adapter does not guess at attributes it was not written for.
+The mapping is versioned by that convention version. An export carries no convention
+version except the optional `schemaUrl` on `resourceSpans[]`/`scopeSpans[]`, which most GenAI
+instrumentations leave empty; the instrumentation scope's version is the library's release,
+not the convention's. So: when a `schemaUrl` is present and does not end in `/1.37.0`, the
+adapter refuses with a report naming the URL found; when absent, the adapter *assumes* 1.37
+and records that assumption. `metadata` carries `otel.semconv: "1.37"`, `otel.schema_url`
+(the URL, or `absent`) and `otel.scope: <instrumentation scope name and its library
+version>`. A later convention is a new mapping, reviewed against this document; the adapter
+does not guess at attributes it was not written for. Spans without `gen_ai.operation.name`,
+or with one this document does not map (`embeddings`, `create_agent`, ...), produce no events;
+they are counted in `otel.spans` and take part in the parent check.
 
 ## The mapping
 
@@ -95,12 +114,17 @@ epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
    shown diverged from what was emitted: an edited, dropped or reordered turn) that is a
    completeness fault naming the span and the first differing position. This is a prefix
    rule, not a set rule: a genuine repeated turn (`user "yes"` twice) is two messages,
-   because it lengthens the presented sequence. The invariant: after the last inference
-   span, the emitted conversation equals that span's presented conversation followed by its
-   output. Then each `text` part of `gen_ai.output.messages` becomes a `message` (role
-   `assistant`) at the span's end time and is appended. An inference span whose status is
-   error (`status.code` 2) produces no events: a failed inference is not conversation, and
-   it is exempt from the output-messages check below.
+   because it lengthens the presented sequence. A known consequence: context-window
+   trimming, where an agent framework drops early turns before the next inference, presents
+   a *shorter* history and is reported as a fault; the adapter cannot tell trimming from
+   editing, and says so rather than guessing. A message `role` outside v1's set (`system`,
+   `user`, `assistant`, `tool`) is a located fault. The invariant: after the last inference
+   span whose status is not error, the emitted conversation equals that span's presented
+   conversation followed by its output. Then each `text` part of `gen_ai.output.messages`
+   becomes a `message` (role `assistant`) at the span's end time and is appended. An
+   inference span whose status is error (`status.code` 2) produces no events and is skipped
+   entirely, prefix check included: a failed inference is not conversation, and its
+   presented history may legitimately be the one the next successful span re-presents.
 2. **Tool calls.** Each `tool_call` part in an inference span's `gen_ai.output.messages`
    becomes a `tool_call` event at the span's end time with `call_id` = the part's `id`,
    `tool` = the part's `name`, `arguments` = the part's `arguments` (an object; a string is
@@ -113,7 +137,8 @@ epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
    possible sources, in this preference: an `execute_tool` span whose `gen_ai.tool.call.id`
    matches (`ok` false iff `status.code` is 2; then `error.type` = the `error.type` attribute,
    or the fixed label `otel.status_error` when the instrumentation set none, and
-   `error.message` = the status message, which is a fault if over 1,024 characters; `result`
+   `error.message` = the status message, or the empty string when OTLP carries none (v1
+   requires the field), a fault if over 1,024 characters; `result`
    = `gen_ai.tool.call.result` if captured, at the span's end time); else the first
    `tool_call_response` part, in processing order, in a later inference span's
    `gen_ai.input.messages` whose `id` matches (`ok: true` meaning *a response was observed*,
@@ -125,14 +150,23 @@ epoch, rendered as a UTC `Timestamp`) and `seq` from the ordering below.
    a fault.
 4. **Ordering.** Events are ordered by a total key: the timestamp in *nanoseconds* (compared
    before it is rendered to the microsecond `Timestamp`, so two events a nanosecond apart
-   keep their order), then the producing span's start time and file position, then the
-   mapping step (message, tool_call, tool_result), then the message index and part index
-   within the content attribute. Ties are impossible under this key, so `seq` (dense from 1)
-   is a function of the document. v1 also requires a `tool_result` after its `tool_call`; the
-   completeness check enforces it.
-5. **Top level.** `trace_id` = the OTLP `traceId` (32 lowercase hex, an identifier);
-   `agent.name` = `gen_ai.agent.name` from an `invoke_agent` span, else `service.name`, else
-   `unknown`; a present value that is not an identifier is a fault. `started_at`/`ended_at` =
+   keep their order); then the producing span's start time and file position; then the
+   *source position* within the span: system-instruction parts first (index `-1`, part
+   index), then `(message index, part index)` within `gen_ai.input.messages`, then
+   `(message index, part index)` within `gen_ai.output.messages` (which follow, being at the
+   span's end time); then, for the same part, the mapping step. So a `tool_call_response`
+   part and the user turn that follows it in the same input keep the document's order, and
+   text and `tool_call` parts of one output keep theirs. Every produced event has a distinct
+   (span, attribute, message index, part index, step) tuple, so ties are impossible and
+   `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
+   after its `tool_call`; the completeness check enforces it.
+5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 lowercase hex characters
+   (a fault otherwise: base64 ids from non-compliant producers are refused, not converted);
+   `agent.name` = `gen_ai.agent.name` from the *root-most* `invoke_agent` span (the one
+   without a parent, else the earliest), else `service.name`, else `unknown`; a present value
+   that is not an identifier is a fault; several `invoke_agent` spans with differing names are
+   recorded in `metadata` as `otel.agents: <count>` and the root-most wins, so the result is
+   still a function of the document. `started_at`/`ended_at` =
    the earliest span start and the latest span end; `chart` and `currencies` absent (the
    adapter knows no books); `metadata` as above plus `otel.spans: <count>`.
 
@@ -148,7 +182,7 @@ first:
 | Check | Why it is required |
 | :-- | :-- |
 | every span's `parentSpanId`, when non-empty, names a span in the document | a missing parent is a signature of sampling or a dropped batch. ADR-0002 §6 requires unsampled capture, which the adapter can only *partially* observe: it detects orphaned spans and unresolved calls, not a truncated tail (a dropped last inference span or a lost final batch leaves every parent present); the precondition remains the operator's |
-| all spans share one `traceId` | one trace is one run; two runs in one file are two traces |
+| all spans share one `traceId`, and it is 32 lowercase hex characters | one trace is one run; two runs in one file are two traces; v1 needs an identifier |
 | every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
 | every `tool_call` part has an `id`, a `name` and arguments that are an object; `id` and `name` satisfy the identifier grammar (1 to 256 characters, one line, no edge whitespace); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
 | every `tool_call` has a selected result, and it is after the call | v1's pairing rule |
@@ -174,8 +208,8 @@ rather than offering a half-redaction.
 
 ## Cassettes
 
-`corpus/cassettes/otel/` holds pairs: an OTLP/JSON input and the v1 trace the adapter
-produces from it (or the completeness report). They are the contract tests for this
+`corpus/cassettes/otel/` holds pairs: a synthesized OTLP/JSON input and the v1 trace the
+adapter produces from it (or the completeness report). They are the contract tests for this
 document: a change to the mapping that changes any cassette's output is a change to this
 contract and is reviewed as one. Cassettes are Apache-2.0 data like the rest of `corpus/`
 and carry no real content: they are synthesized to exercise each mapping step and each
@@ -188,7 +222,7 @@ by default) or prints the completeness report to stderr and exits `1`. `--from-o
 only source in M5 and is required; the parser refuses `record` without it. The subcommand
 name is the roadmap's; "record" is what the adapter does with an observation. The
 live-capture meaning the stub carried ("record a cassette from a live agent run", the
-`cli` help text) is withdrawn in this change: nothing in M5 attaches to a running agent, and
+`cli` help text) is withdrawn by M5's implementation: nothing in M5 attaches to a running agent, and
 a wrapper that did would be the "thin framework wrapper" ADR-0002 names as a convenience
 over this adapter, not shipped in M5. This change also updates the README (the adapters line
 of the diagram marks `openai | anthropic | langgraph` as future conveniences over OTel; the
@@ -203,4 +237,5 @@ against the **v1** contract, the ingest format, and the result lifts to v2).
   the same run are two documents; correlating them by `call_id` is future work, named in
   ADR-0002 §6 by this change.
 - **Live receivers**: file input only.
-- **Conventions other than 1.37**: refused with a report naming the scope version found.
+- **Conventions other than 1.37**: refused when a `schemaUrl` says so; otherwise assumed,
+  and the assumption is recorded in `metadata`.

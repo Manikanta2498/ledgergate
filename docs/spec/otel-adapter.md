@@ -67,9 +67,12 @@ else (protobuf, OTLP/HTTP framing, a live receiver) is out of scope: the adapter
 OTLP/JSON is proto3 JSON, which *omits* a member holding its default: an absent `status` or
 `status.code` is `0`; absent `attributes`, `events`, `resourceSpans`, `scopeSpans` or `spans`
 are empty arrays; an absent `parentSpanId` is the empty string (a root). A member that is
-*present* with the wrong type is the shape fault above; absence is never one. For an
-attribute outside the read set only `key` is examined (a missing or non-string `key` is a
-shape fault, since the read set cannot be decided without it); its `value` is not looked at,
+*present* with the wrong type is the shape fault above; absence is never one, so an absent
+`key` is the empty string, which is outside the read set and ignored, and an absent `value`
+on a read-set attribute is the "zero typed members" case, a located fault, since the read set
+requires a value. For an attribute outside the read set only `key` is examined (a *present*
+non-string `key` is a shape fault, since the read set cannot be decided without it); its
+`value` is not looked at,
 though a document-level decode refusal (an `intValue` emitted as a JSON number above 2^53
 anywhere in the file) is unaffected by the read set, since it happens before any structure
 exists. The
@@ -101,8 +104,8 @@ is recorded. An `intValue` string must match `^-?[0-9]{1,16}$` before it is pars
 (so `int()` is never asked about a 4,300-digit string; sixteen digits admit values above
 2^53 - 1), and the parsed value is then compared with the I-JSON safe range, a fault when
 outside it, because nothing downstream would catch it (`load_trace` is pydantic, not the
-codec, and the payload check counts nodes, not magnitude); an `intValue` that is a JSON *number* rather than a string is the shape fault of
-the sentence above, located by span and key. A `status.code` outside 0, 1, 2 is a located
+codec, and the payload check counts nodes, not magnitude); an `intValue` that is a JSON *number* rather than a string is a shape fault under *Input*
+("any deviation from the OTLP/JSON shape this document reads"), located by span and key. A `status.code` outside 0, 1, 2 is a located
 fault. The one-copy rule below applies to every attribute in the read set, not only content
 keys: two `gen_ai.tool.call.id` or two `gen_ai.operation.name` attributes on one span are a
 fault, since the adapter does not pick a winner. Content attributes may be a JSON *string* (the attribute form) or a native
@@ -195,7 +198,10 @@ ordering below.
    becomes a `message` (role `assistant`) at the span's end time and is appended. An
    inference span whose status is error (`status.code` 2) produces no events and is skipped
    entirely, prefix check included: a failed inference is not conversation, and its
-   presented history may legitimately be the one the next successful span re-presents. Its
+   presented history may legitimately be the one the next successful span re-presents. An
+   output message's `role` is not examined: the convention fixes it to `assistant`, the
+   adapter emits `assistant`, and a differing value would be a fact about the instrumentation,
+   not the conversation. Its
    `tool_call_response` parts are still a *result source* and still subject to the orphan
    check (a response the agent was shown was observed, whatever the inference then did), so a
    call whose only observed response was presented to a failed final inference has a result.
@@ -246,12 +252,16 @@ ordering below.
    `(message index, part index)` within `gen_ai.output.messages` (which follow, being at the
    span's end time); then, for the same part, the mapping step. So a `tool_call_response`
    part and the user turn that follows it in the same input keep the document's order, and
-   text and `tool_call` parts of one output keep theirs. One more rule precedes file position:
-   when a `tool_result` and its own `tool_call` share an exact nanosecond (a coarse clock, a
-   child span starting and ending with its parent), the result is placed after the call, so
-   that pairing is never decided by export order, which is not a fact about the run. Every
-   produced event has a distinct (span, attribute, message index, part index, step) tuple,
-   so ties are impossible and `seq` (dense from 1) is a function of the document. v1 also requires a `tool_result`
+   text and `tool_call` parts of one output keep theirs. One more *key component* precedes
+   file position: `R(e)`, which is `1` for a `tool_result` whose selected `tool_call` shares
+   its nanosecond and span-start prefix (a coarse clock, a child span starting and ending
+   with its parent) and `0` for every other event, so such a result sorts after every event
+   at that instant, its call included, and pairing is never decided by export order, which is
+   not a fact about the run; a third event at the same instant sorts by the remaining
+   components as usual. The key is therefore (ns, R, span start, file position, source
+   position, step), a total order on produced events: every event has a distinct (span,
+   attribute, message index, part index, step) tuple, so ties are impossible and `seq` (dense
+   from 1) is a function of the document. v1 also requires a `tool_result`
    after its `tool_call`; the completeness check enforces it.
 5. **Top level.** `trace_id` = the OTLP `traceId`, which must be 32 hex characters in either
    case (OTLP/JSON ids are case-insensitive hex; the adapter compares, matches and emits ids

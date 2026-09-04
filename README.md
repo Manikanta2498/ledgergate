@@ -4,13 +4,14 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestones M0 to M4 complete.** The deterministic ledger core (M1),
+> **Status: pre-alpha, milestones M0 to M5 complete.** The deterministic ledger core (M1),
 > the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
 > the tokenizing, redacting admitter (M2c), the policy and approval layer, trace v2 with
 > journal derivation, the invariant registry behind `ledgergate verify` (M3), and the stdio MCP runtime
-> `ledgergate serve` (M4) are implemented and tested. An agent run can be recorded, validated against the published
+> `ledgergate serve` (M4), and the OpenTelemetry GenAI observational adapter behind
+> `ledgergate record` (M5) are implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
-> the answer it got the first time. The corpus and adapters are not built yet. See
+> the answer it got the first time. The corpus is not built yet. See
 > [Roadmap](#roadmap).
 
 ---
@@ -221,6 +222,15 @@ bound to that one operation in that one journal (`ledgergate journal pending`,
 an invalid, expired, mis-scoped or reused one is refused by the runtime without invoking
 policy, and the operation stays pending for a correct one. Every verdict is a row.
 
+**The OpenTelemetry adapter (M5).** `ledgergate record --from-otel export.json` turns an
+OTLP/JSON export of an agent instrumented to the GenAI semantic conventions (1.37) into a v1
+trace of what the agent said and called, or a completeness report naming exactly what the
+export is missing (by span and part, never by content). It is observational: it never
+invents ledger evidence, and `verify` on its output reports every ledger and policy invariant
+as `no_evidence`, because a conversation is not a set of books. Repeated history is handled
+by a positional prefix rule, ordering is total and decided in nanoseconds, and every
+cassette under `corpus/cassettes/otel/` reproduces byte for byte.
+
 **The MCP runtime (M4).** `ledgergate serve --journal PATH` exposes one journal as seven
 MCP tools over stdio to one client as one local principal. It is a transport and nothing
 more: every line is decoded by the project's I-JSON decoder before anything else looks at
@@ -422,7 +432,7 @@ These are enforced by CI gates, not by convention:
 | **M2c** | The real admitter: free text fail-closed redacted, caller identifiers tokenized, both before the ledger hashes anything, so redacted traces replay exactly | **done** |
 | **M3** | **Policy layer** over an explicit, persisted `PolicyContext` with validated, single-use (per journal) approvals. Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; invariant registry; scorecard; `ledgergate verify` | **done** |
 | **M4** | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log; designed in [docs/spec/mcp-runtime.md](docs/spec/mcp-runtime.md) | **done** |
-| M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | next |
+| M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
 | M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |

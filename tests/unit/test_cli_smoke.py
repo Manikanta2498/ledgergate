@@ -28,10 +28,16 @@ def test_unimplemented_command_exits_nonzero(capsys: pytest.CaptureFixture[str])
     assert "not implemented yet" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("command", ["run", "record", "report"])
+@pytest.mark.parametrize("command", ["run", "report"])
 def test_every_documented_subcommand_parses(command: str) -> None:
     args = build_parser().parse_args([command])
     assert args.command == command
+
+
+def test_record_requires_its_source() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["record"])
+    assert build_parser().parse_args(["record", "--from-otel", "x.json"]).command == "record"
 
 
 def test_verify_parses_with_a_source() -> None:

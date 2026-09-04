@@ -1,0 +1,5 @@
+incomplete: 4 finding(s)
+  parent at [0].resourceSpans[0].scopeSpans[0].spans[4]: parentSpanId names no span in the document
+  prefix at [0].resourceSpans[0].scopeSpans[0].spans[4]: presented conversation diverges at position 0
+  output_messages at [0].resourceSpans[0].scopeSpans[0].spans[4]: inference span without gen_ai.output.messages
+  orphan at [0].resourceSpans[0].scopeSpans[0].spans[4].gen_ai.input.messages[1].parts[0]: tool_call_response for no observed tool_call

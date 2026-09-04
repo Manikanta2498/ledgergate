@@ -1,0 +1,56 @@
+{
+  "agent": {
+    "name": "bookkeeper"
+  },
+  "ended_at": "2023-11-14T22:13:25Z",
+  "events": [
+    {
+      "at": "2023-11-14T22:13:20Z",
+      "content": "What is the cash balance?",
+      "role": "user",
+      "seq": 1,
+      "type": "message"
+    },
+    {
+      "arguments": {
+        "account": "cash"
+      },
+      "at": "2023-11-14T22:13:21Z",
+      "call_id": "call_1",
+      "seq": 2,
+      "tool": "balance",
+      "type": "tool_call"
+    },
+    {
+      "at": "2023-11-14T22:13:22Z",
+      "call_id": "call_1",
+      "ok": true,
+      "result": {
+        "ok": true,
+        "result": {
+          "balance": "5"
+        }
+      },
+      "seq": 3,
+      "type": "tool_result"
+    },
+    {
+      "at": "2023-11-14T22:13:23Z",
+      "content": "Cash is 5 USD.",
+      "role": "assistant",
+      "seq": 4,
+      "type": "message"
+    }
+  ],
+  "metadata": {
+    "otel.agents": "1",
+    "otel.resource_schema_urls": "absent",
+    "otel.scope": "acme.instrumentation 0.3.0",
+    "otel.scope_schema_url": "absent",
+    "otel.semconv": "1.37",
+    "otel.spans": "3"
+  },
+  "schema_version": "1",
+  "started_at": "2023-11-14T22:13:20Z",
+  "trace_id": "0af7651916cd43dd8448eb211c80319c"
+}

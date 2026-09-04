@@ -76,12 +76,23 @@ doubles as themselves; `intValue` parsed, and a value outside the I-JSON safe ra
 fault naming the span and key; `arrayValue` to a JSON array; `kvlistValue` to a JSON object
 (a repeated key is a fault, located by index path below the top-level attribute, since keys
 inside `arguments` are agent content); `bytesValue` is a fault (the conventions carry no bytes
-the adapter reads). Content attributes may be a JSON *string* (the attribute form) or a native
+the adapter reads). Normalisation, and therefore every fault in this paragraph, applies to
+the attributes the adapter *reads* (those the conventions table names, on spans it maps, plus
+`service.name`); an attribute on an unmapped span, or one the table does not name, is never
+normalised and can fault nothing, since nothing of it is recorded. Content attributes may be a JSON *string* (the attribute form) or a native
 structure (the event form); a string is parsed with the same decoder under the adapter's
 bounds (50,000,000 nodes, depth 200; a per-attribute bound would refuse long histories the
 payload bound per event later admits), an inner-parse refusal is a completeness fault located
 by span and attribute key (exit `1`, since the document itself decoded), and the two forms are
-then one shape.
+then one shape. One span carries one copy of each content key: a content key present both as
+an attribute and in a `gen_ai.client.inference.operation.details` event, more than one such
+event on a span, or a repeated key in a span's top-level `attributes[]` is a fault located by
+span and key (the adapter does not pick a winner between two accounts of what the model saw).
+Within decoded content, malformed structure (a message that is not an object, `parts` not an
+array, a part without a string `type`, a `tool_call_response` part without an `id`) is a
+located fault; part types this document does not map (`reasoning`, blobs, ...) produce
+nothing. A `doubleValue` arriving as the proto3 JSON strings `NaN`, `Infinity` or
+`-Infinity` is a fault: I-JSON has no such number.
 
 Span fields used: `traceId`, `spanId`, `parentSpanId`, `name`, `startTimeUnixNano`,
 `endTimeUnixNano`, `attributes[]` (`key`, `value` in OTLP's typed encoding: `stringValue`,
@@ -183,8 +194,11 @@ ordering below.
    `gen_ai.input.messages` whose `id` matches (`ok: true` meaning *a response was observed*,
    not that the tool succeeded, since the response body may itself be the tool's error;
    `result` = `response`; at that span's start time). Both sources commonly exist for one
-   call, and the response part recurs in every later span's history; those are not extra
-   results, they are the same result observed again, and only the selected one is emitted. A
+   call, and the response part recurs in every later span's history; the adapter selects by
+   preference and emits one result. It does **not** compare the two bodies: frameworks
+   routinely present a transformed or truncated version of a tool's output to the model, so a
+   `tool_call_response` whose body differs from the `execute_tool` result is not detected,
+   and the trace records what the tool span said, not what the model was shown. A
    call with neither source is a fault; more than one `execute_tool` span for one call id is
    a fault.
 4. **Ordering.** Events are ordered by a total key: the timestamp in *nanoseconds* (compared
@@ -223,11 +237,13 @@ first:
 | every span's `parentSpanId`, when non-empty, names a span in the document | a missing parent is a signature of sampling or a dropped batch. ADR-0002 §6 requires unsampled capture, which the adapter can only *partially* observe: it detects orphaned spans and unresolved calls, not a truncated tail (a dropped last inference span or a lost final batch leaves every parent present); the precondition remains the operator's |
 | all spans share one `traceId`, and it is 32 lowercase hex characters | one trace is one run; two runs in one file are two traces; v1 needs an identifier |
 | every inference span whose status is not error carries `gen_ai.output.messages` (attribute or event) | without content capture the adapter cannot know what the agent said or called; an inference span with no output is not "no output", it is "not captured" |
-| every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent or an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
+| every `tool_call` part has an `id` and a `name` satisfying the identifier grammar (1 to 256 characters, one line, no edge whitespace), and `arguments` absent, an object, or a string that parses to an object (the convention makes `arguments` optional; absent maps to `{}`, a mapping decision, not invented content: a parameterless tool was called with no arguments); call ids are unique across the trace | v1 requires each; the adapter does not invent or repair a call id |
 | every `tool_call` has a selected result, and it is after the call in `seq` (the ordering key of step 4, decided in nanoseconds) | v1's pairing rule |
 | every `execute_tool` span and every `tool_call_response` id matches a `tool_call` | a result without a call is a hole in the record |
 | each inference span's presented conversation extends the emitted one (prefix rule) | an edited or reordered history is not the conversation that happened |
-| timestamps are present, non-zero, end ≥ start, and every `intValue` is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
+| timestamps are present, non-zero, end ≥ start, and every `intValue` the adapter reads is in the I-JSON safe range | a span with no time cannot be ordered; a value the trace cannot carry cannot be recorded |
+| the document has at least one span, and `spanId` values are unique | v1 requires `trace_id` and `started_at`, which an empty document cannot supply; a duplicated span id (a re-exported batch) would resolve parents ambiguously and emit events twice |
+| `service.name`, when present on several resources, is one value | `agent.name` must be a function of the document; differing names are a fault naming the resources |
 | every produced field fits the v1 model: message content ≤ 65,536 characters, `arguments`/`result` ≤ 10,000 nodes and depth 32, `error.type` non-empty and ≤ 256, `error.message` ≤ 1,024, `agent.name`/`tool`/`call_id` identifiers, at most 100,000 events | checked per event *before* the document is built, so a report names the span and part, not a path into a document that was never produced; the final `load_trace` is then a self-check that must pass, and a failure there is a bug |
 
 A report lists each failing check with the span ids, attribute keys, message and part

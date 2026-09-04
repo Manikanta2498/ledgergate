@@ -17,10 +17,12 @@ named where it applies and recorded in the document that owns it: the journal ga
 non-identifier principal when the object is built; the journal's transaction wrapper
 classifies every `sqlite3.Error` by mechanism, on both the `BEGIN IMMEDIATE` branch and the
 statement branch, so the server's exit rule below has a mechanism for the half of "the rows
-contradict each other" that the database, not Python, detects, in this order: first the class test, so
-`sqlite3.ProgrammingError` and `sqlite3.InterfaceError` (a bug in the process, not a state
-of the file; module-raised, and carrying no `sqlite_errorcode` at all) are re-raised unmapped
-before any result code is read and take the `-32603` path; then `sqlite3.IntegrityError` (a
+contradict each other" that the database, not Python, detects, in this order: first the class test, which reads
+no code: `sqlite3.ProgrammingError`, `sqlite3.InterfaceError` and `sqlite3.NotSupportedError`
+(a bug in the process, not a state of the file; module-raised instances carry no
+`sqlite_errorcode`, and the two SQLite-originated ones, `SQLITE_MISUSE` and `SQLITE_RANGE`,
+are bugs too) are re-raised unmapped and take the `-32603` path; a `sqlite3.Error` raised by
+the `ROLLBACK` itself escapes the wrapper unmapped and takes the same path; then `sqlite3.IntegrityError` (a
 `CHECK`, trigger or foreign key firing on a row the process built) becomes the journal's
 `IntegrityError`; then any error whose primary result code
 (`getattr(exc, "sqlite_errorcode", 0) & 0xff`, present on SQLite-originated errors from
@@ -286,9 +288,10 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
 
 A whole-journal trace is bounded at 5,000,000 events; a busy journal reaches that. M4's
 answer is **rollover, not segmentation**, and the enforcer is the journal, not the server,
-because the invariant must hold on every transaction and not only at open: as the first
-statement inside every `BEGIN IMMEDIATE` transaction (under the write lock, beside the
-binding check, so two writers cannot both pass a stale count) the journal evaluates
+because the invariant must hold on every transaction and not only at open: immediately
+after the binding check inside every `BEGIN IMMEDIATE` transaction (under the write lock, so
+two writers cannot both pass a stale count, and a full and misbound journal reports the
+binding fault) the journal evaluates
 `9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
 up to seven events, a write up to eight) and 1 for a message, nine being the number of

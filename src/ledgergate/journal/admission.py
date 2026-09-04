@@ -26,7 +26,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ledgergate.codec import CodecError, Tokenizer, decode_command, digest
+from ledgergate.codec import (
+    MAX_PAYLOAD_DEPTH,
+    MAX_PAYLOAD_NODES,
+    CodecError,
+    Tokenizer,
+    decode_command,
+    digest,
+    payload_size,
+)
 from ledgergate.journal.approvals import Approval, ApprovalError
 from ledgergate.ledger import (
     Advance,
@@ -73,7 +81,11 @@ class Request:
         return self.tool in READ_TOOLS
 
     def request_digest(self) -> str:
-        """SHA-256 over the canonical serialization of the admitted request."""
+        """SHA-256 over the canonical serialization of the admitted request, *excluding* any
+        approval artefact: until its signature verifies an artefact's fields are the
+        presenter's words, and an unkeyed digest over them would let an observer confirm a
+        guessed approver or approval id from the digest alone. The artefact is bound by its
+        own signature and by the presentation row instead."""
         body: dict[str, Any] = {
             "tool": self.tool,
             "arguments": self.arguments,
@@ -82,8 +94,6 @@ class Request:
         }
         if self.key is not None:
             body["key"] = self.key
-        if self.approval is not None:
-            body["approval"] = self.approval
         return digest(body)
 
 
@@ -204,6 +214,9 @@ class IdentityAdmitter:
         arguments = value.get("arguments", {})
         if not isinstance(arguments, dict):
             raise AdmissionError("wrong_type", "arguments")
+        nodes, depth = payload_size(arguments)
+        if nodes > MAX_PAYLOAD_NODES or depth > MAX_PAYLOAD_DEPTH:
+            raise AdmissionError("payload_too_large", "arguments")
         approval = value.get("approval")
         if approval is not None:
             try:

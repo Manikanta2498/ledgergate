@@ -87,6 +87,15 @@ from ledgergate.ledger.identifiers import require_identifier
 T = TypeVar("T")
 LOCAL_PRINCIPAL = "local"
 ENVELOPE_BOUND = 4096  # bytes of UTF-8, per the specification
+MAX_MESSAGE_CHARS = 65536  # the trace schema's bound on message content
+_BOUND = frozenset({"path", "clock", "ids", "admitter", "policy", "principal"})
+
+
+def _configuration_text(policy: PolicySet) -> str | None:
+    doc = policy.configuration()
+    return None if doc is None else canonical_text(doc)
+
+
 MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
 
@@ -135,6 +144,9 @@ class Definition:
     token_check: str = "none"  # noqa: S105 - identifies the key; not key material
     policy_config: str = "none"
     approval_key: str = "none"
+    policy_configuration: str | None = None
+    """The set's declarative rules as JCS text, when it has any; a trace carries it so a
+    verifier can recompute decisions. ``policy_config`` is its digest."""
 
     @property
     def registry(self) -> dict[str, Currency]:
@@ -223,6 +235,30 @@ class Journal:
     _pending_projection: tuple[Ledger, int] | None = field(init=False, default=None, repr=False)
     _approval_key: str = field(init=False, default="none", repr=False)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The components a definition binds (policy, admitter, principal, effects) are
+        # fixed for the life of the object: swapping one after open would let calls run
+        # under rules or a redaction key the definition never recorded.
+        if name in _BOUND and name in self.__dict__:
+            raise ConfigurationError(f"Journal.{name} is bound at open and cannot be replaced")
+        super().__setattr__(name, value)
+
+    def _check_binding(self) -> None:
+        """Re-assert, at the start of every transaction, that the components in use are the
+        ones the definition recorded; ``open`` checked once, and this makes the check hold
+        for every call rather than for the first."""
+        d = self._definition
+        if (
+            self.policy.version != d.policy_set_version
+            or self.policy.configuration_digest() != d.policy_config
+            or (self.admitter.token_domain, self.admitter.token_key_version)
+            != (d.token_domain, d.token_key_version)
+            or not hmac.compare_digest(self.admitter.key_check(), d.token_check)
+        ):
+            raise ConfigurationError(
+                "the policy set or admitter in use no longer matches the journal's definition"
+            )
+
     # ------------------------------------------------------------- lifecycle
 
     @classmethod
@@ -304,12 +340,13 @@ class Journal:
             token_check=self.admitter.key_check(),
             policy_config=self.policy.configuration_digest(),
             approval_key=self._approval_key,
+            policy_configuration=_configuration_text(self.policy),
         )
         registry = definition.registry
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
                     1,
@@ -321,6 +358,7 @@ class Journal:
                     definition.token_key_version,
                     definition.token_check,
                     definition.policy_config,
+                    definition.policy_configuration,
                     definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
@@ -385,7 +423,17 @@ class Journal:
             except (ValueError, KeyError, TypeError, LedgerError) as exc:
                 raise IntegrityError(f"definition does not decode: {exc}") from exc
             self._definition = Definition(
-                row[0], chart, currencies, row[1], row[2], row[3], row[4], row[9], row[10], row[5]
+                row[0],
+                chart,
+                currencies,
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[9],
+                row[10],
+                row[5],
+                row[11],
             )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
@@ -432,6 +480,7 @@ class Journal:
         except IJsonError as exc:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
         with self._txn():
+            self._check_binding()
             self._ensure_current()  # step 2
             scope = AdmissionScope(
                 self._definition.registry, self._definition.chart, self.principal, self._ledger
@@ -449,7 +498,10 @@ class Journal:
         of the trace schema's four; only ``content`` is free text."""
         if role not in MESSAGE_ROLES:
             raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}")
+        if len(content) > MAX_MESSAGE_CHARS:
+            raise ValueError(f"message content exceeds {MAX_MESSAGE_CHARS} characters")
         with self._txn():
+            self._check_binding()
             seq = self._alloc("events")
             self._conn.execute(
                 "INSERT INTO events VALUES (?,?,?,?)",
@@ -1227,7 +1279,7 @@ def _read_definition_row(path: str) -> tuple[Any, ...] | None:
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
             " token_key_version, approval_key, chart, currencies, schema_version, token_check,"
-            " policy_config FROM definition"
+            " policy_config, policy_configuration FROM definition"
         ).fetchone()
         return None if row is None else tuple(row)
     finally:

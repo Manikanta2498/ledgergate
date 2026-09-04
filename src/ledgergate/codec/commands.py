@@ -143,10 +143,17 @@ def _decode_money(doc: Any, registry: Registry, *, where: str) -> Money:
     return Money(amount, registry[code])
 
 
+MAX_POSTINGS = 1000
+"""The trace schema's bound on an entry's postings; admission refuses beyond it so every
+admitted command is representable in a trace."""
+
+
 def decode_draft(doc: Any, registry: Registry, *, where: str = "draft") -> EntryDraft:
     d = _expect(doc, where)
     _only(d, {"postings", "description", "tags"}, where=where)
     raw = _field(d, "postings", list, where=where)
+    if len(raw) > MAX_POSTINGS:
+        raise CodecError(f"{where}.postings", f"more than {MAX_POSTINGS} postings")
     postings = []
     for i, p in enumerate(raw):
         pw = f"{where}.postings[{i}]"

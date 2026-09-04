@@ -1177,7 +1177,7 @@ class TestFifthReviewFindings:
         with pytest.raises(ValidationError, match="current outcome"):
             TraceV2.model_validate(doc)
 
-    def test_derivation_refuses_a_journal_with_two_presentations_for_one_invocation(
+    def test_two_presentations_for_one_invocation_are_impossible_by_schema(
         self, tmp_path: Path
     ) -> None:
         import sqlite3
@@ -1189,13 +1189,12 @@ class TestFifthReviewFindings:
         ).fetchall()
         conn.execute("BEGIN")
         seq = conn.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
-        conn.execute(
-            "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *pres[1:])
-        )
-        conn.execute("COMMIT")
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+            conn.execute(
+                "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *pres[1:])
+            )
+        conn.execute("ROLLBACK")
         conn.close()
-        with pytest.raises(DerivationError, match="presentations"):
-            derive(path)
 
 
 class TestSixthReviewFindings:

@@ -19,6 +19,16 @@ from collections.abc import Iterable
 from typing import Any
 
 MAX_SAFE_INTEGER = 2**53 - 1
+MAX_TRANSPORT_DEPTH = 64
+MAX_TRANSPORT_NODES = 200_000
+"""Transport-class limits: a decoded value deeper or larger than this is refused before any
+row is written, like a value that is not I-JSON. Every later stage (JCS, envelopes, the
+trace models) then has a bounded input and recursion cannot escape it."""
+
+MAX_PAYLOAD_DEPTH = 32
+MAX_PAYLOAD_NODES = 10_000
+"""Payload-class limits, shared by journal admission and the trace models, so anything the
+journal admits as tool arguments or serves as a result is representable in a trace."""
 
 
 class IJsonError(ValueError):
@@ -55,9 +65,15 @@ def _pairs(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
 def require_ijson(value: Any) -> Any:
     """Validate an already-decoded value (the surrogate rule cannot be a decode hook).
     Returns the value unchanged."""
-    stack = [value]
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    nodes = 0
     while stack:
-        v = stack.pop()
+        v, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_TRANSPORT_NODES:
+            raise IJsonError(f"value exceeds {MAX_TRANSPORT_NODES} nodes")
+        if depth > MAX_TRANSPORT_DEPTH:
+            raise IJsonError(f"value nesting exceeds {MAX_TRANSPORT_DEPTH}")
         if isinstance(v, str):
             try:
                 v.encode("utf-8")
@@ -67,10 +83,10 @@ def require_ijson(value: Any) -> Any:
             for k, item in v.items():
                 if not isinstance(k, str):
                     raise IJsonError("object keys must be strings")
-                stack.append(k)
-                stack.append(item)
+                stack.append((k, depth + 1))
+                stack.append((item, depth + 1))
         elif isinstance(v, list):
-            stack.extend(v)
+            stack.extend((item, depth + 1) for item in v)
         elif isinstance(v, bool) or v is None:
             pass
         elif isinstance(v, int):
@@ -82,6 +98,21 @@ def require_ijson(value: Any) -> Any:
         else:
             raise IJsonError(f"{type(v).__name__} is not a JSON value")
     return value
+
+
+def payload_size(value: Any) -> tuple[int, int]:
+    """``(nodes, depth)`` of a JSON value, iteratively."""
+    nodes, deepest = 0, 0
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        v, depth = stack.pop()
+        nodes += 1
+        deepest = max(deepest, depth)
+        if isinstance(v, dict):
+            stack.extend((item, depth + 1) for item in v.values())
+        elif isinstance(v, list):
+            stack.extend((item, depth + 1) for item in v)
+    return nodes, deepest
 
 
 def loads(text: str | bytes) -> Any:

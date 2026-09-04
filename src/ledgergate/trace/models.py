@@ -46,7 +46,12 @@ from pydantic import (
     model_validator,
 )
 
-from ledgergate.codec import decode_command, encode_command
+from ledgergate.codec import (
+    MAX_PAYLOAD_DEPTH,
+    MAX_PAYLOAD_NODES,
+    decode_command,
+    encode_command,
+)
 from ledgergate.ledger import (
     CURRENCIES,
     Account,
@@ -90,9 +95,6 @@ def _to_utc(value: datetime) -> datetime:
 Timestamp = Annotated[AwareDatetime, AfterValidator(_to_utc)]
 
 Registry = Mapping[str, Currency]
-
-MAX_PAYLOAD_DEPTH = 32
-MAX_PAYLOAD_NODES = 10_000
 
 
 def _check_payload(value: JsonValue) -> JsonValue:

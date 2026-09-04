@@ -28,9 +28,14 @@ from ledgergate.codec.commands import (
     encode_draft,
 )
 from ledgergate.codec.ijson import (
+    MAX_PAYLOAD_DEPTH,
+    MAX_PAYLOAD_NODES,
     MAX_SAFE_INTEGER,
+    MAX_TRANSPORT_DEPTH,
+    MAX_TRANSPORT_NODES,
     IJsonError,
     loads,
+    payload_size,
     require_ijson,
 )
 from ledgergate.codec.jcs import (
@@ -51,7 +56,11 @@ from ledgergate.codec.tokens import (
 __all__ = [
     "CODEC_VERSION",
     "DOMAIN_PATTERN",
+    "MAX_PAYLOAD_DEPTH",
+    "MAX_PAYLOAD_NODES",
     "MAX_SAFE_INTEGER",
+    "MAX_TRANSPORT_DEPTH",
+    "MAX_TRANSPORT_NODES",
     "MIN_KEY_BYTES",
     "REDACTION_PATTERN",
     "TOKEN_PATTERN",
@@ -68,5 +77,6 @@ __all__ = [
     "encode_draft",
     "loads",
     "looks_sensitive",
+    "payload_size",
     "require_ijson",
 ]

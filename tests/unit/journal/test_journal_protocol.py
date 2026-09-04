@@ -814,7 +814,7 @@ class TestReviewFindings:
         seq = raw.execute("INSERT INTO journal (kind) VALUES ('definition')").lastrowid
         with pytest.raises(sqlite3.IntegrityError):
             raw.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:])
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:])
             )
         raw.execute("ROLLBACK")
 
@@ -923,7 +923,7 @@ class TestRedactionSeam:
             }
         )
         (d,) = rows(raw, "definition")
-        assert json.loads(d[11])[0]["name"] == "[redacted]"
+        assert json.loads(d[12])[0]["name"] == "[redacted]"
         message = next(e for e in rows(raw, "events") if e[2] == "message")
         assert json.loads(message[3])["content"] == "[redacted]"
         (out,) = rows(raw, "outcomes")

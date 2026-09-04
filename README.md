@@ -64,7 +64,9 @@ admissible; it does not itself move money on external rails (see ADR-0002).
 durable journal, so a process can be restarted and answer a retried key exactly as it did
 the first time; the tokenizing, redacting admitter, so no caller identifier or free text
 has to reach disk; the policy layer with signed, single-use approvals; trace v2 derived
-from the journal; and the invariant registry behind `ledgergate verify`. The corpus lands in M6. The gates that keep all of it honest run in CI on every pull request and every push
+from the journal; the invariant registry behind `ledgergate verify`; the stdio MCP runtime
+`ledgergate serve`; and the OpenTelemetry GenAI adapter behind `ledgergate record`. The corpus
+lands in M6. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema

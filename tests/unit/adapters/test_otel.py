@@ -625,3 +625,58 @@ class TestThirdImplementationReview:
         monkeypatch.setattr(sys, "stdout", Broken())
         assert main(["record", "--from-otel", str(good)]) == 2
         assert "cannot write" in capsys.readouterr().err
+
+
+class TestFourthImplementationReview:
+    def test_closed_pipe_on_stdout_exits_2_with_no_interpreter_noise(self, tmp_path: Path) -> None:
+        import subprocess
+        import sys
+
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps(_export(_two_turns())))
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "ledgergate.cli", "record", "--from-otel", str(good)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert proc.stdout is not None
+        proc.stdout.close()  # the reader goes away before the writer writes
+        _, err = proc.communicate(timeout=60)
+        assert proc.returncode == 2, err
+        assert b"Exception ignored" not in err and b"cannot write" in err
+
+    def test_over_bound_system_instruction_is_located_at_the_instruction(self) -> None:
+        spans = _two_turns()
+        spans[0]["attributes"].append(
+            _kv("gen_ai.system_instructions", _sj([{"type": "text", "content": "s" * 70_000}]))
+        )
+        o = convert(_bytes(_export(spans)))
+        assert o.report is not None
+        bound = [f for f in o.report.findings if f.check == "bound"]
+        assert bound and bound[0].location.endswith("gen_ai.system_instructions[0]")
+
+    def test_decode_failure_names_the_document_ordinal(self) -> None:
+        data = (json.dumps(_export(_two_turns())) + "\n" + '{"resourceSpans":[}' + "\n").encode()
+        with pytest.raises(UnreadableError, match="document 1"):
+            read_export(data)
+
+    def test_undecodable_input_does_not_manufacture_a_prefix_fault(self) -> None:
+        spans = _two_turns()
+        spans[2]["attributes"][1] = _kv("gen_ai.input.messages", _s("not json"))
+        found = _findings(_export(spans))
+        assert "content" in found and "prefix" not in found
+
+    def test_response_result_over_the_payload_bound_is_located_at_the_part(self) -> None:
+        spans = _two_turns()
+        del spans[1]
+        huge = {
+            "role": "tool",
+            "parts": [
+                {"type": "tool_call_response", "id": "c1", "response": {"k": list(range(20_000))}}
+            ],
+        }
+        spans[1]["attributes"][1] = _kv("gen_ai.input.messages", _sj([U1, A1, huge]))
+        o = convert(_bytes(_export(spans)))
+        assert o.report is not None
+        bound = [f for f in o.report.findings if f.check == "bound"]
+        assert bound and bound[0].location.endswith("gen_ai.input.messages[2].parts[0]")

@@ -115,7 +115,17 @@ def read_export(data: bytes) -> list[Any]:
             if not isinstance(docs, list):  # pragma: no cover - `[` always decodes to a list
                 raise UnreadableError("not an array")
         else:
-            docs = list(iter_concatenated(data, max_nodes=MAX_NODES, max_depth=MAX_DEPTH))
+            docs = []
+            try:
+                for doc in iter_concatenated(data, max_nodes=MAX_NODES, max_depth=MAX_DEPTH):
+                    docs.append(doc)
+            except (IJsonError, json.JSONDecodeError) as exc:
+                raise UnreadableError(
+                    f"document {len(docs)}: {exc}",
+                    hint="OTLP timestamps emitted as JSON numbers are the common cause"
+                    if isinstance(exc, IJsonRangeError)
+                    else None,
+                ) from exc
     except IJsonRangeError as exc:
         raise UnreadableError(
             str(exc), hint="OTLP timestamps emitted as JSON numbers are the common cause"
@@ -692,9 +702,10 @@ def convert(data: bytes) -> Outcome:
                             )
                             continue
                         presented.append((role, part["content"], 1, m, p))
-        # prefix rule
-        prefix_ok = True
-        for i, (role, text, at_ns) in enumerate(emitted):
+        # prefix rule (not run against an input that was never examined)
+        examined = inputs is not None or "gen_ai.input.messages" not in s.attrs
+        prefix_ok = examined
+        for i, (role, text, at_ns) in enumerate(emitted if examined else []):
             if i >= len(presented) or (presented[i][0], presented[i][1]) != (role, text):
                 faults.add("prefix", loc, f"presented conversation diverges at position {i}")
                 prefix_ok = False
@@ -706,11 +717,12 @@ def convert(data: bytes) -> Outcome:
                 if len(text) > MAX_MESSAGE_CHARS:
                     # the conversation happened; only recording it is refused, so the item
                     # still joins the emitted conversation and later spans are not blamed
-                    faults.add(
-                        "bound",
-                        f"{loc}.gen_ai.input.messages[{m}].parts[{p}]",
-                        "message over 65536 characters",
+                    where = (
+                        f"{loc}.gen_ai.system_instructions[{p}]"
+                        if rank == 0
+                        else f"{loc}.gen_ai.input.messages[{m}].parts[{p}]"
                     )
+                    faults.add("bound", where, "message over 65536 characters")
                     emitted.append((role, text, s.start))
                     continue
                 events.append(
@@ -869,7 +881,12 @@ def convert(data: bytes) -> Outcome:
         if "result" in ev.body and ev.body["result"] is not None:
             nodes, depth = payload_size(ev.body["result"])
             if nodes > MAX_PAYLOAD_NODES or depth > MAX_PAYLOAD_DEPTH:
-                faults.add("bound", ev.span.loc, "result exceeds the payload bound")
+                where = (
+                    f"{ev.span.loc}.gen_ai.input.messages[{ev.message}].parts[{ev.part}]"
+                    if ev.rank == 1
+                    else ev.span.loc
+                )
+                faults.add("bound", where, "result exceeds the payload bound")
                 continue
         # a response the model was shown must not postdate the result the trace records
         for presenter, ploc in presenters.get(cid, []):

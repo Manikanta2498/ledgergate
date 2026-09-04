@@ -270,6 +270,10 @@ def record_command(args: argparse.Namespace) -> int:
             sys.stdout.write(text)
             sys.stdout.flush()
         except OSError as exc:
+            # the interpreter flushes stdout again at exit and would override the status
+            # with 120 on a broken pipe: point fd 1 at /dev/null first
+            with contextlib.suppress(OSError):
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
             print(f"ledgergate record: cannot write: {type(exc).__name__}", file=sys.stderr)
             return 2
         return 0

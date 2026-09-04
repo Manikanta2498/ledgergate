@@ -257,3 +257,82 @@ def test_tokenizing_journal_rejects_admitter_swap_that_would_leak_raw_keys(tmp_p
         == "replayed"
     )
     j.close()
+
+
+class TestEverythingAdmittedIsRepresentable:
+    """Derive-after-admit at each boundary the trace has."""
+
+    def _derives(self, j: Journal) -> None:
+        from ledgergate.derive import trace
+
+        j.close()
+        assert trace(j.path).journal_id is not None
+
+    def test_tags_and_descriptions_at_the_bound(self, tmp_path: Path) -> None:
+        j = _journal(tmp_path)
+        ok = {
+            "draft": {**SALE, "description": "x" * 1024, "tags": {f"k{i}": "v" for i in range(100)}}
+        }
+        assert (
+            j.handle({"tool": "post", "call_id": "c1", "key": "k1", "arguments": ok}).response
+            == "applied"
+        )
+        too_long = {"draft": {**SALE, "description": "x" * 1025}}
+        assert (
+            j.handle({"tool": "post", "call_id": "c2", "key": "k2", "arguments": too_long}).response
+            == "invalid"
+        )
+        too_many = {"draft": {**SALE, "tags": {f"k{i}": "v" for i in range(101)}}}
+        assert (
+            j.handle({"tool": "post", "call_id": "c3", "key": "k3", "arguments": too_many}).response
+            == "invalid"
+        )
+        long_tag = {"draft": {**SALE, "tags": {"k": "v" * 1025}}}
+        assert (
+            j.handle({"tool": "post", "call_id": "c4", "key": "k4", "arguments": long_tag}).response
+            == "invalid"
+        )
+        long_reverse = {
+            "tool": "reverse",
+            "call_id": "c5",
+            "key": "k5",
+            "arguments": {"entry_id": "e", "description": "x" * 1025},
+        }
+        assert j.handle(long_reverse).response == "invalid"
+        self._derives(j)
+
+    def test_a_chart_whose_trial_balance_would_not_fit_is_refused_at_create(
+        self, tmp_path: Path
+    ) -> None:
+        big = ChartOfAccounts(
+            [Account(f"a{i}", AccountType.ASSET, USD) for i in range(2000)]
+            + [Account("rev", AccountType.REVENUE, USD)]
+        )
+        with pytest.raises(ConfigurationError, match="payload bound"):
+            Journal.create(
+                str(tmp_path / "big.journal"), big, clock=SteppingClock(EPOCH), ids=SequentialIds()
+            )
+        fits = ChartOfAccounts([Account(f"a{i}", AccountType.ASSET, USD) for i in range(1200)])
+        j = Journal.create(
+            str(tmp_path / "fits.journal"), fits, clock=SteppingClock(EPOCH), ids=SequentialIds()
+        )
+        assert (
+            j.handle({"tool": "trial_balance", "call_id": "c", "arguments": {}}).response == "read"
+        )
+        self._derives(j)
+
+    def test_a_policy_set_returning_an_overlong_reason_is_a_configuration_fault(
+        self, tmp_path: Path
+    ) -> None:
+        from ledgergate.journal.policy import Decision, PolicyContext
+
+        class Verbose(NullPolicySet):
+            version = "verbose"
+
+            def evaluate(self, context: PolicyContext) -> Decision:
+                return Decision("allow", "verbose.rule", "r" * 2000)
+
+        j = _journal(tmp_path, policy=Verbose())
+        with pytest.raises(ConfigurationError, match="1024"):
+            j.handle(_open("k", 5))
+        j.close()

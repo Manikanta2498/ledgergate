@@ -2145,3 +2145,95 @@ class TestWholeProjectReviewFindings:
         p.write_text(json.dumps(doc))
         assert main(["verify", str(p)]) == 1  # verifies; invented message fails
         assert "recomputed 'entry does not balance" in capsys.readouterr().out
+
+
+class TestAggregateWitnessing:
+    def test_a_forged_aggregate_fails_recomputation(self, tmp_path: Path) -> None:
+        from ledgergate.journal import WindowCap
+
+        policy = ThresholdPolicySet(
+            version="w",
+            approve_above=[Threshold("open_transaction", "USD", 100_000)],
+            window_caps=[WindowCap("refund", "USD", 3_000, timedelta(hours=1))],
+        )
+        path = str(tmp_path / "agg.journal")
+        j = Journal.create(
+            path,
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=policy,
+            approval_key=verification_key_text(SIGNER),
+        )
+
+        def entry(amt: int, d: str, c: str) -> dict[str, Any]:
+            return {
+                "postings": [
+                    {"account": d, "side": "debit", "money": {"amount": amt, "currency": "USD"}},
+                    {"account": c, "side": "credit", "money": {"amount": amt, "currency": "USD"}},
+                ]
+            }
+
+        j.handle(
+            {
+                "tool": "open_transaction",
+                "call_id": "o",
+                "key": "o",
+                "arguments": {
+                    "transaction_id": "t",
+                    "amount": {"amount": 10_000, "currency": "USD"},
+                },
+            }
+        )
+        j.handle(
+            {
+                "tool": "advance",
+                "call_id": "a",
+                "key": "a",
+                "arguments": {"transaction_id": "t", "event": "authorize"},
+            }
+        )
+        j.handle(
+            {
+                "tool": "advance",
+                "call_id": "s",
+                "key": "s",
+                "arguments": {
+                    "transaction_id": "t",
+                    "event": "settle",
+                    "entry": entry(10_000, "cash", "revenue"),
+                },
+            }
+        )
+        for key, amt in (("r1", 2_000), ("r2", 1_500)):
+            j.handle(
+                {
+                    "tool": "refund",
+                    "call_id": key,
+                    "key": key,
+                    "arguments": {
+                        "transaction_id": "t",
+                        "money": {"amount": amt, "currency": "USD"},
+                        "entry": entry(amt, "revenue", "cash"),
+                    },
+                }
+            )
+        j.close()
+        t = derive(path)
+        statuses = {r.name: r.status for r in check(t).results}
+        assert statuses["decision_recomputes"] == "pass"
+        denied = next(d for d in t.decisions().values() if d.decision == "deny")
+        assert denied.context.aggregates == {"applied.refund.USD.3600s": "2000"}
+        doc = t.model_dump(mode="json")
+        d = next(
+            e for e in doc["events"] if e["type"] == "policy_decision" and e["decision"] == "deny"
+        )
+        d["context"]["aggregates"]["applied.refund.USD.3600s"] = "0"
+        d["decision"], d["matched_rule"], d["reason"] = "allow", "w.within_limits", "x"
+        # an allow needs a pair; keep the grammar honest by leaving the pair out and the
+        # tool_result denied: the registry, not the grammar, must catch the forged input
+        built = TraceV2.model_construct(**doc)
+        object.__setattr__(built, "events", tuple(_to_event(e) for e in doc["events"]))
+        from ledgergate.invariants import decision_recomputes
+
+        assert any("trace witnesses 2000" in f.message for f in decision_recomputes(built))

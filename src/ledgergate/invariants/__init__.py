@@ -20,7 +20,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from datetime import datetime, timedelta
+from typing import Any, Literal
 
 from ledgergate.ledger import GENESIS_HASH, LedgerError
 from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent, ToolResultEvent
@@ -678,16 +679,30 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
     reproduces the recorded decision, rule and reason. Needs the configuration; a set whose
     rules are code reports no evidence. Runtime-written decisions are not policy output and
     are skipped; a failed-verdict context never reached the set."""
-    from ledgergate.journal.policy import PolicyContext, ThresholdPolicySet
+    from ledgergate.journal.policy import NullPolicySet, ThresholdPolicySet
 
     out = []
     config = t.policy_configuration
     assert config is not None
+    if config.get("version") != t.policy_set_version:
+        out.append(
+            Finding(
+                "decision_recomputes",
+                "error",
+                f"configuration is for set version {config.get('version')!r}, trace says"
+                f" {t.policy_set_version!r}",
+            )
+        )
     if config.get("set") == "NullPolicySet":
+        null = NullPolicySet()
         for iid, d in _decided(t).items():
-            if not d.runtime_written and (d.decision, d.matched_rule) != (
-                "allow",
-                "none.allow_all",
+            if d.runtime_written:
+                continue
+            expected = null.evaluate(_context_of(d))
+            if (d.decision, d.matched_rule, d.reason) != (
+                expected.decision,
+                expected.matched_rule,
+                expected.reason,
             ):
                 out.append(
                     Finding("decision_recomputes", "error", f"{iid}: null set did not allow", iid)
@@ -697,25 +712,27 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
         policy = ThresholdPolicySet.from_configuration(config)
     except (KeyError, TypeError, ValueError) as exc:
         return [Finding("decision_recomputes", "error", f"configuration does not load: {exc}")]
+    witnessed = _witnessed_aggregates(t)
     for iid, d in _decided(t).items():
         if d.runtime_written:
             continue
         c = d.context
-        context = PolicyContext(
-            c.principal,
-            c.subject,
-            c.command_digest,
-            c.digest_kind,
-            c.evaluated_at,
-            c.policy_set_version,
-            c.command_kind,
-            c.amount,
-            c.currency,
-            dict(c.aggregates),
-            None
-            if c.approval is None
-            else {"presentation": c.approval.presentation, "verdict": c.approval.verdict},
-        )
+        # The aggregates the set read are witnessed by the trace itself: the applied ledger
+        # commands of that kind, currency and subject before this decision, within the
+        # window. A recorded aggregate the trace does not support is a forged input.
+        for name, recorded in c.aggregates.items():
+            expected_total = witnessed(iid, name, c.subject, c.evaluated_at)
+            if expected_total != recorded:
+                out.append(
+                    Finding(
+                        "decision_recomputes",
+                        "error",
+                        f"{iid}: aggregate {name} recorded {recorded}, trace witnesses"
+                        f" {expected_total}",
+                        iid,
+                    )
+                )
+        context = _context_of(d)
         try:
             got = policy.evaluate(context)
         except ValueError as exc:
@@ -732,6 +749,62 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
                 )
             )
     return out
+
+
+def _context_of(d: PolicyDecision) -> Any:
+    from ledgergate.journal.policy import PolicyContext
+
+    c = d.context
+    return PolicyContext(
+        c.principal,
+        c.subject,
+        c.command_digest,
+        c.digest_kind,
+        c.evaluated_at,
+        c.policy_set_version,
+        c.command_kind,
+        c.amount,
+        c.currency,
+        dict(c.aggregates),
+        None
+        if c.approval is None
+        else {"presentation": c.approval.presentation, "verdict": c.approval.verdict},
+    )
+
+
+def _witnessed_aggregates(t: TraceV2) -> Callable[[str, str, str | None, datetime], str]:
+    """``applied.<kind>.<CCY>.<W>s`` for a decision, computed from the trace: the sum of the
+    amounts of applied ledger commands of that kind and currency whose subject (transaction
+    id) is the context's, produced by an intent before this one and requested within the
+    window ending at the evaluation time."""
+    position = {r.intent_id: i for i, r in enumerate(t.resolutions())}
+    owners = _pair_owners(t)
+    ok_results = {e.command_id for e in t.events if isinstance(e, LedgerResultEvent) and e.ok}
+    intents = {e.intent_id: e for e in t.events if isinstance(e, CommandIntent)}
+    applied: list[tuple[int, str, str, str, int, datetime]] = []
+    for iid, cid in owners.items():
+        if cid not in ok_results or iid not in intents:
+            continue
+        cmd = intents[iid].command
+        money = getattr(cmd, "amount", None) or getattr(cmd, "money", None)
+        subject = getattr(cmd, "transaction_id", None)
+        if money is None or subject is None:
+            continue
+        applied.append(
+            (position[iid], cmd.kind, money.currency, subject, money.amount, intents[iid].at)
+        )
+
+    def witnessed(iid: str, name: str, subject: str | None, evaluated_at: datetime) -> str:
+        _prefix, kind, ccy, window = name.split(".")
+        since = evaluated_at - timedelta(seconds=int(window[:-1]))
+        total = sum(
+            amount
+            for pos, k, c, s, amount, at in applied
+            if pos < position[iid] and k == kind and c == ccy and s == subject and at >= since
+        )
+        return str(total)
+
+    return witnessed
 
 
 def legacy_carries_no_policy_evidence(t: TraceV2) -> list[Finding]:

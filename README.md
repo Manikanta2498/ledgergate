@@ -198,6 +198,13 @@ fingerprint and the hash chain are the core's own length-prefixed encoding. Two 
 (`none`), which allows everything and still writes a complete decision row, and
 `ThresholdPolicySet` (see *Policy and approvals*).
 
+**Canonical form changed (pre-alpha).** The currency exponent is now part of every posting's
+canonical form and every command fingerprint (codec version 2), so entry hashes and
+fingerprints differ from earlier builds: journals from before this are refused at open by
+their codec version, and v1 traces recorded before it report head divergences on replay,
+which is the format change and not tampering. Nothing has been released, so nothing is
+migrated.
+
 **Known limit.** Approval single use is enforced within one writable journal file; a byte
 copy of a journal enforces it separately, so operators keep exactly one writable copy until
 an external consumption authority lands (M8).

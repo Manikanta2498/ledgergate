@@ -22,12 +22,15 @@ tool_call                        ordinal 0
                                        request_digest for reads, input_digest for invalid),
                                        approval presentation ref if one was presented
                                        disposition: new | replay | conflict | approval | read | invalid
-  [policy_decision]                3   iff disposition in {new, approval}, or a read whose tool the
+  [approval_presentation]          3   iff the resolution carries a presentation_ref: the
+                                       presentation row (check result, verified, bindings,
+                                       approver identity only once the signature verified)
+  [policy_decision]                4   iff disposition in {new, approval}, or a read whose tool the
                                        configured policy set declares gated (the null set gates none)
-  [ledger_command                  4   iff a policy_decision == allow on a write intent
-   ledger_result]                  5
-  [read_result]                    6   iff disposition == read and no policy_decision == deny
-tool_result                      7
+  [ledger_command                  5   iff a policy_decision == allow on a write intent
+   ledger_result]                  6
+  [read_result]                    7   iff disposition == read and no policy_decision == deny
+tool_result                      8
 ```
 
 **Ordering.** Every event derived from one invocation is placed at
@@ -246,9 +249,12 @@ the key that created it, since the fingerprint excludes the key by design.
 
 ## Limits
 
-Journal admission enforces the trace's payload bound (10,000 nodes, depth 32) on tool
-arguments, 1,000 postings per entry and 65,536 characters per message, so every admitted
-input is representable here; `events` is bounded at 5,000,000 and derivation is
+Journal admission enforces every bound the trace has on what the journal admits or serves:
+the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per entry,
+1,024 characters for any short text (descriptions, tag keys and values, error messages,
+rules and reasons), 100 tags per entry, 65,536 characters per message, and, at `create`, a
+chart whose trial balance fits the payload bound; so every admitted input and every served
+result is representable here; `events` is bounded at 5,000,000 and derivation is
 whole-journal. Segmentation of a journal that outgrows that bound is not designed; it is
 the M4 runtime's first design question, stated in ADR-0002.
 

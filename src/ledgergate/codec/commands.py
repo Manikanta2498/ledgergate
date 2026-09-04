@@ -34,7 +34,7 @@ from ledgergate.ledger import (
     TransactionEvent,
 )
 
-CODEC_VERSION = "1"
+CODEC_VERSION = "2"  # 2: currency exponent in canonical forms and fingerprints
 
 Registry = Mapping[str, Currency]
 
@@ -144,8 +144,11 @@ def _decode_money(doc: Any, registry: Registry, *, where: str) -> Money:
 
 
 MAX_POSTINGS = 1000
-"""The trace schema's bound on an entry's postings; admission refuses beyond it so every
-admitted command is representable in a trace."""
+MAX_TEXT = 1024
+MAX_TAGS = 100
+"""The trace schema's bounds on an entry's postings, on any short text (descriptions, tag
+keys and values) and on the tag count; admission refuses beyond them so every admitted
+command is representable in a trace."""
 
 
 def decode_draft(doc: Any, registry: Registry, *, where: str = "draft") -> EntryDraft:
@@ -174,11 +177,17 @@ def decode_draft(doc: Any, registry: Registry, *, where: str = "draft") -> Entry
     description = d.get("description", "")
     if not isinstance(description, str):
         raise CodecError(f"{where}.description", "expected str")
+    if len(description) > MAX_TEXT:
+        raise CodecError(f"{where}.description", f"longer than {MAX_TEXT} characters")
     tags_raw = d.get("tags", {})
     if not isinstance(tags_raw, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in tags_raw.items()
     ):
         raise CodecError(f"{where}.tags", "expected an object of strings")
+    if len(tags_raw) > MAX_TAGS:
+        raise CodecError(f"{where}.tags", f"more than {MAX_TAGS} tags")
+    if any(len(k) > MAX_TEXT or len(v) > MAX_TEXT for k, v in tags_raw.items()):
+        raise CodecError(f"{where}.tags", f"a tag key or value is longer than {MAX_TEXT}")
     return EntryDraft(tuple(postings), description, tuple(sorted(tags_raw.items())))
 
 
@@ -196,6 +205,8 @@ def decode_command(doc: Any, registry: Registry) -> Command:
             description = c.get("description", "")
             if not isinstance(description, str):
                 raise CodecError(f"{where}.description", "expected str")
+            if len(description) > MAX_TEXT:
+                raise CodecError(f"{where}.description", f"longer than {MAX_TEXT} characters")
             return Reverse(key, _field(c, "entry_id", str, where=where), description)
         case "open_transaction":
             _only(c, {"kind", "key", "transaction_id", "amount"}, where=where)

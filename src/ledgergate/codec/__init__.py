@@ -21,6 +21,9 @@ from __future__ import annotations
 
 from ledgergate.codec.commands import (
     CODEC_VERSION,
+    MAX_POSTINGS,
+    MAX_TAGS,
+    MAX_TEXT,
     CodecError,
     decode_command,
     decode_draft,
@@ -58,7 +61,10 @@ __all__ = [
     "DOMAIN_PATTERN",
     "MAX_PAYLOAD_DEPTH",
     "MAX_PAYLOAD_NODES",
+    "MAX_POSTINGS",
     "MAX_SAFE_INTEGER",
+    "MAX_TAGS",
+    "MAX_TEXT",
     "MAX_TRANSPORT_DEPTH",
     "MAX_TRANSPORT_NODES",
     "MIN_KEY_BYTES",

@@ -26,6 +26,8 @@ from typing import Any, TypeVar
 
 from ledgergate.codec import (
     CODEC_VERSION,
+    MAX_PAYLOAD_NODES,
+    MAX_TEXT,
     CodecError,
     IJsonError,
     canonical_text,
@@ -33,6 +35,7 @@ from ledgergate.codec import (
     digest,
     encode_command,
     looks_sensitive,
+    payload_size,
     require_ijson,
 )
 from ledgergate.journal.admission import (
@@ -125,6 +128,13 @@ class Response:
     error_type: str | None = None
     error_message: str | None = None
     outcome: int | None = None
+
+    def __post_init__(self) -> None:
+        # Error messages are bounded by construction (fixed text plus identifiers of at most
+        # 256 characters); a longer one is a bug in whoever built it, and would leave the
+        # journal with a row the trace cannot carry, so it is refused before any write.
+        if self.error_message is not None and len(self.error_message) > MAX_TEXT:
+            raise IntegrityError("error message exceeds the trace bound")
 
     def as_tool_result(self) -> dict[str, Any]:
         if self.ok:
@@ -330,6 +340,18 @@ class Journal:
                     " number; operator-defined identifiers are stored as given",
                     stacklevel=3,
                 )
+        # Every result the journal will ever serve must be representable in a trace: the
+        # trial balance grows with the chart, so the chart is bounded by the payload bound.
+        zero = {"amount": "0", "currency": "XXX"}
+        probe_rows = [
+            {"account": a.account_id, "debit": zero, "credit": zero} for a in chart.values()
+        ]  # the exact shape _serve renders
+        nodes, _depth = payload_size({"rows": probe_rows, "balanced": True, "cursor": 0})
+        if nodes > MAX_PAYLOAD_NODES:
+            raise ConfigurationError(
+                f"a chart of {len(chart)} accounts serves a trial balance of {nodes} nodes,"
+                f" above the trace payload bound of {MAX_PAYLOAD_NODES}"
+            )
         definition = Definition(
             journal_id=secrets.token_hex(16),
             chart=chart,
@@ -1002,11 +1024,20 @@ class Journal:
 
     def _guarded(self, call: Callable[[], T]) -> T:
         """A policy set is a pure function of its context; raising is a bug in the set, an
-        unrecorded failure, and named as such on every path that invokes it."""
+        unrecorded failure, and named as such on every path that invokes it. A decision's
+        rule and reason are bounded like every other short text a trace carries."""
         try:
-            return call()
+            result = call()
         except Exception as exc:
             raise ConfigurationError(f"policy set {self.policy.version!r} raised: {exc}") from exc
+        if isinstance(result, Decision) and (
+            len(result.matched_rule) > MAX_TEXT or len(result.reason) > MAX_TEXT
+        ):
+            raise ConfigurationError(
+                f"policy set {self.policy.version!r} returned a rule or reason over {MAX_TEXT}"
+                " characters"
+            )
+        return result
 
     def _current_outcome_kind(self, op_seq: int) -> str | None:
         row = self._conn.execute(

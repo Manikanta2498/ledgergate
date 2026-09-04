@@ -266,7 +266,7 @@ carries. So every admitted input, every served result and every persisted contex
 representable here; `events` is bounded at 5,000,000 and derivation is
 whole-journal. A journal is kept within the bound by the journal's own per-transaction capacity
 check (M4) (`journal.md`, *Failures the journal cannot record*; `mcp-runtime.md`,
-*Segmentation*), so every journal is derivable; cross-journal continuity is future work.
+*Segmentation*), so every journal written under it is derivable; cross-journal continuity is future work.
 
 ## Status
 

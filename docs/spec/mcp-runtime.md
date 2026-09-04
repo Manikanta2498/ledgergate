@@ -22,10 +22,12 @@ principal, and `codec.loads` is made total over its refusals (below).
   `\n` at EOF is a message. The server writes one line per response to stdout and nothing
   else to stdout, ever; diagnostics go to stderr, and a diagnostic carries only the JSON-RPC
   error code, the byte length of the line, the *kind* of id (`integer`, `string`, `absent`,
-  `invalid`), the method **only if it is one of the five the server implements** (else
+  `invalid`, `undecoded`), the method **only if it is one of the five the server implements** (else
   `unknown`, mirroring the envelope's rule for tool names), and for a `-32000` the
-  exception's *class name* (a closed set of project identifiers: `CapacityError`,
-  `ConfigurationError`, `IntegrityError`, `JournalError`), never its message. Never the id itself (it is the
+  exception's *class name*, which is always a `JournalError` subclass defined in
+  `ledgergate.journal` (`CapacityError`, `ConfigurationError`, `EffectError`,
+  `IntegrityError`, or `JournalError` itself) and so a project identifier, never its
+  message. For a `-32700` the id kind is `undecoded`. Never the id itself (it is the
   caller's `call_id`, a class-2 identifier the journal tokenizes), never a caller string,
   never message content: stderr is routinely captured to disk and sits outside the redactor.
 - **Line bound**: a line longer than 16 MiB is refused before decoding (`-32700`, `id`
@@ -53,10 +55,13 @@ Every line is decoded with the project's I-JSON decoder (`ledgergate.codec.loads
 any other code looks at it. That decoder rejects duplicate member names, non-finite doubles,
 integers outside the safe range and unpaired surrogates, and enforces the transport-class
 depth and node bounds. M4 makes its refusals total: `loads` raises exactly `IJsonError` or
-`json.JSONDecodeError` and nothing else escapes it, in particular not the `RecursionError`
-Python's scanner raises on deeply nested text before the depth bound can be counted (the
-codec converts it into the depth refusal), so a two-kilobyte line of brackets is a `-32700`,
-not a dead session. A generic JSON decoder would silently keep the last of two duplicate
+`json.JSONDecodeError` and nothing else escapes it. Two escapes exist today and are closed:
+the `RecursionError` Python's scanner raises on deeply nested text before the depth bound
+can be counted (converted into the depth refusal), and the `ValueError` `int()` raises on an
+integer literal over 4,300 digits (refused by literal length first: any literal longer than
+17 characters, sign included, exceeds `2**53 - 1`, so it is the safe-range refusal). A
+two-kilobyte line of brackets or a five-kilobyte line of digits is a `-32700`, not a dead
+session; the M4 totality test covers both. A generic JSON decoder would silently keep the last of two duplicate
 members, so the client and the journal could disagree about what was sent; the project
 decoder is therefore the only decoder on the input path, and no MCP library sits in front
 of it. (The server does not depend on an MCP SDK: the stdio protocol is small, and a
@@ -66,7 +71,8 @@ forbids.)
 A line the decoder refuses is answered `-32700` (parse error) with `id` `null`. A decoded
 value that is not a JSON-RPC 2.0 request object (`jsonrpc` not `"2.0"`, `method` not a
 string, a JSON array: MCP 2025-06-18 has no batching), or whose `id` member is present but
-neither a string nor an integer (`null` included), is answered `-32600` (invalid request),
+neither a string nor an integer (`null`, `true` and `false` included: JSON booleans are not
+integers, whatever the host language says), is answered `-32600` (invalid request),
 echoing the `id` when a string or integer one was decoded and `null` otherwise, so a client
 can correlate whenever correlation is possible. **Nothing is recorded.** This is the transport-class unrecorded failure
 `journal.md` already names; the line never became a value the journal could digest. A
@@ -88,7 +94,7 @@ is what the client violated.
 | Method | Behaviour |
 | :-- | :-- |
 | `initialize` | Always succeeds, returning the one protocol version the server speaks (`2025-06-18`) whatever the client requested (MCP's negotiation: the server answers with a version it supports, and a client that cannot speak it disconnects), server info (`ledgergate`, the package version), and `capabilities.tools` (no `listChanged`: the tool set is the journal's definition and does not change during a session). A `tools/call` received before `initialize` is served like any other: the client's handshake obligation is the client's, and an attempt against the ledger is recorded whether or not the client shook hands. |
-| `notifications/initialized` | Acknowledged silently (a notification has no response). |
+| `notifications/initialized` | Acknowledged silently (a notification has no response). Sent wrongly *with* an `id`, it is a request for a method the server does not implement as one: `-32601`, id echoed. |
 | `ping` | `{}` |
 | `tools/list` | The seven tools below with their input schemas, derived from the codec's command shapes and the journal's read tools. No pagination: seven tools. |
 | `tools/call` | The mapping below. |
@@ -174,14 +180,17 @@ client reading either sees one value.
 after `handle` returns. The journal therefore records the *committed response payload*
 (`journal.md`, `invocation_responses`); a crash between commit and the write leaves a
 complete row and an undelivered response, and the client's retry with the same idempotency
-key is replayed from that row. No acknowledgement is recorded; the trace's
-`committed_response_matches_journal` row is named for exactly this.
+key is replayed from that row, with one exception: the write that fills the journal to
+capacity cannot be replayed there (a replay is an invocation), and its committed response is
+then readable only from the journal itself or its trace. No acknowledgement is recorded; the
+trace's `committed_response_matches_journal` row is named for exactly this.
 
 ## Failures the server cannot record
 
 A `JournalError` raised by `handle` (the journal unavailable past its busy timeout, an I-JSON
-violation the transport bounds did not catch, the journal at capacity, a configuration fault
-such as a policy set raising or a component no longer matching the definition) is answered
+violation the transport bounds did not catch, the journal at capacity, an effect fault such
+as a repeated id or a naive clock, a configuration fault such as a policy set raising or a
+component no longer matching the definition) is answered
 as a JSON-RPC error `-32000` whose `data` is the exception's class name and its message
 truncated to 1,024 characters (so one response line stays bounded), and the server
 continues the session. Nothing was recorded, as `journal.md` states for that class. An
@@ -218,7 +227,10 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
   meaningful only with `--create` (an existing journal's key is in its definition) and is
   refused otherwise.
 - `--token-key-file` selects the tokenizing admitter with that key; the CLI requires 32 or
-  more bytes (its own policy; the `Tokenizer` accepts 16). Without it the identity admitter
+  more bytes (its own policy; the `Tokenizer` accepts 16), and builds it with the fixed
+  domain `mcp` and key version `v1` (both persisted in the definition and compared at every
+  open, so a later change of either is a new journal; key identity is carried by
+  `token_check`). Without it the identity admitter
   runs and the server prints one stderr warning that identifiers and free text will reach
   disk as given.
 - `--create` builds the journal from `--chart` (a JSON array in the trace schema's

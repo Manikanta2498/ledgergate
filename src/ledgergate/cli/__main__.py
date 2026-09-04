@@ -231,11 +231,18 @@ def record_command(args: argparse.Namespace) -> int:
     import os
     import tempfile
 
-    from ledgergate.adapters.otel import SelfCheckError, UnreadableError, convert, self_check
+    from ledgergate.adapters.otel import (
+        MAX_FILE_BYTES,
+        SelfCheckError,
+        UnreadableError,
+        convert,
+        self_check,
+    )
     from ledgergate.trace.io import dump_trace
 
     try:
-        data = args.from_otel.read_bytes()
+        with args.from_otel.open("rb") as fh:
+            data = fh.read(MAX_FILE_BYTES + 1)  # read with a limit: the bound, not the file
     except OSError as exc:
         print(f"ledgergate record: cannot read: {type(exc).__name__}", file=sys.stderr)
         return 2
@@ -261,8 +268,8 @@ def record_command(args: argparse.Namespace) -> int:
         sys.stdout.write(text)
         return 0
     target: Path = args.out
-    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")
     try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()

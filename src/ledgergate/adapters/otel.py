@@ -259,17 +259,31 @@ class _Span:
         return (self.start, self.end, self.file_pos)
 
 
-_SPAN_WANTED = frozenset(
-    {
-        "gen_ai.operation.name",
-        "gen_ai.agent.name",
-        "gen_ai.tool.call.id",
-        "gen_ai.tool.name",
-        "gen_ai.tool.call.result",
-        "error.type",
-        *CONTENT_KEYS,
-    }
-)
+_OPERATION_ONLY = frozenset({"gen_ai.operation.name"})
+_READ_SET: dict[str | None, frozenset[str]] = {
+    # spec *OTLP/JSON encoding*: exactly the (span class, attribute) pairs the adapter reads
+    "inference": frozenset({"gen_ai.operation.name", *CONTENT_KEYS}),
+    "inference_error": frozenset({"gen_ai.operation.name", "gen_ai.input.messages"}),
+    TOOL_OPERATION: frozenset(
+        {
+            "gen_ai.operation.name",
+            "gen_ai.tool.call.id",
+            "gen_ai.tool.name",
+            "gen_ai.tool.call.result",
+            "error.type",
+        }
+    ),
+    AGENT_OPERATION: frozenset({"gen_ai.operation.name", "gen_ai.agent.name"}),
+    None: _OPERATION_ONLY,
+}
+
+
+def _span_class(operation: str | None, status: int) -> str | None:
+    if operation in INFERENCE_OPERATIONS:
+        return "inference_error" if status == 2 else "inference"
+    if operation in (TOOL_OPERATION, AGENT_OPERATION):
+        return operation
+    return None
 
 
 def _nanos(value: Any, where: Location, faults: _Faults) -> int | None:
@@ -346,9 +360,13 @@ def _collect_spans(
                     continue
                 scope = sc.get("scope", {})
                 label = "absent absent"
-                if isinstance(scope, dict):
+                if scope is not None and not isinstance(scope, dict):
+                    faults.add("shape", f"{sloc}.scope", "not an object")
+                elif isinstance(scope, dict):
                     n, v = scope.get("name", "absent"), scope.get("version", "absent")
-                    if isinstance(n, str) and isinstance(v, str):
+                    if _metadata_string(n, f"{sloc}.scope.name", faults) and _metadata_string(
+                        v, f"{sloc}.scope.version", faults
+                    ):
                         label = f"{n} {v}"
                 surl = sc.get("schemaUrl")
                 if surl is not None and not _metadata_string(surl, f"{sloc}.schemaUrl", faults):
@@ -426,29 +444,37 @@ def _span(s: Any, loc: Location, pos: int, faults: _Faults) -> _Span | None:
         if isinstance(code, bool) or not isinstance(code, int) or code not in (0, 1, 2):
             faults.add("shape", f"{loc}.status.code", "not 0, 1 or 2")
             return None
-    attrs = _attributes(s.get("attributes"), f"{loc}.attributes", faults, _SPAN_WANTED)
+    # pass 1: the operation name decides the span class and therefore the read set
+    first = _attributes(s.get("attributes"), f"{loc}.attributes", faults, _OPERATION_ONLY)
+    if first is None:
+        return None
+    operation = first.get("gen_ai.operation.name")
+    if operation is not None and not isinstance(operation, str):
+        faults.add("type", f"{loc}.attributes", "gen_ai.operation.name is not a string")
+        return None
+    klass = _span_class(operation, code)
+    attrs = _attributes(s.get("attributes"), f"{loc}.attributes", faults, _READ_SET[klass])
     if attrs is None:
         return None
-    # the event form of content: one copy per key across attribute and events
+    # the event form of content, inference spans only: one copy per key across forms
     events = s.get("events", [])
     if not isinstance(events, list):
         faults.add("shape", f"{loc}.events", "not an array")
         return None
+    content_keys = _READ_SET[klass] & frozenset(CONTENT_KEYS)
     details = 0
     for i, ev in enumerate(events):
         eloc = f"{loc}.events[{i}]"
         if not isinstance(ev, dict):
             faults.add("shape", eloc, "event is not an object")
             return None
-        if ev.get("name") != DETAILS_EVENT:
+        if ev.get("name") != DETAILS_EVENT or not content_keys:
             continue
         details += 1
         if details > 1:
             faults.add("one_copy", eloc, "more than one details event")
             return None
-        eattrs = _attributes(
-            ev.get("attributes"), f"{eloc}.attributes", faults, frozenset(CONTENT_KEYS)
-        )
+        eattrs = _attributes(ev.get("attributes"), f"{eloc}.attributes", faults, content_keys)
         if eattrs is None:
             return None
         for key, value in eattrs.items():
@@ -456,10 +482,6 @@ def _span(s: Any, loc: Location, pos: int, faults: _Faults) -> _Span | None:
                 faults.add("one_copy", eloc, f"{key} present as attribute and event")
                 return None
             attrs[key] = value
-    operation = attrs.get("gen_ai.operation.name")
-    if operation is not None and not isinstance(operation, str):
-        faults.add("type", f"{loc}.attributes", "gen_ai.operation.name is not a string")
-        return None
     span = _Span(
         loc,
         pos,
@@ -569,7 +591,7 @@ def convert(data: bytes) -> Outcome:
     docs = read_export(data)
     faults = _Faults()
     spans, services, resource_urls, scope_url = _collect_spans(docs, faults)
-    if not spans and not faults.findings:
+    if not spans:
         faults.add("spans", "[0]", "no spans")
     by_id: dict[str, _Span] = {}
     for sp in spans:
@@ -802,7 +824,8 @@ def convert(data: bytes) -> Outcome:
                 if etype is not None and not isinstance(etype, str):
                     faults.add("type", t.loc, "error.type is not a string")
                     continue
-                etype = etype or "otel.status_error"
+                if etype is None:
+                    etype = "otel.status_error"
                 emsg = t.attrs.get("__status_message", "")
                 if not (1 <= len(etype) <= 256) or len(emsg) > MAX_TEXT:
                     faults.add("bound", t.loc, "error.type or status message out of bounds")
@@ -816,7 +839,11 @@ def convert(data: bytes) -> Outcome:
             result_body = {"type": "tool_result", "call_id": cid, "ok": True, "result": resp}
             ev = _Event(s.start, s, 1, m, p, 2, result_body)
         else:
-            faults.add("result", call_ev.span.loc, f"no result observed for call {cid}")
+            faults.add(
+                "result",
+                f"{call_ev.span.loc}.gen_ai.output.messages[{call_ev.message}].parts[{call_ev.part}]",
+                "no result observed for this call",
+            )
             continue
         if "result" in ev.body and ev.body["result"] is not None:
             nodes, depth = payload_size(ev.body["result"])
@@ -839,13 +866,17 @@ def convert(data: bytes) -> Outcome:
     for i, e in enumerate(events):
         if e.body["type"] == "tool_result" and seq_of_call.get(e.body["call_id"], -1) > i:
             faults.add("pairing", e.span.loc, "tool_result ordered before its tool_call")
-    if not events and not faults.findings:
+    if not events:
         faults.add("events", "[0]", "the mapping produced no events")
     if len(events) > MAX_EVENTS:
         faults.add("bound", "events", f"more than {MAX_EVENTS} events")
 
     # step 5: top level
     agent_name = "unknown"
+    for a in agents:
+        name = a.attrs.get("gen_ai.agent.name")
+        if name is not None and not isinstance(name, str):
+            faults.add("type", a.loc, "gen_ai.agent.name is not a string")
     agent_names = sorted(
         {
             a.attrs["gen_ai.agent.name"]
@@ -853,8 +884,10 @@ def convert(data: bytes) -> Outcome:
             if isinstance(a.attrs.get("gen_ai.agent.name"), str)
         }
     )
-    roots = sorted((a for a in agents if not a.parent), key=lambda a: a.key) or sorted(
-        agents, key=lambda a: a.key
+    # root-most: the earliest-starting parentless one, ties by file position (spec step 5)
+    by_start = lambda a: (a.start, a.file_pos)  # noqa: E731
+    roots = sorted((a for a in agents if not a.parent), key=by_start) or sorted(
+        agents, key=by_start
     )
     if roots and isinstance(roots[0].attrs.get("gen_ai.agent.name"), str):
         agent_name = roots[0].attrs["gen_ai.agent.name"]
@@ -862,6 +895,18 @@ def convert(data: bytes) -> Outcome:
         agent_name = services[0]
     if not _ident(agent_name):
         faults.add("agent", "resourceSpans", "agent name is not an identifier")
+    metadata = {
+        "otel.semconv": SEMCONV,
+        "otel.scope_schema_url": scope_url or "absent",
+        "otel.resource_schema_urls": ";".join(sorted(resource_urls)) or "absent",
+        "otel.scope": ";".join(sorted({s.scope_label for s in spans if s.operation is not None}))
+        or "absent",
+        "otel.spans": str(len(spans)),
+        "otel.agents": str(len(agent_names)),
+    }
+    for key, value in metadata.items():
+        if len(value) > MAX_TEXT:
+            faults.add("metadata", f"metadata.{key}", "joined value over 1024 characters")
 
     if faults.findings:
         return Outcome(None, Report(faults.findings))
@@ -871,17 +916,7 @@ def convert(data: bytes) -> Outcome:
         "agent": {"name": agent_name},
         "started_at": _render(min(s.start for s in spans)),
         "ended_at": _render(max(s.end for s in spans)),
-        "metadata": {
-            "otel.semconv": SEMCONV,
-            "otel.scope_schema_url": scope_url or "absent",
-            "otel.resource_schema_urls": ";".join(sorted(resource_urls)) or "absent",
-            "otel.scope": ";".join(
-                sorted({s.scope_label for s in spans if s.operation is not None})
-            )
-            or "absent",
-            "otel.spans": str(len(spans)),
-            "otel.agents": str(len(agent_names)),
-        },
+        "metadata": metadata,
         "events": [{"seq": i + 1, "at": _render(e.ns), **e.body} for i, e in enumerate(events)],
     }
     return Outcome(doc, None)

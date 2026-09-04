@@ -438,3 +438,109 @@ def test_report_render_is_locations_only() -> None:
         [Finding("prefix", "[0].resourceSpans[0].scopeSpans[0].spans[2]", "diverges at position 1")]
     )
     assert r.render().splitlines()[1].startswith("  prefix at [0]")
+
+
+class TestImplementationReviewFindings:
+    def test_metadata_strings_are_bounded_and_grammar_checked_not_self_check_failures(self) -> None:
+        doc = _export(_two_turns())
+        doc["resourceSpans"][0]["scopeSpans"][0]["scope"]["name"] = "acme\nevil"
+        assert "metadata" in _findings(doc)
+        doc = _export(_two_turns())
+        doc["resourceSpans"][0]["scopeSpans"][0]["scope"]["name"] = "n" * 1100
+        assert "metadata" in _findings(doc)
+        doc = _export(_two_turns())
+        doc["resourceSpans"][0]["scopeSpans"][0]["scope"]["name"] = 5
+        assert "shape" in _findings(doc)
+        doc = _export(_two_turns())
+        second = copy.deepcopy(doc["resourceSpans"][0])
+        second["scopeSpans"][0]["spans"] = []
+        doc["resourceSpans"][0]["schemaUrl"] = "https://x/" + "a" * 600
+        second["schemaUrl"] = "https://y/" + "b" * 600
+        doc["resourceSpans"].append(second)
+        found = _findings(doc)
+        assert "metadata" in found  # the joined value, named by key, not exit 70
+
+    def test_read_set_is_per_span_class(self) -> None:
+        spans = _two_turns()
+        agent = _span(
+            "a" * 16,
+            None,
+            T0 - 1,
+            T0 + 100,
+            "invoke_agent",
+            [
+                _kv("gen_ai.agent.name", _s("bk")),
+                _kv("gen_ai.output.messages", {"bytesValue": "AA=="}),
+            ],
+        )
+        assert (
+            convert(_bytes(_export([agent, *spans]))).report is None
+        )  # content on invoke_agent is unread
+        spans = _two_turns()
+        spans[0]["attributes"].append(_kv("gen_ai.tool.call.id", _s("x")))
+        spans[0]["attributes"].append(_kv("gen_ai.tool.call.id", _s("y")))
+        assert convert(_bytes(_export(spans))).report is None  # not in a chat span's read set
+        spans = _two_turns()
+        spans[0]["status"] = {"code": 2}
+        spans[0]["attributes"][2] = _kv("gen_ai.output.messages", {"bytesValue": "AA=="})
+        found = _findings(_export(spans))
+        assert "shape" not in found  # an error span's output is unread
+
+    def test_agent_name_of_the_wrong_type_is_a_fault(self) -> None:
+        agent = _span(
+            "a" * 16,
+            None,
+            T0 - 1,
+            T0 + 100,
+            "invoke_agent",
+            [_kv("gen_ai.agent.name", {"intValue": "7"})],
+        )
+        assert "type" in _findings(_export([agent, *_two_turns()]))
+
+    def test_reports_do_not_echo_call_ids(self) -> None:
+        spans = _two_turns()
+        del spans[1]
+        del spans[1]  # no result at all
+        a1: dict[str, Any] = copy.deepcopy(A1)
+        a1["parts"][0]["id"] = "pay 4111-1111-1111-1111 to bob"
+        spans[0]["attributes"][2] = _kv("gen_ai.output.messages", _sj([a1]))
+        o = convert(_bytes(_export(spans)))
+        assert o.report is not None and "4111" not in o.report.render()
+        assert any(f.check == "result" for f in o.report.findings)
+
+    def test_empty_error_type_is_a_bound_fault(self) -> None:
+        spans = _two_turns()
+        spans[1]["status"] = {"code": 2}
+        spans[1]["attributes"].append(_kv("error.type", _s("")))
+        assert "bound" in _findings(_export(spans))
+
+    def test_root_most_agent_is_earliest_start_then_file_position(self) -> None:
+        a = _span(
+            "a" * 16,
+            None,
+            T0 - 1,
+            T0 + 100,
+            "invoke_agent",
+            [_kv("gen_ai.agent.name", _s("first-in-file"))],
+        )
+        b = _span(
+            "e" * 16,
+            None,
+            T0 - 1,
+            T0 + 1,
+            "invoke_agent",
+            [_kv("gen_ai.agent.name", _s("shorter"))],
+        )
+        o = convert(_bytes(_export([a, b, *_two_turns()])))
+        assert o.trace is not None and o.trace["agent"]["name"] == "first-in-file"
+
+    def test_out_into_a_missing_directory_is_exit_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps(_export(_two_turns())))
+        assert (
+            main(["record", "--from-otel", str(good), "--out", str(tmp_path / "nope" / "t.json")])
+            == 2
+        )
+        assert "cannot write" in capsys.readouterr().err

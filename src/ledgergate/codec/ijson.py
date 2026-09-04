@@ -39,6 +39,12 @@ class IJsonError(ValueError):
     """The input is JSON but not I-JSON, so it cannot be digested faithfully."""
 
 
+class IJsonRangeError(IJsonError):
+    """An integer outside the I-JSON safe range, by literal length or by value. A distinct
+    type so a caller can attach a hint (OTLP timestamps emitted as JSON numbers are the common
+    cause) without matching messages."""
+
+
 MAX_INT_LITERAL = 17  # sign included: 2**53 - 1 has 16 digits
 
 
@@ -47,10 +53,10 @@ def _int(text: str) -> int:
     # 4,300 digits, which would escape the decoder; anything longer than 17 characters is
     # outside the safe range regardless.
     if len(text) > MAX_INT_LITERAL:
-        raise IJsonError("integer literal is outside the I-JSON safe range")
+        raise IJsonRangeError("integer literal is outside the I-JSON safe range")
     value = int(text)
     if abs(value) > MAX_SAFE_INTEGER:
-        raise IJsonError(f"integer {text} is outside the I-JSON safe range")
+        raise IJsonRangeError(f"integer {text} is outside the I-JSON safe range")
     return value
 
 
@@ -74,18 +80,21 @@ def _pairs(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def require_ijson(value: Any) -> Any:
+def require_ijson(
+    value: Any, *, max_nodes: int = MAX_TRANSPORT_NODES, max_depth: int = MAX_TRANSPORT_DEPTH
+) -> Any:
     """Validate an already-decoded value (the surrogate rule cannot be a decode hook).
-    Returns the value unchanged."""
+    Returns the value unchanged. The bounds default to the transport class; a caller with a
+    stated reason (the OTel adapter reads whole exports) passes its own."""
     stack: list[tuple[Any, int]] = [(value, 1)]
     nodes = 0
     while stack:
         v, depth = stack.pop()
         nodes += 1
-        if nodes > MAX_TRANSPORT_NODES:
-            raise IJsonError(f"value exceeds {MAX_TRANSPORT_NODES} nodes")
-        if depth > MAX_TRANSPORT_DEPTH:
-            raise IJsonError(f"value nesting exceeds {MAX_TRANSPORT_DEPTH}")
+        if nodes > max_nodes:
+            raise IJsonError(f"value exceeds {max_nodes} nodes")
+        if depth > max_depth:
+            raise IJsonError(f"value nesting exceeds {max_depth}")
         if isinstance(v, str):
             try:
                 v.encode("utf-8")
@@ -103,7 +112,7 @@ def require_ijson(value: Any) -> Any:
             pass
         elif isinstance(v, int):
             if abs(v) > MAX_SAFE_INTEGER:
-                raise IJsonError(f"integer {v} is outside the I-JSON safe range")
+                raise IJsonRangeError(f"integer {v} is outside the I-JSON safe range")
         elif isinstance(v, float):
             if not math.isfinite(v):
                 raise IJsonError("number is not a finite double")
@@ -127,25 +136,58 @@ def payload_size(value: Any) -> tuple[int, int]:
     return nodes, deepest
 
 
-def loads(text: str | bytes) -> Any:
-    """Decode I-JSON. Raises :class:`IJsonError` for any RFC 7493 violation or transport
-    bound and ``json.JSONDecodeError`` for text that is not JSON at all; nothing else escapes,
-    whatever the input."""
+def _text(text: str | bytes) -> str:
     if isinstance(text, bytes):
         try:
-            text = text.decode("utf-8")
+            return text.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise IJsonError("input is not valid UTF-8") from exc
+    return text
+
+
+_DECODER = json.JSONDecoder(
+    parse_int=_int, parse_float=_float, parse_constant=_constant, object_pairs_hook=_pairs
+)
+
+
+def loads(
+    text: str | bytes,
+    *,
+    max_nodes: int = MAX_TRANSPORT_NODES,
+    max_depth: int = MAX_TRANSPORT_DEPTH,
+) -> Any:
+    """Decode I-JSON. Raises :class:`IJsonError` for any RFC 7493 violation or bound and
+    ``json.JSONDecodeError`` for text that is not JSON at all; nothing else escapes, whatever
+    the input. The bounds default to the transport class."""
     try:
-        value = json.loads(
-            text,
-            parse_int=_int,
-            parse_float=_float,
-            parse_constant=_constant,
-            object_pairs_hook=_pairs,
-        )
+        value = _DECODER.decode(_text(text))
     except RecursionError as exc:
         # The C scanner recurses per nesting level and gives up before the depth bound can
         # be counted; that is the depth refusal, not a crash.
-        raise IJsonError(f"value nesting exceeds {MAX_TRANSPORT_DEPTH}") from exc
-    return require_ijson(value)
+        raise IJsonError(f"value nesting exceeds {max_depth}") from exc
+    return require_ijson(value, max_nodes=max_nodes, max_depth=max_depth)
+
+
+def iter_concatenated(
+    text: str | bytes,
+    *,
+    max_nodes: int = MAX_TRANSPORT_NODES,
+    max_depth: int = MAX_TRANSPORT_DEPTH,
+) -> Iterable[Any]:
+    """Decode concatenated JSON: documents separated by whitespace (one document, pretty or
+    not, and JSON Lines are both this). Each document is validated under the bounds on its
+    own. Trailing non-whitespace raises ``json.JSONDecodeError``; a document that is not
+    I-JSON raises :class:`IJsonError`; the same two exceptions as :func:`loads`."""
+    s = _text(text)
+    pos = 0
+    end = len(s)
+    while True:
+        while pos < end and s[pos] in " \t\r\n":
+            pos += 1
+        if pos >= end:
+            return
+        try:
+            value, pos = _DECODER.raw_decode(s, pos)
+        except RecursionError as exc:
+            raise IJsonError(f"value nesting exceeds {max_depth}") from exc
+        yield require_ijson(value, max_nodes=max_nodes, max_depth=max_depth)

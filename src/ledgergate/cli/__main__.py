@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sqlite3
 import sys
@@ -30,10 +31,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     for name, help_text in (
         ("run", "run an agent against the corpus and score it"),
-        ("record", "record a cassette from a live agent run"),
         ("report", "render a result.json into markdown, junit or sarif"),
     ):
         sub.add_parser(name, help=help_text)
+
+    record = sub.add_parser(
+        "record",
+        help="convert an OpenTelemetry GenAI export into a v1 trace (docs/spec/otel-adapter.md)",
+    )
+    record.add_argument(
+        "--from-otel", required=True, type=Path, metavar="EXPORT", help="OTLP/JSON export file"
+    )
+    record.add_argument(
+        "--out", type=Path, help="write the trace here (atomically); default stdout"
+    )
+    record.set_defaults(handler=record_command)
 
     verify = sub.add_parser(
         "verify",
@@ -212,6 +224,74 @@ def journal_approve(args: argparse.Namespace) -> int:
         currency=None if money is None else money["currency"],
     )
     print(json.dumps(artefact.to_json(), sort_keys=True))
+    return 0
+
+
+def record_command(args: argparse.Namespace) -> int:
+    """Spec otel-adapter.md *CLI*: 0 trace, 1 report, 2 unreadable, 70 self-check failure."""
+    import os
+    import tempfile
+
+    from ledgergate.adapters.otel import (
+        MAX_FILE_BYTES,
+        SelfCheckError,
+        UnreadableError,
+        convert,
+        self_check,
+    )
+    from ledgergate.trace.io import dump_trace
+
+    try:
+        with args.from_otel.open("rb") as fh:
+            data = fh.read(MAX_FILE_BYTES + 1)  # read with a limit: the bound, not the file
+    except OSError as exc:
+        print(f"ledgergate record: cannot read: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    try:
+        outcome = convert(data)
+    except UnreadableError as exc:
+        hint = f" ({exc.hint})" if exc.hint else ""
+        print(f"ledgergate record: cannot read: {exc}{hint}", file=sys.stderr)
+        return 2
+    if outcome.report is not None:
+        print(outcome.report.render(), file=sys.stderr)
+        return 1
+    assert outcome.trace is not None
+    try:
+        trace = self_check(outcome.trace)
+    except SelfCheckError as exc:
+        print("ledgergate record: self-check failed (a bug):", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 70
+    text = dump_trace(trace)
+    if args.out is None:
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except OSError as exc:
+            # the interpreter flushes stdout again at exit and would override the status
+            # with 120 on a broken pipe: point fd 1 at /dev/null first
+            with contextlib.suppress(OSError):
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            print(f"ledgergate record: cannot write: {type(exc).__name__}", file=sys.stderr)
+            return 2
+        return 0
+    target: Path = args.out
+    tmp: str | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        Path(tmp).replace(target)
+    except OSError as exc:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                Path(tmp).unlink()
+        print(f"ledgergate record: cannot write --out: {type(exc).__name__}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -401,7 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.parse_args(["journal", "--help"])
         return 0
 
-    print(f"'{args.command}' is not implemented yet (milestones M5 and M6).", file=sys.stderr)
+    print(f"'{args.command}' is not implemented yet (milestone M6).", file=sys.stderr)
     return 2
 
 

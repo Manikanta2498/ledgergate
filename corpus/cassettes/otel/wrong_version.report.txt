@@ -1,0 +1,2 @@
+incomplete: 1 finding(s)
+  convention at scopeSpans: schemaUrl is not 1.37: https://opentelemetry.io/schemas/1.28.0

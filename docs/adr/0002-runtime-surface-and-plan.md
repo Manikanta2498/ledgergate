@@ -138,9 +138,12 @@ is withdrawn: the code accepts an email address as an account id.
 ### 6. OpenTelemetry GenAI is the primary *observational* adapter (M5)
 
 The journal is authoritative. An OTel adapter maps `gen_ai.*` spans to trace events,
-validates completeness against the v2 contract, and yields either a conforming trace or
-a report of exactly what was missing. It requires unsampled capture. Per-framework
-adapters, where they exist, are conveniences over it.
+validates completeness against the v1 contract (the ingest format; the result lifts to v2
+under the `legacy` grammar with no ledger evidence, and `verify` says so), and yields either
+a conforming trace or a report of exactly what was missing. It requires unsampled capture,
+which it can only partially observe. Per-framework adapters, where they exist, are
+conveniences over it. Correlating an observational trace with the journal-derived trace of
+the same run (by call id) is future work, not claimed by M5.
 
 ### 7. The corpus includes a red team (M6)
 
@@ -166,7 +169,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 | M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
 | M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, alongside the null policy; invariant registry; scorecard; `ledgergate verify` |
 | M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call. Designed in [docs/spec/mcp-runtime.md](../spec/mcp-runtime.md), which answers M4's first design questions before any transport code: the MCP mapping from `tools/call` to the journal's `Request` (call id, key and artefact extraction, malformed-call routing, `isError`), raw input through the project's I-JSON decoder before any generic decoder, one connection owner serializing calls, and segmentation of a journal whose whole-journal trace would outgrow the v2 event bound (answered as rollover: the journal refuses, under its write lock, any transaction that would take its derived trace past the bound, and `serve` reports that; cross-journal continuity is future work). |
-| M5 | OpenTelemetry GenAI observational adapter with completeness validation; thin wrappers; cassettes |
+| M5 | OpenTelemetry GenAI observational adapter with completeness validation and cassettes, designed in [docs/spec/otel-adapter.md](../spec/otel-adapter.md); thin framework wrappers are conveniences over it and are not part of M5 |
 | M6 | Scenario corpus and red-team corpus; SARIF/JUnit; drift table across model versions |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels |
 | M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation |

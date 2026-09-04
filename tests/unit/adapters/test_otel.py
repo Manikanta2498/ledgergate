@@ -544,3 +544,36 @@ class TestImplementationReviewFindings:
             == 2
         )
         assert "cannot write" in capsys.readouterr().err
+
+
+class TestSecondImplementationReview:
+    @pytest.mark.parametrize("sep", ["\u2028", "\x85", "\x9b", "\x1c"])
+    def test_unicode_line_separators_and_c1_controls_are_faults_in_metadata(self, sep: str) -> None:
+        doc = _export(_two_turns())
+        doc["resourceSpans"][0]["scopeSpans"][0]["scope"]["name"] = f"acme{sep}evil"
+        assert "metadata" in _findings(doc)
+
+    def test_non_genai_scopes_are_not_held_to_the_metadata_grammar(self) -> None:
+        doc = _export(_two_turns())
+        plain = _span("e" * 16, None, T0, T0 + 1, "http", [])
+        plain["attributes"] = []
+        http: dict[str, Any] = {"scope": {"name": "http\x01", "version": "1"}, "spans": [plain]}
+        doc["resourceSpans"][0]["scopeSpans"].append(http)
+        assert convert(_bytes(doc)).report is None
+
+    def test_a_result_after_its_presentation_is_a_fault(self) -> None:
+        spans = _two_turns()
+        spans[1]["endTimeUnixNano"] = str(
+            T0 + 40
+        )  # the tool span outlives the span that read its response
+        assert "result_after_presentation" in _findings(_export(spans))
+        spans[1]["endTimeUnixNano"] = str(T0 + 20)  # exactly at the presenter's start: allowed
+        assert convert(_bytes(_export(spans))).report is None
+
+    def test_error_type_and_tool_name_are_typed_unconditionally(self) -> None:
+        spans = _two_turns()
+        spans[1]["attributes"].append(_kv("error.type", {"intValue": "5"}))
+        assert "type" in _findings(_export(spans))  # status ok, still a type fault
+        spans = _two_turns()
+        spans[1]["attributes"][2] = _kv("gen_ai.tool.name", {"intValue": "5"})
+        assert "type" in _findings(_export(spans))

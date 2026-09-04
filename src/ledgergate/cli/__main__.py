@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sqlite3
 import sys
@@ -276,6 +277,8 @@ def record_command(args: argparse.Namespace) -> int:
             os.fsync(fh.fileno())
         Path(tmp).replace(target)
     except OSError as exc:
+        with contextlib.suppress(OSError, NameError):
+            Path(tmp).unlink()
         print(f"ledgergate record: cannot write --out: {type(exc).__name__}", file=sys.stderr)
         return 2
     return 0

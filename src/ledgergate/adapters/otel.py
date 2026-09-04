@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -29,7 +30,7 @@ from ledgergate.codec import (
     payload_size,
 )
 from ledgergate.ledger import InvalidIdentifierError
-from ledgergate.ledger.identifiers import require_identifier
+from ledgergate.ledger.identifiers import LINE_BREAKS, require_identifier
 from ledgergate.trace.models import Trace
 
 SEMCONV = "1.37"
@@ -50,7 +51,13 @@ _HEX16 = re.compile(r"[0-9a-fA-F]{16}")
 _HEX32 = re.compile(r"[0-9a-fA-F]{32}")
 _NANOS = re.compile(r"[0-9]{1,19}")
 _INT = re.compile(r"-?[0-9]{1,16}")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _one_line(value: str) -> bool:
+    """One line, no control characters: the identifier grammar's line-break set (every break
+    ``str.splitlines`` recognises) plus every Unicode ``Cc`` character (C0, DEL, C1)."""
+    return not any(ch in LINE_BREAKS or unicodedata.category(ch) == "Cc" for ch in value)
+
 
 Location = str
 
@@ -360,17 +367,15 @@ def _collect_spans(
                     continue
                 scope = sc.get("scope", {})
                 label = "absent absent"
+                scope_strings: list[tuple[Any, str]] = []
                 if scope is not None and not isinstance(scope, dict):
                     faults.add("shape", f"{sloc}.scope", "not an object")
                 elif isinstance(scope, dict):
                     n, v = scope.get("name", "absent"), scope.get("version", "absent")
-                    if _metadata_string(n, f"{sloc}.scope.name", faults) and _metadata_string(
-                        v, f"{sloc}.scope.version", faults
-                    ):
+                    scope_strings = [(n, f"{sloc}.scope.name"), (v, f"{sloc}.scope.version")]
+                    if isinstance(n, str) and isinstance(v, str):
                         label = f"{n} {v}"
                 surl = sc.get("schemaUrl")
-                if surl is not None and not _metadata_string(surl, f"{sloc}.schemaUrl", faults):
-                    surl = None
                 raw_spans = sc.get("spans", [])
                 if not isinstance(raw_spans, list):
                     faults.add("shape", f"{sloc}.spans", "not an array")
@@ -387,8 +392,14 @@ def _collect_spans(
                     span.scope_url = surl
                     span.scope_label = label
                     spans.append(span)
-                if genai_scope and surl is not None and surl not in scope_urls:
-                    scope_urls.append(surl)
+                if genai_scope:
+                    # only strings that reach metadata are held to its grammar (spec)
+                    for value, where in scope_strings:
+                        _metadata_string(value, where, faults)
+                    if surl is not None and not _metadata_string(surl, f"{sloc}.schemaUrl", faults):
+                        surl = None
+                    if surl is not None and surl not in scope_urls:
+                        scope_urls.append(surl)
     scope_url: str | None = None
     if len(scope_urls) > 1:
         faults.add("convention", "scopeSpans", "GenAI scopes carry differing schemaUrls")
@@ -405,7 +416,7 @@ def _metadata_string(value: Any, where: Location, faults: _Faults) -> bool:
     if not isinstance(value, str):
         faults.add("shape", where, "not a string")
         return False
-    if _CONTROL.search(value) or len(value) > MAX_TEXT:
+    if not _one_line(value) or len(value) > MAX_TEXT:
         faults.add("metadata", where, "line break, control character or over 1024 characters")
         return False
     return True
@@ -797,9 +808,15 @@ def convert(data: bytes) -> Outcome:
             continue
         by_call_tool[cid] = t
         tname = t.attrs.get("gen_ai.tool.name")
-        if tname is not None and (not isinstance(tname, str) or tname != calls[cid][2]):
+        if tname is not None and not isinstance(tname, str):
+            faults.add("type", t.loc, "gen_ai.tool.name is not a string")
+        elif tname is not None and tname != calls[cid][2]:
             faults.add("tool_name", t.loc, "gen_ai.tool.name differs from the call's name")
+        etype_any = t.attrs.get("error.type")
+        if etype_any is not None and not isinstance(etype_any, str):
+            faults.add("type", t.loc, "error.type is not a string")
     response_for: dict[str, tuple[_Span, int, int, Any]] = {}
+    presenters: dict[str, list[tuple[_Span, Location]]] = {}
     for s, m, p, cid, resp in sorted(responses, key=lambda r: (r[0].key, r[1], r[2])):
         ploc = f"{s.loc}.gen_ai.input.messages[{m}].parts[{p}]"
         if cid not in calls:
@@ -814,6 +831,7 @@ def convert(data: bytes) -> Outcome:
             )
             continue
         response_for.setdefault(cid, (s, m, p, resp))
+        presenters.setdefault(cid, []).append((s, ploc))
     for cid, (emitter, call_ev, _name) in calls.items():
         if cid in by_call_tool:
             t = by_call_tool[cid]
@@ -822,8 +840,7 @@ def convert(data: bytes) -> Outcome:
             if not ok:
                 etype = t.attrs.get("error.type")
                 if etype is not None and not isinstance(etype, str):
-                    faults.add("type", t.loc, "error.type is not a string")
-                    continue
+                    continue  # already faulted above
                 if etype is None:
                     etype = "otel.status_error"
                 emsg = t.attrs.get("__status_message", "")
@@ -850,6 +867,14 @@ def convert(data: bytes) -> Outcome:
             if nodes > MAX_PAYLOAD_NODES or depth > MAX_PAYLOAD_DEPTH:
                 faults.add("bound", ev.span.loc, "result exceeds the payload bound")
                 continue
+        # a response the model was shown must not postdate the result the trace records
+        for presenter, ploc in presenters.get(cid, []):
+            if ev.ns > presenter.start:
+                faults.add(
+                    "result_after_presentation",
+                    ploc,
+                    "result recorded after this response was presented",
+                )
         if (
             ev.ns == call_ev.ns
             and (ev.span.start, ev.span.end) == (emitter.start, emitter.end)

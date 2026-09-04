@@ -11,9 +11,11 @@ the journal one untyped JSON value, and encode what the journal committed. It ho
 state of its own that the journal does not hold, decides nothing the journal does not
 decide, and returns nothing the journal did not commit. ADR-0002's roadmap row for M4 names
 the four design questions this document answers before any transport code; every mechanism
-named here is built in M4 and tested. M4 changes three things outside the transport, each
-named where it applies: the journal gains `CapacityError` and refuses a non-identifier
-principal, and `codec.loads` is made total over its refusals (below).
+named here is built in M4 and tested. M4 changes four things outside the transport, each
+named where it applies and recorded in the document that owns it: the journal gains
+`CapacityError` and the two indexes that serve it (schema 6), the journal refuses a
+non-identifier principal when the object is built, and `codec.loads` is made total over its
+refusals (below).
 
 ## Terms
 
@@ -28,7 +30,13 @@ principal, and `codec.loads` is made total over its refusals (below).
   `ledgergate.journal` (`CapacityError`, `ConfigurationError`, `EffectError`,
   `IntegrityError`, or `JournalError` itself) and so a project identifier, never its
   message; for a `-32603` the fixed label `internal`. For a `-32700` the id kind is
-  `undecoded`. The stderr vocabulary is therefore closed by construction. Never the id itself (it is the
+  `undecoded`. The class name is emitted by mechanism, not by argument: `type(exc).__name__`
+  only if it is one of the five, else `JournalError`. The vocabulary is closed for the whole
+  process, not only for `handle`: the server installs a process-level handler so that any
+  exception not already mapped (in the mapping, in encoding the response, in writing stdout,
+  a broken pipe) writes only the fixed diagnostic `internal` to stderr, no traceback and no
+  message, and exits non-zero; Python's default hook, which prints the exception message,
+  never runs. Never the id itself (it is the
   caller's `call_id`, a class-2 identifier the journal tokenizes), never a caller string,
   never message content: stderr is routinely captured to disk and sits outside the redactor.
 - **Line bound**: a line longer than 16 MiB is refused before decoding (`-32700`, `id`
@@ -186,7 +194,10 @@ after `handle` returns. The journal therefore records the *committed response pa
 complete row and an undelivered response, and the client's retry with the same idempotency
 key is replayed from that row, with one exception: the write that fills the journal to
 capacity cannot be replayed there (a replay is an invocation), and its committed response is
-then readable only from the journal itself or its trace. No acknowledgement is recorded; the
+then readable only from the journal itself or its trace. The same rule covers a failure
+between commit and the write of the response line inside the server (an encoding fault, a
+broken pipe): the response is not written, the process exits per the stderr rule above, and
+the client's retry replays. No acknowledgement is recorded; the
 trace's `committed_response_matches_journal` row is named for exactly this.
 
 ## Failures the server cannot record
@@ -260,12 +271,15 @@ binding check, so two writers cannot both pass a stale count) the journal evalua
 `9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
 up to seven events, a write up to eight) and 1 for a message, nine being the number of
-ordinal slots and therefore an upper bound. The message count is served by a partial index
-on `events` where `invocation IS NULL` (schema 6), so the check is a pair of index lookups
-under the lock, not a scan. A
+ordinal slots and therefore an upper bound. SQLite has no O(1) row count: each `count(*)` is
+a walk of the smallest b-tree for its table, so the check is two such walks under the lock,
+linear in rows but over compact indexes, a partial index on `events` where `invocation IS
+NULL` for the message count and a one-column index on `invocations(disposition)` for the
+invocation count (schema 6); near the bound that is on the order of a few thousand pages
+per transaction, stated here so the cost is known rather than guessed. A
 transaction that would fail it is refused as an unrecorded `CapacityError` (a
-`JournalError`; added to `journal.md`'s list of failures the journal cannot record, which is
-the one `journal.md` change M4 makes beyond wording). At capacity `serve` still answers
+`JournalError`; added to `journal.md`'s list of failures the journal cannot record, beside
+the index and schema entries in its tables). At capacity `serve` still answers
 `initialize`, `ping` and `tools/list` (no journal transaction) and answers *every*
 `tools/call`, reads included, `-32000 CapacityError`. The remedy is a new journal: the
 operator creates one and points the server at it. An operation left `awaiting_approval` in

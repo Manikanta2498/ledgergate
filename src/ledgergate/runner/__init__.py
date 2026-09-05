@@ -273,6 +273,8 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
         f"agent-{i + 1}" for i in range(len(sc.agent.script or ()))
     ]
     for n, step in enumerate(steps):
+        if step.arguments is not None and not isinstance(step.arguments, dict):
+            raise CorpusError(f"{path}: step {names[n]}: arguments must be an object")
         if isinstance(step.approval, dict) and "sign" in step.approval:
             if sc.setup.approvals is None:
                 raise CorpusError(f"{path}: step {names[n]} signs but setup has no approvals")
@@ -281,10 +283,12 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
                 # the default fingerprint is the step's own command: it must decode
                 registry = dict(CURRENCIES)
                 registry.update((c.code, c.to_currency()) for c in sc.setup.currencies)
+                args = dict(step.arguments or {})
+                if "entry_ref" in args:  # resolved at run time; any identifier decodes here
+                    args["entry_id"] = "e-placeholder"
+                    del args["entry_ref"]
                 try:
-                    decode_command(
-                        {"kind": step.tool, "key": step.key, **(step.arguments or {})}, registry
-                    )
+                    decode_command({"kind": step.tool, "key": step.key, **args}, registry)
                 except (CodecError, LedgerError) as exc:
                     raise CorpusError(
                         f"{path}: step {names[n]} signs for a command that does not decode:"
@@ -383,14 +387,19 @@ def _apply(
             args["entry_id"] = entries[args.pop("entry_ref")]
             value["arguments"] = args
         if step.approval is not None:
-            value["approval"] = _artefact(journal, clock, sc, step, call_id, signed)
+            value["approval"] = _artefact(journal, clock, sc, step, value, signed)
         response = journal.handle(value)
         if response.ok and response.result is not None and "entry_id" in response.result:
             entries[call_id] = response.result["entry_id"]
 
 
 def _artefact(
-    journal: Journal, clock: PeekClock, sc: Scenario, step: Step, call_id: str, signed: list[str]
+    journal: Journal,
+    clock: PeekClock,
+    sc: Scenario,
+    step: Step,
+    value: dict[str, Any],
+    signed: list[str],
 ) -> Any:
     if not (isinstance(step.approval, dict) and "sign" in step.approval):
         return step.approval  # a literal artefact, passed as given (a forgery, usually)
@@ -402,10 +411,10 @@ def _artefact(
     if fingerprint is None:
         # as `ledgergate approve` derives it: the fingerprint of the command being presented
         registry = journal.definition.registry
-        doc = {"kind": step.tool, "key": step.key, **(step.arguments or {})}
+        doc = {"kind": step.tool, "key": step.key, **(value.get("arguments") or {})}
         fingerprint = command_fingerprint(decode_command(doc, registry))
     issued_at = clock.next
-    signed.append(call_id)
+    signed.append(value["call_id"])
     return issue(
         private,
         journal_id=spec.journal_id or journal.definition.journal_id,

@@ -281,6 +281,15 @@ def run_command(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
             return 0
+        if args.keep_traces is not None:
+            try:
+                args.keep_traces.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                print(
+                    f"ledgergate run: cannot write --keep-traces: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+                return 2
         result = run(
             corpus,
             traces=args.traces,
@@ -290,6 +299,9 @@ def run_command(args: argparse.Namespace) -> int:
         )
     except CorpusError as exc:
         print(f"ledgergate run: corpus fault: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"ledgergate run: cannot write --keep-traces: {type(exc).__name__}", file=sys.stderr)
         return 2
     written = _emit(dump_result(result), args.out, "run")
     return written or result.gate

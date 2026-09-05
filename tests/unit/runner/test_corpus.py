@@ -546,3 +546,55 @@ class TestThirdImplementationReview:
     def test_only_is_deduplicated_in_the_selection(self) -> None:
         r = run(load_corpus(CORPUS), only=("read-balance", "read-balance"))
         assert r.selection.only == ("read-balance",)
+
+
+class TestFourthImplementationReview:
+    def test_non_object_arguments_are_a_corpus_fault_not_a_traceback(self, tmp_path: Path) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "approval-granted.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["agent"]["script"].append(
+            {
+                "tool": "open_transaction",
+                "key": "zz",
+                "arguments": [1, 2],
+                "approval": {"sign": {"approval_id": "x", "expires_in_seconds": 10}},
+            }
+        )
+        p.write_text(yaml.safe_dump(doc))
+        with pytest.raises(CorpusError, match="arguments must be an object"):
+            load_corpus(root)
+
+    def test_keep_traces_failure_is_exit_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        blocker = tmp_path / "file"
+        blocker.write_text("x")
+        assert (
+            main(
+                [
+                    "run",
+                    "--corpus",
+                    str(CORPUS),
+                    "--only",
+                    "read-balance",
+                    "--keep-traces",
+                    str(blocker),
+                ]
+            )
+            == 2
+        )
+        assert "keep-traces" in capsys.readouterr().err
+
+    def test_a_signed_reverse_by_entry_ref_validates_and_runs(self, tmp_path: Path) -> None:
+        # the shipped policy never gates a reverse, so the artefact is `approval_not_applicable`;
+        # what matters is that the step validates and the fingerprint derives from the resolved id
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "post-and-reverse.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["agent"]["script"][1]["approval"] = {
+            "sign": {"approval_id": "r", "expires_in_seconds": 10}
+        }
+        p.write_text(yaml.safe_dump(doc))
+        r = run(load_corpus(root), only=("post-and-reverse",))
+        assert r.scenarios[0].status in ("pass", "fail") and r.scenarios[0].error is None

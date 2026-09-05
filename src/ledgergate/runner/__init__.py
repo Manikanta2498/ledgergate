@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -189,9 +189,14 @@ class _StrictLoader(yaml.SafeLoader):
     repeated `ledger_commands:` must not silently replace an expectation."""
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        self.flatten_mapping(node)  # merge keys resolve first, as SafeConstructor would
         seen: set[Any] = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, Hashable):
+                raise yaml.constructor.ConstructorError(
+                    None, None, "unhashable mapping key", key_node.start_mark
+                )
             if key in seen:
                 raise yaml.YAMLError(f"duplicate key {key!r}")
             seen.add(key)
@@ -201,7 +206,7 @@ class _StrictLoader(yaml.SafeLoader):
 def _yaml(path: Path) -> Any:
     try:
         return yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader)  # noqa: S506
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, yaml.YAMLError, UnicodeDecodeError) as exc:
         raise CorpusError(f"{path}: cannot read: {type(exc).__name__}: {exc}") from exc
     except RecursionError as exc:
         raise CorpusError(f"{path}: nesting too deep") from exc

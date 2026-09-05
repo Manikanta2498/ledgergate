@@ -101,11 +101,15 @@ def load_any(source: str | bytes | Path) -> TraceV2:
     """Load a v1 or v2 document as v2: a v1 document is lifted under the legacy grammar."""
     text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
     if isinstance(text, bytes):
-        text = text.decode("utf-8")
+        try:
+            text = text.decode("utf-8")
+        except UnicodeDecodeError:
+            raise TraceError(["/: not UTF-8"]) from None
     try:
         version = json.loads(text).get("schema_version")
-    except (ValueError, AttributeError) as exc:
-        raise TraceError([f"/: not a JSON object: {exc}"]) from None
+    except (ValueError, AttributeError, RecursionError) as exc:
+        # RecursionError: the stdlib scanner gives up on deep nesting before pydantic sees it
+        raise TraceError([f"/: not a JSON object: {type(exc).__name__}"]) from None
     if version == "1":
         return lift(load_trace(text))
     if version != "2":

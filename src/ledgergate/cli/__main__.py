@@ -301,7 +301,7 @@ def run_command(args: argparse.Namespace) -> int:
         print(f"ledgergate run: corpus fault: {exc}", file=sys.stderr)
         return 2
     except OSError as exc:
-        print(f"ledgergate run: cannot write --keep-traces: {type(exc).__name__}", file=sys.stderr)
+        print(f"ledgergate run: cannot write: {type(exc).__name__}", file=sys.stderr)
         return 2
     written = _emit(dump_result(result), args.out, "run")
     return written or result.gate

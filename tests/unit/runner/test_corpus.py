@@ -704,3 +704,50 @@ class TestSixthImplementationReview:
         p.write_text(text)
         with pytest.raises(CorpusError):
             load_corpus(root)
+
+
+class TestSeventhImplementationReview:
+    def test_complex_yaml_keys_non_utf8_and_merge_keys(self, tmp_path: Path) -> None:
+        for tail in ("? [1, 2]\n: 3\n", "? {a: 1}\n: 3\n"):
+            root = _copy_corpus(tmp_path)
+            p = root / "expectations" / "read-balance.yaml"
+            p.write_text(p.read_text() + tail)
+            with pytest.raises(CorpusError, match="unhashable"):
+                load_corpus(root)
+        root = _copy_corpus(tmp_path)
+        (root / "expectations" / "read-balance.yaml").write_bytes(b"\xff\xfe" + b"id: x\n")
+        with pytest.raises(CorpusError, match="UnicodeDecodeError"):
+            load_corpus(root)
+        # a merge key resolves as the standard constructor would (then extra=forbid decides)
+        root = _copy_corpus(tmp_path)
+        p = root / "expectations" / "read-balance.yaml"
+        doc = yaml.safe_load(p.read_text())
+        p.write_text(
+            "base: &b {invocations: 1}\n"
+            + yaml.safe_dump(doc).replace("invocations: 1\n", "<<: *b\n")
+        )
+        with pytest.raises(CorpusError, match="base"):  # `base` itself is the extra key
+            load_corpus(root)
+
+    def test_deep_supplied_trace_is_an_unreadable_trace_row(self, tmp_path: Path) -> None:
+        traces = tmp_path / "t"
+        traces.mkdir()
+        (traces / "read-balance.json").write_text("[" * 200_000)
+        r = run(load_corpus(CORPUS), only=("read-balance",), traces=traces)
+        assert r.scenarios[0].error is not None and r.scenarios[0].error.startswith(
+            "unreadable trace"
+        )
+        (traces / "read-balance.json").write_bytes(b"\xff\xfe{")
+        r = run(load_corpus(CORPUS), only=("read-balance",), traces=traces)
+        assert r.scenarios[0].error is not None and r.scenarios[0].error.startswith(
+            "unreadable trace"
+        )
+
+    def test_fractional_thresholds_are_refused_not_truncated(self, tmp_path: Path) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "read-balance.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["setup"]["policy"]["window_caps"][0]["amount"] = 1.5
+        p.write_text(yaml.safe_dump(doc))
+        with pytest.raises(CorpusError, match="whole number"):
+            load_corpus(root)

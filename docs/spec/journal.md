@@ -406,8 +406,9 @@ anything that references it, an operation before the invocation that references 
 4. **Resolve the key** in `operations` and write the invocation. The invocation's
    `requested_at` is the transaction's *single* clock reading, taken here and reused as the
    evaluation time of the approval checks (step 6) and of the `PolicyContext`; the only other
-   reading a call may take is the core's `posted_at`, after execution. A test pins this (an
-   artefact expiring at exactly `requested_at` is expired; one expiring later verifies):
+   reading a call may take is the core's `posted_at`, after execution. A test pins this through
+   `Journal.handle` (an artefact expiring at exactly the reading the write will take is
+   `approval_expired`; one expiring later is `approval_valid`):
    - Absent: insert `operations` (`key`, `fingerprint`, canonical `command`), then
      `invocations` (`new`, referencing it). If an approval was presented, an `approvals` row
      with check result `approval_not_applicable` follows the inbound event; the `PolicyContext`

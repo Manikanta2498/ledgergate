@@ -797,23 +797,38 @@ class TestNinthImplementationReview:
     def test_model_valid_traces_that_break_scoring_are_unreadable_rows(
         self, tmp_path: Path
     ) -> None:
+        # two refunds, so the second decision's aggregate is a non-zero witnessed value
+        root = _copy_corpus(tmp_path)
+        sp = root / "scenarios" / "correct" / "refund-within-cap.yaml"
+        sdoc = yaml.safe_load(sp.read_text())
+        second = json.loads(json.dumps(sdoc["agent"]["script"][0]))
+        second["key"] = "a-2"
+        second["arguments"]["money"]["amount"] = 500
+        for posting in second["arguments"]["entry"]["postings"]:
+            posting["money"]["amount"] = 500
+        sdoc["agent"]["script"].append(second)
+        sp.write_text(yaml.safe_dump(sdoc))
+        corpus_root = root
         traces = tmp_path / "t"
-        run(load_corpus(CORPUS), only=("refund-within-cap",), keep_traces=traces)
+        run(load_corpus(corpus_root), only=("refund-within-cap",), keep_traces=traces)
         base_doc = json.loads((traces / "refund-within-cap.json").read_text())
         decisions = [e for e in base_doc["events"] if e["type"] == "policy_decision"]
         agent_decision = decisions[-1]
-        assert agent_decision["context"]["aggregates"], "the refund decision carries an aggregate"
+        assert agent_decision["context"]["aggregates"] == {"applied.refund.USD.3600s": "4000"}
         # an evaluation time at the calendar's edge: valid to the model, arithmetic must not escape
         doc = json.loads(json.dumps(base_doc))
         d = [e for e in doc["events"] if e["type"] == "policy_decision"][-1]
         d["context"]["evaluated_at"] = "0001-01-01T00:00:00+00:00"
+        d["at"] = "0001-01-01T00:00:00+00:00"  # context_matches_decision pins these together
+        for k in d["context"]["aggregates"]:
+            d["context"]["aggregates"][k] = "0"  # the forgery: claim nothing was refunded
         (traces / "refund-within-cap.json").write_text(json.dumps(doc))
         out = tmp_path / "r.json"
         code = main(
             [
                 "run",
                 "--corpus",
-                str(CORPUS),
+                str(corpus_root),
                 "--only",
                 "refund-within-cap",
                 "--traces",
@@ -824,14 +839,19 @@ class TestNinthImplementationReview:
         )
         assert code == 1 and out.exists()
         row = load_result(out.read_text()).scenarios[0]
-        assert row.status in ("fail", "error")  # scored honestly or refused, never a traceback
+        # scored honestly: the forged aggregate at an edge time is still compared against
+        # what the trace witnesses (the window clamps to the calendar start, never to zero)
+        assert row.status == "fail" and row.scorecard is not None
+        assert any(
+            i.name == "decision_recomputes" and i.status == "fail" for i in row.scorecard.invariants
+        )
         # a window no set could define is a forged input, reported by the registry, not arithmetic
         doc = json.loads(json.dumps(base_doc))
         d = [e for e in doc["events"] if e["type"] == "policy_decision"][-1]
         ((_name, value),) = d["context"]["aggregates"].items()
         d["context"]["aggregates"] = {"applied.refund.USD.9999999999s": value}
         (traces / "refund-within-cap.json").write_text(json.dumps(doc))
-        r = run(load_corpus(CORPUS), only=("refund-within-cap",), traces=traces)
+        r = run(load_corpus(corpus_root), only=("refund-within-cap",), traces=traces)
         assert r.scenarios[0].status == "fail"
         assert r.scenarios[0].scorecard is not None
         assert any(
@@ -841,7 +861,68 @@ class TestNinthImplementationReview:
         # an eleven-digit window is outside the grammar altogether
         d["context"]["aggregates"] = {"applied.refund.USD.99999999999s": value}
         (traces / "refund-within-cap.json").write_text(json.dumps(doc))
-        r = run(load_corpus(CORPUS), only=("refund-within-cap",), traces=traces)
+        r = run(load_corpus(corpus_root), only=("refund-within-cap",), traces=traces)
         assert r.scenarios[0].error is not None and r.scenarios[0].error.startswith(
             "unreadable trace"
         )
+
+    def test_the_scoring_fallback_is_reached_and_writes_the_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ledgergate import runner
+
+        traces = tmp_path / "t"
+        run(load_corpus(CORPUS), only=("read-balance",), keep_traces=traces)
+
+        def boom(*_a: Any, **_k: Any) -> Any:
+            raise ArithmeticError("an exception outside every list")
+
+        monkeypatch.setattr(runner, "behavioural_digest", boom)
+        out = tmp_path / "r.json"
+        code = main(
+            [
+                "run",
+                "--corpus",
+                str(CORPUS),
+                "--only",
+                "read-balance",
+                "--traces",
+                str(traces),
+                "--out",
+                str(out),
+            ]
+        )
+        assert code == 1 and out.exists()
+        row = load_result(out.read_text()).scenarios[0]
+        assert row.status == "error" and row.error == "unreadable trace: ArithmeticError"
+
+    def test_skipped_and_journal_refused_are_produced_by_run(self, tmp_path: Path) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "read-balance.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["agent"] = {}  # a live-only scenario with no trace supplied
+        p.write_text(yaml.safe_dump(doc))
+        r = run(load_corpus(root), only=("read-balance",))
+        assert r.scenarios[0].status == "skipped" and r.gate == 3
+        # a step that passes validation but the journal refuses at run time: an effect-class
+        # fault the validator cannot foresee; here a policy configured with a currency the
+        # chart does not use is fine, so provoke it with an id the core's generator rejects
+        # via a duplicate key across setup and script (a replay is not a refusal), so use a
+        # non-identifier transaction id that admission records as invalid... none of those
+        # are refusals. Simulate the class directly instead.
+        from ledgergate import runner as runner_mod
+        from ledgergate.journal import JournalError
+
+        def refuse(*_a: Any, **_k: Any) -> Any:
+            raise JournalError("simulated")
+
+        import pytest as _pytest
+
+        mp = _pytest.MonkeyPatch()
+        try:
+            mp.setattr(runner_mod, "run_script", refuse)
+            r = run(load_corpus(CORPUS), only=("read-balance",))
+        finally:
+            mp.undo()
+        assert r.scenarios[0].status == "error"
+        assert r.scenarios[0].error == "journal refused: setup: JournalError"

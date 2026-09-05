@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from ledgergate.ledger import GENESIS_HASH, LedgerError
@@ -842,8 +842,10 @@ def _witnessed_aggregates(t: TraceV2) -> Callable[[str, str, str | None, datetim
         try:
             since = evaluated_at - timedelta(seconds=int(window[:-1]))
         except OverflowError:
-            # an evaluation time at the edge of the calendar: nothing can be in-window
-            return "0"
+            # the window reaches past the calendar's start: everything before this decision
+            # is in-window (clamping, never zero, so a forged aggregate at an edge time is
+            # still compared against what the trace witnesses)
+            since = datetime.min.replace(tzinfo=UTC)
         total = sum(
             amount
             for pos, k, c, s, amount, at in applied

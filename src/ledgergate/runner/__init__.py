@@ -836,10 +836,24 @@ def run(
             if problem is not None:
                 results.append(ScenarioResult(**base, status="error", source=source, error=problem))
                 continue
-            rows = _rows(t)
-            agent_rows = rows[len(sc.setup.before) :]
-            card = check(t)
-            expectations = score(sc, ex, t, agent_rows, card)
+            try:
+                rows = _rows(t)
+                agent_rows = rows[len(sc.setup.before) :]
+                card = check(t)
+                expectations = score(sc, ex, t, agent_rows, card)
+                trace_digest = behavioural_digest(t, agent_rows)
+            except (ValueError, LookupError, LedgerError) as exc:
+                # a document the model admitted but scoring cannot consume: an unreadable
+                # trace, never a traceback, so result.json is always written
+                results.append(
+                    ScenarioResult(
+                        **base,
+                        status="error",
+                        source=source,
+                        error=f"unreadable trace: {type(exc).__name__}",
+                    )
+                )
+                continue
             status: Literal["pass", "fail"] = (
                 "pass" if all(e.status == "pass" for e in expectations) else "fail"
             )
@@ -848,7 +862,7 @@ def run(
                     **base,
                     status=status,
                     source=source,
-                    trace_digest=behavioural_digest(t, agent_rows),
+                    trace_digest=trace_digest,
                     scorecard=_scorecard_doc(card),
                     expectations=tuple(expectations),
                     signed=signed,

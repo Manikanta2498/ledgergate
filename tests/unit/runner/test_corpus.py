@@ -751,3 +751,43 @@ class TestSeventhImplementationReview:
         p.write_text(yaml.safe_dump(doc))
         with pytest.raises(CorpusError, match="whole number"):
             load_corpus(root)
+
+
+class TestEighthImplementationReview:
+    def test_a_model_valid_trace_with_an_unsafe_integer_is_refused_at_load(
+        self, tmp_path: Path
+    ) -> None:
+        traces = tmp_path / "t"
+        run(load_corpus(CORPUS), only=("read-balance",), keep_traces=traces)
+        doc = json.loads((traces / "read-balance.json").read_text())
+        for e in doc["events"]:
+            if (
+                e["type"] in ("tool_call", "read_intent")
+                and e.get("arguments", {}).get("account") == "cash"
+            ):
+                e["arguments"]["pad"] = 10**20
+        (traces / "read-balance.json").write_text(json.dumps(doc))
+        r = run(load_corpus(CORPUS), only=("read-balance",), traces=traces)
+        assert r.scenarios[0].status == "error"
+        assert r.scenarios[0].error is not None and r.scenarios[0].error.startswith(
+            "unreadable trace"
+        )
+        # result.json is written whatever the trace did
+        out = tmp_path / "r.json"
+        assert (
+            main(
+                [
+                    "run",
+                    "--corpus",
+                    str(CORPUS),
+                    "--only",
+                    "read-balance",
+                    "--traces",
+                    str(traces),
+                    "--out",
+                    str(out),
+                ]
+            )
+            == 1
+        )
+        assert out.exists()

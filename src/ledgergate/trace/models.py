@@ -49,6 +49,7 @@ from pydantic import (
 from ledgergate.codec import (
     MAX_PAYLOAD_DEPTH,
     MAX_PAYLOAD_NODES,
+    MAX_SAFE_INTEGER,
     MAX_TAGS,
     MAX_TEXT,
     decode_command,
@@ -117,6 +118,10 @@ def _check_payload(value: JsonValue) -> JsonValue:
             raise ValueError(f"payload nesting exceeds {MAX_PAYLOAD_DEPTH}")
         if isinstance(node, float) and (node != node or node in (float("inf"), float("-inf"))):
             raise ValueError("payload contains a non-finite number, which JSON cannot carry")
+        if isinstance(node, int) and not isinstance(node, bool) and abs(node) > MAX_SAFE_INTEGER:
+            # I-JSON: an integer the JCS serializer (and every digest) cannot carry is not a
+            # payload a trace can hold; the journal already refuses it at admission
+            raise ValueError("payload contains an integer outside the I-JSON safe range")
         if isinstance(node, dict):
             stack.extend((v, depth + 1) for v in node.values())
         elif isinstance(node, list):

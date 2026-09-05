@@ -70,7 +70,9 @@ kind is a corpus fault, and a corpus with a fault scores nothing (exit `2`), per
 corpus is likewise exit `2`. YAML is loaded with `yaml.safe_load` only, then validated by a
 pydantic model with `extra="forbid"`: an unknown key is a corpus fault, so a typo cannot
 silently disable an expectation. Every scenario and expectation file is Apache-2.0 data
-with a `.license` sidecar, like the cassettes.
+with a `.license` sidecar, like the cassettes; the test signing key in a setup is published
+data by construction, which is why a journal created from a setup is for scoring only, and
+the CLI says so. PyYAML is already a runtime dependency.
 
 ### Scenario file
 

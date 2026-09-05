@@ -12,7 +12,7 @@ import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -65,7 +65,13 @@ from ledgergate.trace.models import (
     LedgerResultEvent,
     ToolCallEvent,
 )
-from ledgergate.trace.v2 import CommandIntent, InvocationResolution, PolicyDecision, TraceV2
+from ledgergate.trace.v2 import (
+    RUNTIME_RULES,
+    CommandIntent,
+    InvocationResolution,
+    PolicyDecision,
+    TraceV2,
+)
 
 Kind = Literal["correct", "red-team"]
 _ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -81,9 +87,15 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+MAX_EXPIRES_SECONDS = 10**9  # ~31 years: far inside datetime, far outside any scenario
+MAX_STARTED_AT = datetime(2200, 1, 1, tzinfo=UTC)
+"""A scenario clock starts before 2200: the stepping clock and any signed expiry then render
+without overflow (validated, so a bad value is a corpus fault, not a traceback)."""
+
+
 class SignSpec(_Strict):
     approval_id: str
-    expires_in_seconds: int = Field(ge=0)
+    expires_in_seconds: int = Field(ge=0, le=MAX_EXPIRES_SECONDS)
     approver: str | None = None
     journal_id: str | None = None
     fingerprint: str | None = None
@@ -91,9 +103,12 @@ class SignSpec(_Strict):
 
 
 class Step(_Strict):
-    tool: Any
-    arguments: Any = None
-    key: Any = None
+    """The journal's request shape: a step outside it is a corpus fault at validation, by the
+    model's types rather than by a list of checks."""
+
+    tool: str
+    arguments: dict[str, Any] | None = None
+    key: str | None = None
     approval: Any = None
 
     def request(self, call_id: str) -> dict[str, Any]:
@@ -219,13 +234,16 @@ def load_corpus(root: Path) -> Corpus:
         )
     if not scenarios:
         raise CorpusError(f"{root}: empty corpus")
-    entries = [
-        {
-            "path": p.relative_to(root).as_posix(),
-            "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
-        }
-        for p in sorted(files)
-    ]
+    try:
+        entries = [
+            {
+                "path": p.relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+            }
+            for p in sorted(files)
+        ]
+    except OSError as exc:
+        raise CorpusError(f"{root}: cannot read: {type(exc).__name__}") from exc
     return Corpus(root, tuple(scenarios), expectations, digest(entries))
 
 
@@ -236,6 +254,8 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
         raise CorpusError(f"{path}: {exc}") from exc
     if sc.setup.started_at.tzinfo is None:
         raise CorpusError(f"{path}: setup.started_at must carry a timezone")
+    if sc.setup.started_at >= MAX_STARTED_AT:
+        raise CorpusError(f"{path}: setup.started_at must be before {MAX_STARTED_AT.date()}")
     policy = _policy(sc.setup.policy, path)
     try:
         registry = dict(CURRENCIES)
@@ -273,12 +293,15 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
         f"agent-{i + 1}" for i in range(len(sc.agent.script or ()))
     ]
     for n, step in enumerate(steps):
-        if step.arguments is not None and not isinstance(step.arguments, dict):
-            raise CorpusError(f"{path}: step {names[n]}: arguments must be an object")
+        args_ = step.arguments or {}
+        if "entry_ref" in args_ and step.tool != "reverse":
+            raise CorpusError(f"{path}: step {names[n]}: entry_ref is only for reverse")
         if isinstance(step.approval, dict) and "sign" in step.approval:
             if sc.setup.approvals is None:
                 raise CorpusError(f"{path}: step {names[n]} signs but setup has no approvals")
             spec = _validate(SignSpec, step.approval["sign"], path)
+            if spec.key is None and step.key is None:
+                raise CorpusError(f"{path}: step {names[n]} signs for no key")
             if spec.fingerprint is None:
                 # the default fingerprint is the step's own command: it must decode
                 registry = dict(CURRENCIES)
@@ -406,7 +429,7 @@ def _artefact(
     assert sc.setup.approvals is not None
     spec = SignSpec.model_validate(step.approval["sign"])
     private = signing_key_from_bytes(unb64(sc.setup.approvals.signing_key))
-    key = spec.key or step.key
+    key = spec.key or step.key or ""  # a signed step without a key was refused at validation
     fingerprint = spec.fingerprint
     if fingerprint is None:
         # as `ledgergate approve` derives it: the fingerprint of the command being presented
@@ -527,7 +550,7 @@ def _rows(t: TraceV2) -> list[_Row]:
 def _produced_outcome(row: _Row) -> str | None:
     if row.resolution.disposition not in ("new", "approval") or row.decision is None:
         return None
-    if row.decision.matched_rule.startswith("runtime."):
+    if row.decision.matched_rule in RUNTIME_RULES:
         return None
     if row.decision.decision == "deny":
         return "denied"
@@ -729,6 +752,7 @@ def run(
                     )
                 )
                 continue
+            signed: tuple[str, ...] = ()
             if supplied is not None and supplied.exists():
                 source = "trace"
                 try:
@@ -769,6 +793,7 @@ def run(
                         )
                     )
                     continue
+                signed = tuple(_signed)
                 if keep_traces is not None:
                     keep_traces.mkdir(parents=True, exist_ok=True)
                     (keep_traces / f"{sc.id}.json").write_text(dump_v2(t), encoding="utf-8")
@@ -794,6 +819,7 @@ def run(
                     trace_digest=behavioural_digest(t, agent_rows),
                     scorecard=_scorecard_doc(card),
                     expectations=tuple(expectations),
+                    signed=signed,
                 )
             )
     return Result(

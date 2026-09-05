@@ -138,7 +138,7 @@ agent:
             - {account: cash, side: credit, money: {amount: 8000, currency: USD}}
 ```
 
-Each `before` and `script` step is the journal's own request shape (`journal.md`, *Admission
+Each `before` and `script` step is the journal's own request shape, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at` is before 2200 and a signed `expires_in_seconds` at most 10^9, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
 input and Request*): `tool`, `arguments`, optional `key`, optional `approval`; the runner adds
 `call_id` = `setup-<n>` or `agent-<n>` and calls `Journal.handle` directly, so the step is
 what `serve` would have handed the journal after its step-4 lifting, without the transport. A
@@ -149,7 +149,7 @@ the runner signs with the scenario's test key, `approval_id` as given (settable,
 the setup's, `journal_id`/`fingerprint`/`key` defaulting to the journal's and the pending
 operation's (as `ledgergate approve` derives them) and overridable to produce a mis-scoped
 artefact, `issued_at` = the runner clock's next reading (the runner owns a clock wrapper that exposes it without advancing) and `expires_at` = `issued_at + expires_in_seconds`; the journal reads the clock exactly once at the start of a write, before check 2 (`journal.md`, write protocol step 4: `requested_at` is the transaction's single clock reading and the evaluation time of the approval checks and the policy context; the second reading a call may take is the core's `posted_at`, after execution), and that reading is the value the wrapper peeked, so `issued_at == now` at check 2 and `expires_in_seconds: 0` makes `expires_at == now`, which check 2 treats as expired; a valid artefact uses a value of at least `10`, which the corpus does, and a test pins that a `0` is expired and a `10` verifies, so moving the clock read would fail the test rather than silently break the corpus. The
-result records which steps were signed.
+result records which steps were signed (`signed`, a list of step call ids).
 
 ### Expectations file
 

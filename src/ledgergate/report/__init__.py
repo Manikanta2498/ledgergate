@@ -62,6 +62,7 @@ class ScenarioResult(_Strict):
     trace_digest: str | None = None
     scorecard: ScorecardDoc | None = None
     expectations: tuple[ExpectationDoc, ...] = ()
+    signed: tuple[str, ...] = ()  # the script steps the runner signed artefacts for
     error: str | None = None
 
     @model_validator(mode="after")

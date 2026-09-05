@@ -562,7 +562,7 @@ class TestFourthImplementationReview:
             }
         )
         p.write_text(yaml.safe_dump(doc))
-        with pytest.raises(CorpusError, match="arguments must be an object"):
+        with pytest.raises(CorpusError, match="arguments: Input should be a valid dictionary"):
             load_corpus(root)
 
     def test_keep_traces_failure_is_exit_2(
@@ -598,3 +598,62 @@ class TestFourthImplementationReview:
         p.write_text(yaml.safe_dump(doc))
         r = run(load_corpus(root), only=("post-and-reverse",))
         assert r.scenarios[0].status in ("pass", "fail") and r.scenarios[0].error is None
+
+
+class TestFifthImplementationReview:
+    @pytest.mark.parametrize(
+        ("mutate", "needle"),
+        [
+            (lambda d: d["setup"]["before"].append({"tool": {"x": 1}, "key": "k"}), "tool"),
+            (lambda d: d["setup"]["before"].append({"tool": "post", "key": ["a"]}), "key"),
+            (lambda d: d["setup"].__setitem__("started_at", "9999-12-31T23:59:59Z"), "started_at"),
+            (
+                lambda d: d["agent"]["script"][1]["approval"]["sign"].__setitem__(
+                    "expires_in_seconds", 10**15
+                ),
+                "expires_in_seconds",
+            ),
+            (
+                lambda d: d["agent"]["script"][0]["arguments"].__setitem__("entry_ref", "setup-1"),
+                "only for reverse",
+            ),
+        ],
+    )
+    def test_every_step_shape_fault_is_a_corpus_fault(
+        self, tmp_path: Path, mutate: Any, needle: str
+    ) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "approval-granted.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["setup"]["before"] = [
+            {
+                "tool": "post",
+                "key": "setup-1",
+                "arguments": {
+                    "draft": {
+                        "postings": [
+                            {
+                                "account": "fees",
+                                "side": "debit",
+                                "money": {"amount": 5, "currency": "USD"},
+                            },
+                            {
+                                "account": "cash",
+                                "side": "credit",
+                                "money": {"amount": 5, "currency": "USD"},
+                            },
+                        ]
+                    }
+                },
+            }
+        ]
+        mutate(doc)
+        p.write_text(yaml.safe_dump(doc))
+        with pytest.raises(CorpusError, match=needle):
+            load_corpus(root)
+
+    def test_the_result_records_signed_steps(self) -> None:
+        r = run(load_corpus(CORPUS), only=("approval-granted", "read-balance"))
+        by_id = {s.id: s for s in r.scenarios}
+        assert by_id["approval-granted"].signed == ("agent-2",)
+        assert by_id["read-balance"].signed == ()

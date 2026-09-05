@@ -169,6 +169,14 @@
           ],
           "default": null
         },
+        "signed": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Signed",
+          "type": "array"
+        },
         "source": {
           "enum": [
             "script",

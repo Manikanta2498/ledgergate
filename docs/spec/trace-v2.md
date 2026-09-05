@@ -227,8 +227,7 @@ grammars, and the model requires its verdict and presentation to agree with the 
 A registry row (`decision_recomputes`) first recomputes every set-derived input in the
 persisted context from the trace itself: the subject from the command intent
 (`transaction_id`, or none), and each aggregate `applied.<kind>.<CCY>.<W>s` as the sum of the
-applied ledger commands of that kind, currency and subject produced by earlier intents whose
-requested time lies within the window ending at the evaluation time; a context whose subject
+applied ledger commands of that kind, currency and subject produced by earlier intents whose requested time lies within the window ending at the intent's requested time; a context whose subject
 or aggregates the trace does not support fails. It then re-runs the configuration over the
 context and requires the recorded decision, rule and reason; it needs a configuration for a set whose
 rules are wholly declarative (`ThresholdPolicySet`, `NullPolicySet`) and reports
@@ -248,9 +247,7 @@ resolves to typed evidence, on every disposition.
 
 Every event of an invocation, from its `tool_call` to its `tool_result`, carries the
 invocation's `requested_at` as `at` (`journal.md`, write step 4: one clock reading per
-invocation; a `ledger_result`'s `posted_at` is the core's separate reading). The model
-requires it, so a decision cannot be placed at a time of the document's choosing, and
-`decision_recomputes` keys its windows on the intent's time, never on a context field.
+invocation; a `ledger_result`'s `posted_at` is the core's separate reading). The model requires it, so a decision's time is its invocation's, and `decision_recomputes` keys its window on that `requested_at`, the same base the journal used (`journal.md`, step 4), never on a context field. Which times a supplied document's invocations carry is not verified: a document describing a run whose invocations were decades apart is a different run, not a forgery the registry can see (corpus.md, *Authenticity*).
 
 The boundary call *is* the intent, and the model checks it: an `invalid` call carries the
 empty arguments, no idempotency key and no presentation; a read call carries the read's tool

@@ -120,6 +120,9 @@ class Result(_Strict):
     def _consistent(self) -> Result:
         if summarize(list(self.scenarios)) != self.summary:
             raise ValueError("summary does not recount the scenarios")
+        ids = [s.id for s in self.scenarios]
+        if ids != sorted(set(ids)):
+            raise ValueError("scenario ids must be unique and sorted")
         return self
 
     @property

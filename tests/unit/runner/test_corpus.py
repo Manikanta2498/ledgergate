@@ -959,3 +959,21 @@ class TestNinthImplementationReview:
             mp.undo()
         assert r.scenarios[0].status == "error"
         assert r.scenarios[0].error == "journal refused: setup: JournalError"
+
+
+class TestResultModelRules:
+    def test_summary_recount_unique_ids_and_version_drift(self) -> None:
+        r = run(load_corpus(CORPUS), only=("read-balance", "retry-replays"))
+        doc = json.loads(dump_result(r))
+        doc["summary"]["pass"] = 5
+        with pytest.raises(ResultError, match="recount"):
+            load_result(json.dumps(doc))
+        doc = json.loads(dump_result(r))
+        doc["scenarios"].append(dict(doc["scenarios"][0]))
+        doc["summary"] = _resummarize(doc["scenarios"])
+        with pytest.raises(ResultError, match="unique and sorted"):
+            load_result(json.dumps(doc))
+        doc = json.loads(dump_result(r))
+        doc["ledgergate_version"] = "9.9.9"
+        with pytest.raises(ResultError, match="different ledgergate versions"):
+            drift(r, load_result(json.dumps(doc)))

@@ -110,6 +110,17 @@ class PolicySet(Protocol):
     def evaluate(self, context: PolicyContext) -> Decision: ...
 
 
+MAX_WINDOW_SECONDS = (
+    10**9
+)  # ~31 years; a window beyond it is a configuration fault, not an overflow
+
+
+def _bounded_window(seconds: int) -> int:
+    if not 0 < seconds <= MAX_WINDOW_SECONDS:
+        raise ValueError(f"window must be within 1..{MAX_WINDOW_SECONDS} seconds, got {seconds}")
+    return seconds
+
+
 def set_name(kind: type) -> str:
     """The module-qualified class name a configuration records: two sets with one name in
     two modules are two sets."""
@@ -273,7 +284,10 @@ class ThresholdPolicySet:
             ],
             window_caps=[
                 WindowCap(
-                    c["kind"], c["currency"], int(c["amount"]), timedelta(seconds=int(c["window"]))
+                    c["kind"],
+                    c["currency"],
+                    int(c["amount"]),
+                    timedelta(seconds=_bounded_window(int(c["window"]))),
                 )
                 for c in doc["window_caps"]
             ],

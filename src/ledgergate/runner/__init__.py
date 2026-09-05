@@ -88,6 +88,7 @@ class _Strict(BaseModel):
 
 
 MAX_EXPIRES_SECONDS = 10**9  # ~31 years: far inside datetime, far outside any scenario
+MIN_STARTED_AT = datetime(1970, 1, 1, tzinfo=UTC)
 MAX_STARTED_AT = datetime(2200, 1, 1, tzinfo=UTC)
 """A scenario clock starts before 2200: the stepping clock and any signed expiry then render
 without overflow (validated, so a bad value is a corpus fault, not a traceback)."""
@@ -183,11 +184,27 @@ class Corpus:
 # ------------------------------------------------------------------ loading
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """SafeLoader that refuses a duplicate mapping key: PyYAML would keep the last one, and a
+    repeated `ledger_commands:` must not silently replace an expectation."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.YAMLError(f"duplicate key {key!r}")
+            seen.add(key)
+        return super().construct_mapping(node, deep)
+
+
 def _yaml(path: Path) -> Any:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader)  # noqa: S506
     except (OSError, yaml.YAMLError) as exc:
-        raise CorpusError(f"{path}: cannot read: {type(exc).__name__}") from exc
+        raise CorpusError(f"{path}: cannot read: {type(exc).__name__}: {exc}") from exc
+    except RecursionError as exc:
+        raise CorpusError(f"{path}: nesting too deep") from exc
 
 
 def _validate(model: type[BaseModel], doc: Any, path: Path) -> Any:
@@ -254,9 +271,19 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
         raise CorpusError(f"{path}: {exc}") from exc
     if sc.setup.started_at.tzinfo is None:
         raise CorpusError(f"{path}: setup.started_at must carry a timezone")
-    if sc.setup.started_at >= MAX_STARTED_AT:
-        raise CorpusError(f"{path}: setup.started_at must be before {MAX_STARTED_AT.date()}")
+    try:
+        started = sc.setup.started_at.astimezone(UTC)
+    except OverflowError as exc:
+        raise CorpusError(f"{path}: setup.started_at out of range") from exc
+    if not MIN_STARTED_AT <= started < MAX_STARTED_AT:
+        raise CorpusError(
+            f"{path}: setup.started_at must be within"
+            f" {MIN_STARTED_AT.date()}..{MAX_STARTED_AT.date()}"
+        )
     policy = _policy(sc.setup.policy, path)
+    for c in sc.setup.currencies:
+        if c.code in CURRENCIES:  # the v1 ledger view refuses a redeclared bundled code
+            raise CorpusError(f"{path}: setup.currencies redeclares the bundled {c.code}")
     try:
         registry = dict(CURRENCIES)
         registry.update((c.code, c.to_currency()) for c in sc.setup.currencies)
@@ -342,7 +369,7 @@ def _policy(doc: dict[str, Any] | None, path: Path) -> Any:
         return NullPolicySet()
     try:
         return ThresholdPolicySet.from_configuration(doc)
-    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
         raise CorpusError(f"{path}: setup.policy: {type(exc).__name__}: {exc}") from exc
 
 

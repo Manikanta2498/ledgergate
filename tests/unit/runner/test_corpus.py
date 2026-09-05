@@ -657,3 +657,50 @@ class TestFifthImplementationReview:
         by_id = {s.id: s for s in r.scenarios}
         assert by_id["approval-granted"].signed == ("agent-2",)
         assert by_id["read-balance"].signed == ()
+
+
+class TestSixthImplementationReview:
+    @pytest.mark.parametrize(
+        ("mutate", "needle"),
+        [
+            (
+                lambda d: d["setup"].__setitem__("started_at", "0001-01-01T00:00:00+05:00"),
+                "started_at",
+            ),
+            (
+                lambda d: d["setup"]["policy"]["window_caps"][0].__setitem__("window", 10**30),
+                "setup.policy",
+            ),
+            (
+                lambda d: d["setup"].__setitem__("currencies", [{"code": "USD", "exponent": 3}]),
+                "redeclares",
+            ),
+        ],
+    )
+    def test_more_inputs_that_must_be_corpus_faults(
+        self, tmp_path: Path, mutate: Any, needle: str
+    ) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "read-balance.yaml"
+        doc = yaml.safe_load(p.read_text())
+        mutate(doc)
+        p.write_text(yaml.safe_dump(doc))
+        with pytest.raises(CorpusError, match=needle):
+            load_corpus(root)
+
+    def test_duplicate_yaml_keys_and_deep_nesting_are_corpus_faults(self, tmp_path: Path) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "expectations" / "read-balance.yaml"
+        p.write_text(p.read_text() + "ledger_commands: 5\nledger_commands: 0\n")
+        with pytest.raises(CorpusError, match="duplicate key"):
+            load_corpus(root)
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "read-balance.yaml"
+        text = p.read_text().replace(
+            "arguments:\n      account: cash",
+            "arguments:\n      account: " + "[" * 5000 + "]" * 5000,
+        )
+        assert text != p.read_text()
+        p.write_text(text)
+        with pytest.raises(CorpusError):
+            load_corpus(root)

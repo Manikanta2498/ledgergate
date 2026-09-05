@@ -64,7 +64,7 @@ corpus/
 must have an expectations file and every expectations file a scenario; an orphan of either
 kind is a corpus fault, and a corpus with a fault scores nothing (exit `2`), per ADR-0001
 ("fail with a clear message ... rather than silently scoring zero scenarios"). An empty
-corpus is likewise exit `2`. YAML is loaded with `yaml.safe_load` only, then validated by a pydantic model with `extra="forbid"`: an unknown key is a corpus fault, so a typo cannot silently disable an expectation; the chart must build (declared currencies, no duplicate account) and every step must be I-JSON, both checked at validation, since the journal would otherwise refuse them at run time. Every scenario and expectation file is Apache-2.0 data
+corpus is likewise exit `2`. YAML is loaded with `yaml.safe_load` only, then validated by a pydantic model with `extra="forbid"`: an unknown key is a corpus fault, so a typo cannot silently disable an expectation; the chart must build (declared currencies, no duplicate account, no redeclaration of a bundled currency code, which the v1 ledger view refuses) and every step must be I-JSON, both checked at validation, since the journal would otherwise refuse them at run time. YAML is loaded by a `SafeLoader` that refuses a duplicate mapping key (PyYAML would silently keep the last) and a nesting depth the parser cannot handle is a corpus fault, not a traceback. Every scenario and expectation file is Apache-2.0 data
 with a `.license` sidecar, like the cassettes; the test signing key in a setup is published
 data by construction, which is why a journal created from a setup is for scoring only, and
 the CLI says so. PyYAML is already a runtime dependency.
@@ -138,7 +138,7 @@ agent:
             - {account: cash, side: credit, money: {amount: 8000, currency: USD}}
 ```
 
-Each `before` and `script` step is the journal's own request shape, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at` is before 2200 and a signed `expires_in_seconds` at most 10^9, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
+Each `before` and `script` step is the journal's own request shape, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at`, normalised to UTC, lies in 1970..2200 and a signed `expires_in_seconds` is at most 10^9, and a policy window is 1..10^9 seconds by `from_configuration`'s own rule, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
 input and Request*): `tool`, `arguments`, optional `key`, optional `approval`; the runner adds
 `call_id` = `setup-<n>` or `agent-<n>` and calls `Journal.handle` directly, so the step is
 what `serve` would have handed the journal after its step-4 lifting, without the transport. A
@@ -244,6 +244,7 @@ DIR` writes the produced traces out for inspection.
      "trace_digest": "<behavioural digest, above>",
      "scorecard": {"status": "pass", "invariants": [{"name": "...", "status": "pass", "findings": [{"severity": "error", "intent_id": "intent-7", "message": "..."}]}, ...]},
      "expectations": [{"key": "outcomes", "status": "fail", "expected": {...}, "actual": {...}}],
+     "signed": ["agent-2"],
      "error": null}
   ]
 }

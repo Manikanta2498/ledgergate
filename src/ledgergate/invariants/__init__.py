@@ -748,7 +748,22 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
                     iid,
                 )
             )
+        defined = {
+            f"applied.{cap.kind}.{cap.currency}.{int(cap.window.total_seconds())}s"
+            for cap in policy.window_caps
+        }
         for name, recorded in c.aggregates.items():
+            if name not in defined:
+                # a name the configuration never defines is a forged input, not arithmetic
+                out.append(
+                    Finding(
+                        "decision_recomputes",
+                        "error",
+                        f"{iid}: aggregate {name} is not one the configuration defines",
+                        iid,
+                    )
+                )
+                continue
             expected_total = witnessed(iid, name, derived_subject, c.evaluated_at)
             if expected_total != recorded:
                 out.append(
@@ -824,7 +839,11 @@ def _witnessed_aggregates(t: TraceV2) -> Callable[[str, str, str | None, datetim
 
     def witnessed(iid: str, name: str, subject: str | None, evaluated_at: datetime) -> str:
         _prefix, kind, ccy, window = name.split(".")
-        since = evaluated_at - timedelta(seconds=int(window[:-1]))
+        try:
+            since = evaluated_at - timedelta(seconds=int(window[:-1]))
+        except OverflowError:
+            # an evaluation time at the edge of the calendar: nothing can be in-window
+            return "0"
         total = sum(
             amount
             for pos, k, c, s, amount, at in applied

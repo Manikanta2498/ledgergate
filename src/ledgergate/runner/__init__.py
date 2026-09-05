@@ -842,7 +842,7 @@ def run(
                 card = check(t)
                 expectations = score(sc, ex, t, agent_rows, card)
                 trace_digest = behavioural_digest(t, agent_rows)
-            except (ValueError, LookupError, LedgerError) as exc:
+            except Exception as exc:
                 # a document the model admitted but scoring cannot consume: an unreadable
                 # trace, never a traceback, so result.json is always written
                 results.append(

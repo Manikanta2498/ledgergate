@@ -134,7 +134,9 @@ class ContextApproval(_Strict):
 
 
 DecimalText = Annotated[str, Field(pattern=r"^-?[0-9]{1,40}$")]
-AggregateName = Annotated[str, Field(pattern=r"^applied\.[a-z_]+\.[A-Z]{3}\.[1-9][0-9]*s$")]
+AggregateName = Annotated[str, Field(pattern=r"^applied\.[a-z_]+\.[A-Z]{3}\.[1-9][0-9]{0,9}s$")]
+"""A window has at most ten digits: `ThresholdPolicySet` bounds a window to 1..10^9 seconds, so a
+longer name is one no set could have written, and the arithmetic over it cannot overflow."""
 
 
 class PolicyContextDoc(_Strict):

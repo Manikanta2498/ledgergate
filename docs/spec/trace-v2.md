@@ -254,7 +254,7 @@ the key that created it, since the fingerprint excludes the key by design.
 
 ## Limits
 
-Journal admission enforces every bound the trace has on what the journal admits or serves:
+Every payload integer is within the I-JSON safe range (2^53 - 1), a bound the JSON Schema artefact cannot express and the model enforces, like depth and nodes. An aggregate name's window has at most ten digits, the most a `ThresholdPolicySet` window (1..10^9 seconds) can have, so recomputation arithmetic over it cannot overflow. Journal admission enforces every bound the trace has on what the journal admits or serves:
 the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per entry,
 1,024 characters for descriptions, tag keys and values, 100 tags per entry, 65,536
 characters per message; `create` refuses a chart whose trial balance would not fit the

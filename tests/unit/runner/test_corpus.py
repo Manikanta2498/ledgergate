@@ -791,3 +791,57 @@ class TestEighthImplementationReview:
             == 1
         )
         assert out.exists()
+
+
+class TestNinthImplementationReview:
+    def test_model_valid_traces_that_break_scoring_are_unreadable_rows(
+        self, tmp_path: Path
+    ) -> None:
+        traces = tmp_path / "t"
+        run(load_corpus(CORPUS), only=("refund-within-cap",), keep_traces=traces)
+        base_doc = json.loads((traces / "refund-within-cap.json").read_text())
+        decisions = [e for e in base_doc["events"] if e["type"] == "policy_decision"]
+        agent_decision = decisions[-1]
+        assert agent_decision["context"]["aggregates"], "the refund decision carries an aggregate"
+        # an evaluation time at the calendar's edge: valid to the model, arithmetic must not escape
+        doc = json.loads(json.dumps(base_doc))
+        d = [e for e in doc["events"] if e["type"] == "policy_decision"][-1]
+        d["context"]["evaluated_at"] = "0001-01-01T00:00:00+00:00"
+        (traces / "refund-within-cap.json").write_text(json.dumps(doc))
+        out = tmp_path / "r.json"
+        code = main(
+            [
+                "run",
+                "--corpus",
+                str(CORPUS),
+                "--only",
+                "refund-within-cap",
+                "--traces",
+                str(traces),
+                "--out",
+                str(out),
+            ]
+        )
+        assert code == 1 and out.exists()
+        row = load_result(out.read_text()).scenarios[0]
+        assert row.status in ("fail", "error")  # scored honestly or refused, never a traceback
+        # a window no set could define is a forged input, reported by the registry, not arithmetic
+        doc = json.loads(json.dumps(base_doc))
+        d = [e for e in doc["events"] if e["type"] == "policy_decision"][-1]
+        ((_name, value),) = d["context"]["aggregates"].items()
+        d["context"]["aggregates"] = {"applied.refund.USD.9999999999s": value}
+        (traces / "refund-within-cap.json").write_text(json.dumps(doc))
+        r = run(load_corpus(CORPUS), only=("refund-within-cap",), traces=traces)
+        assert r.scenarios[0].status == "fail"
+        assert r.scenarios[0].scorecard is not None
+        assert any(
+            i.name == "decision_recomputes" and i.status == "fail"
+            for i in r.scenarios[0].scorecard.invariants
+        )
+        # an eleven-digit window is outside the grammar altogether
+        d["context"]["aggregates"] = {"applied.refund.USD.99999999999s": value}
+        (traces / "refund-within-cap.json").write_text(json.dumps(doc))
+        r = run(load_corpus(CORPUS), only=("refund-within-cap",), traces=traces)
+        assert r.scenarios[0].error is not None and r.scenarios[0].error.startswith(
+            "unreadable trace"
+        )

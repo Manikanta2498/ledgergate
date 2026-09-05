@@ -96,7 +96,7 @@ MAX_MESSAGE_CHARS = 65536  # the trace schema's bound on message content
 _BOUND = frozenset({"path", "clock", "ids", "admitter", "policy", "principal"})
 
 
-AGGREGATE_NAME = re.compile(r"applied\.[a-z_]+\.[A-Z]{3}\.[1-9][0-9]*s")
+AGGREGATE_NAME = re.compile(r"applied\.[a-z_]+\.[A-Z]{3}\.[1-9][0-9]{0,9}s")
 DECIMAL_TEXT = re.compile(r"-?[0-9]{1,40}")
 
 

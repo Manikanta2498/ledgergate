@@ -494,3 +494,55 @@ class TestImplementationReview:
             main(["run", "--corpus", str(CORPUS), "--only", "read-balance", "--out", str(out)]) == 0
         )
         assert main(["report", str(out), "--out", str(tmp_path / "no" / "x.md")]) == 2
+
+
+class TestThirdImplementationReview:
+    def test_a_sign_on_a_non_decodable_step_is_a_corpus_fault_on_both_paths(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        bad_step = {
+            "tool": "open_transaction",
+            "key": "zz",
+            "arguments": {"typo_field": 1},
+            "approval": {"sign": {"approval_id": "x", "expires_in_seconds": 10}},
+        }
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "approval-granted.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["agent"]["script"].append(bad_step)
+        p.write_text(yaml.safe_dump(doc))
+        with pytest.raises(CorpusError, match="does not decode"):
+            load_corpus(root)
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "approval-granted.yaml"
+        doc = yaml.safe_load(p.read_text())
+        doc["setup"]["before"].append(bad_step)
+        p.write_text(yaml.safe_dump(doc))
+        target = tmp_path / "j"
+        assert (
+            main(["run", "--corpus", str(root), "--emit-setup", "approval-granted", str(target)])
+            == 2
+        )
+        assert "does not decode" in capsys.readouterr().err
+        assert not target.exists() and not target.with_name("j.policy.json").exists()
+
+    def test_emit_setup_cleanup_is_unconditional(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ledgergate import runner
+
+        corpus = load_corpus(CORPUS)
+        sc = next(s for s in corpus.scenarios if s.id == "read-balance")
+
+        def boom(*_a: Any, **_k: Any) -> None:
+            raise RuntimeError("an exception outside every list")
+
+        monkeypatch.setattr(runner, "_apply", boom)
+        target = tmp_path / "j"
+        with pytest.raises(RuntimeError):
+            runner.emit_setup(sc, target)
+        assert not target.exists() and not target.with_name("j.policy.json").exists()
+
+    def test_only_is_deduplicated_in_the_selection(self) -> None:
+        r = run(load_corpus(CORPUS), only=("read-balance", "read-balance"))
+        assert r.selection.only == ("read-balance",)

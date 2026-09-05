@@ -20,7 +20,14 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ledgergate import __version__
-from ledgergate.codec import IJsonError, canonical_text, decode_command, digest, require_ijson
+from ledgergate.codec import (
+    CodecError,
+    IJsonError,
+    canonical_text,
+    decode_command,
+    digest,
+    require_ijson,
+)
 from ledgergate.invariants import Scorecard, check
 from ledgergate.journal import (
     IdentityAdmitter,
@@ -269,7 +276,20 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
         if isinstance(step.approval, dict) and "sign" in step.approval:
             if sc.setup.approvals is None:
                 raise CorpusError(f"{path}: step {names[n]} signs but setup has no approvals")
-            _validate(SignSpec, step.approval["sign"], path)
+            spec = _validate(SignSpec, step.approval["sign"], path)
+            if spec.fingerprint is None:
+                # the default fingerprint is the step's own command: it must decode
+                registry = dict(CURRENCIES)
+                registry.update((c.code, c.to_currency()) for c in sc.setup.currencies)
+                try:
+                    decode_command(
+                        {"kind": step.tool, "key": step.key, **(step.arguments or {})}, registry
+                    )
+                except (CodecError, LedgerError) as exc:
+                    raise CorpusError(
+                        f"{path}: step {names[n]} signs for a command that does not decode:"
+                        f" {type(exc).__name__}"
+                    ) from exc
         args = step.arguments if isinstance(step.arguments, dict) else {}
         if "entry_ref" in args:
             if "entry_id" in args:
@@ -422,16 +442,19 @@ def emit_setup(sc: Scenario, path: Path) -> None:
         raise CorpusError(f"{path}: exists; --emit-setup refuses to overwrite")
     if sc.scripted_only:
         raise CorpusError(f"{sc.id}: scripted_only; --emit-setup refuses it")
+    stage = "creating the setup"
     try:
         if sc.setup.policy is not None:
             policy_path.write_text(json.dumps(sc.setup.policy, indent=2, sort_keys=True) + "\n")
         journal, clock = _setup_journal(sc, str(path))
         try:
+            stage = "applying before"
             _apply(journal, clock, sc, sc.setup.before, "setup", {}, [])
         finally:
             journal.close()
-    except (JournalError, UnresolvedEntryRefError, OSError) as exc:
-        # nothing half-made survives, so a retry is not refused for the failure's own debris
+    except BaseException as exc:
+        # nothing half-made survives, whatever failed: the invariant is structural, not a
+        # list of exception classes; a retry is not refused for the failure's own debris
         for leftover in (
             path,
             policy_path,
@@ -439,9 +462,13 @@ def emit_setup(sc: Scenario, path: Path) -> None:
             path.with_name(path.name + "-shm"),
         ):
             leftover.unlink(missing_ok=True)
-        raise CorpusError(
-            f"{sc.id}: --emit-setup failed while applying before: {type(exc).__name__}"
-        ) from exc
+        if isinstance(
+            exc, JournalError | UnresolvedEntryRefError | OSError | CodecError | LedgerError
+        ):
+            raise CorpusError(
+                f"{sc.id}: --emit-setup failed while {stage}: {type(exc).__name__}"
+            ) from exc
+        raise
 
 
 # ------------------------------------------------------------------ scoring
@@ -673,7 +700,7 @@ def run(
                     )
                 )
                 continue
-            except (JournalError, OSError) as exc:
+            except (JournalError, OSError, CodecError, LedgerError) as exc:
                 results.append(
                     ScenarioResult(
                         **base,
@@ -723,7 +750,7 @@ def run(
                         )
                     )
                     continue
-                except JournalError as exc:
+                except (JournalError, OSError, CodecError, LedgerError) as exc:
                     results.append(
                         ScenarioResult(
                             **base,
@@ -764,7 +791,7 @@ def run(
         ledgergate_version=__version__,
         corpus_digest=corpus.digest,
         summary=summarize(results),
-        selection=Selection(only=tuple(sorted(only)), kind=kind),
+        selection=Selection(only=tuple(sorted(set(only))), kind=kind),
         scenarios=tuple(results),
     )
 

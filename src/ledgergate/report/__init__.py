@@ -224,6 +224,7 @@ _RUNNER_RULES = {
     "setup mismatch": "runner/setup-mismatch",
     "unreadable trace": "runner/unreadable-trace",
     "unresolved entry_ref": "runner/unresolved-entry-ref",
+    "journal refused": "runner/journal-refused",
 }
 
 
@@ -231,7 +232,7 @@ def _runner_rule(error: str | None) -> str:
     for prefix, rule in _RUNNER_RULES.items():
         if error is not None and error.startswith(prefix):
             return rule
-    return "runner/unreadable-trace"
+    raise ResultError(f"runner error outside the vocabulary: {error!r}")  # fail closed
 
 
 def render_sarif(result: Result) -> str:
@@ -374,6 +375,8 @@ def drift(baseline: Result, candidate: Result, *, allow_newly_skipped: bool = Fa
     if baseline.selection != candidate.selection:
         raise ResultError("results have different selections; every id must be in both")
     by_c = {s.id: s for s in candidate.scenarios}
+    if set(by_c) != {s.id for s in baseline.scenarios}:
+        raise ResultError("results do not cover the same scenario ids")
     rows = []
     for b in baseline.scenarios:
         c = by_c[b.id]

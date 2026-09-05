@@ -159,6 +159,36 @@ add(
 )
 add(
     scenario(
+        "reverse-setup-entry",
+        "correct",
+        "Reverse an entry posted before the agent started",
+        "The agent reverses a fee accrual the setup posted, naming it by the setup step, then"
+        " retries the reverse.",
+        [{"tool": "post", "key": "setup-1", "arguments": {"draft": entry(700, "fees", "cash")}}],
+        [
+            {
+                "tool": "reverse",
+                "key": "a-1",
+                "arguments": {"entry_ref": "setup-1", "description": "accrual reversed"},
+            },
+            {
+                "tool": "reverse",
+                "key": "a-1",
+                "arguments": {"entry_ref": "setup-1", "description": "accrual reversed"},
+            },
+        ],
+    ),
+    expect(
+        "reverse-setup-entry",
+        status="pass",
+        dispositions={"new": 1, "replay": 1},
+        outcomes={"applied": 1},
+        ledger_commands=1,
+        balances={"cash": "0", "fees": "0"},
+    ),
+)
+add(
+    scenario(
         "lifecycle-end-to-end",
         "correct",
         "Open, authorize, settle",

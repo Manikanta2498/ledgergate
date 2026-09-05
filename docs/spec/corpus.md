@@ -64,9 +64,7 @@ corpus/
 must have an expectations file and every expectations file a scenario; an orphan of either
 kind is a corpus fault, and a corpus with a fault scores nothing (exit `2`), per ADR-0001
 ("fail with a clear message ... rather than silently scoring zero scenarios"). An empty
-corpus is likewise exit `2`. YAML is loaded with `yaml.safe_load` only, then validated by a
-pydantic model with `extra="forbid"`: an unknown key is a corpus fault, so a typo cannot
-silently disable an expectation. Every scenario and expectation file is Apache-2.0 data
+corpus is likewise exit `2`. YAML is loaded with `yaml.safe_load` only, then validated by a pydantic model with `extra="forbid"`: an unknown key is a corpus fault, so a typo cannot silently disable an expectation; the chart must build (declared currencies, no duplicate account) and every step must be I-JSON, both checked at validation, since the journal would otherwise refuse them at run time. Every scenario and expectation file is Apache-2.0 data
 with a `.license` sidecar, like the cassettes; the test signing key in a setup is published
 data by construction, which is why a journal created from a setup is for scoring only, and
 the CLI says so. PyYAML is already a runtime dependency.
@@ -206,7 +204,7 @@ ledgergate run --corpus PATH --emit-setup ID PATH
 3. Check setup binding; then run `invariants.check`; then each expectation. A scenario is
    `pass` iff binding holds, the scorecard status equals the expected one (or `pass` when
    unspecified), and every expectation holds; `fail` otherwise, with every failing
-   expectation listed (not only the first); `error` if the trace could not be loaded or bound, or a script's `entry_ref` could not be resolved at run time (no trace exists then, and `--keep-traces` writes nothing for it); `skipped` if none was available.
+   expectation listed (not only the first); `error` if the trace could not be loaded or bound, a script's `entry_ref` could not be resolved at run time, or the journal refused a step for a reason validation could not foresee (no trace exists then, and `--keep-traces` writes nothing for it); `skipped` if none was available.
 4. Write `result.json` (stdout by default), exit `0` if every scored scenario passed, `1` if
    any failed or errored, `3` if nothing was scored (every scenario skipped), `2` for a
    corpus fault.
@@ -252,7 +250,7 @@ DIR` writes the produced traces out for inspection.
 ```
 
 For an `error` or `skipped` scenario `trace_digest` and `scorecard` are `null` and
-`expectations` is empty; `error` carries the runner's message (`setup mismatch`, `unreadable trace: <class>`, `unresolved entry_ref`), never trace content.
+`expectations` is empty; `error` carries the runner's message from a closed vocabulary (`setup mismatch: ...`, `unreadable trace: <class>`, `unresolved entry_ref: <step>`, `journal refused: setup|script: <class>` for a journal fault such as an effect or configuration error the validator could not foresee), never trace content; a renderer that meets a message outside it fails closed (exit `2`).
 
 `expected`/`actual` carry the expectation's own values (counts, rule names, balances), never message text or arguments; `scorecard` is `Scorecard.as_json()` as `verify --json` already publishes it, whose finding messages name intent ids, digests, rule names, identifiers the journal admitted (transaction, account, entry ids and idempotency keys, raw under the identity admitter the corpus mandates) and the core's own error messages on a replay divergence; never argument free text (descriptions, tags) or message content. For `source: script` the result is therefore as safe to publish as the corpus, since every identifier in it is corpus data. For `source: trace` the identifiers are whatever the adopter's agent typed (an identifier may be an email or a card number; the journal warns about exactly that), and the result carries them as the trace does; the adopter owns that surface, and the document says `source` so a reader knows which case they hold.
 
@@ -265,7 +263,7 @@ ledgergate report --drift baseline.json candidate.json [--format md|json] [--out
 
 - **md**: a table of scenarios (id, kind, status, failing expectations) and the summary.
 - **junit**: one `<testsuite>` per kind, one `<testcase>` per scenario (`classname` = the kind, `time="0"`, since nothing here is timed); `fail` is a `<failure>` whose message lists the failing expectations; `error` an `<error>` with the error text; `skipped` a `<skipped>`. Suite attributes `tests`, `failures`, `errors`, `skipped` equal the summary's for that kind, `failures` and `errors` counted separately.
-- **sarif** (2.1.0): one run, tool `ledgergate` with `version` = `ledgergate_version`; `rules` = the union of every invariant name present in the document's scorecards, one rule per expectation key (`expectation/<key>`), and three runner rules (`runner/setup-mismatch`, `runner/unreadable-trace`, `runner/unresolved-entry-ref`); one `result` per failing invariant finding (rule = the invariant, message = the finding, `level: error`, a logical location naming the intent id when the finding has one, else the scenario id), per failing expectation (rule = `expectation/<key>`, message = expected vs actual, `level: error`), and per `error` scenario (the runner rule, `level: error`); a `skipped` scenario is a `notification` in `invocations[0].toolExecutionNotifications` (`level: note`), not a result. `pass` produces no results, which is what SARIF consumers treat as clean. The artefact location is `corpus/scenarios/<kind>/<id>.yaml` with `uriBaseId: %SRCROOT%`.
+- **sarif** (2.1.0): one run, tool `ledgergate` with `version` = `ledgergate_version`; `rules` = the union of every invariant name present in the document's scorecards, one rule per expectation key (`expectation/<key>`), and four runner rules (`runner/setup-mismatch`, `runner/unreadable-trace`, `runner/unresolved-entry-ref`, `runner/journal-refused`); one `result` per failing invariant finding (rule = the invariant, message = the finding, `level: error`, a logical location naming the intent id when the finding has one, else the scenario id), per failing expectation (rule = `expectation/<key>`, message = expected vs actual, `level: error`), and per `error` scenario (the runner rule, `level: error`); a `skipped` scenario is a `notification` in `invocations[0].toolExecutionNotifications` (`level: note`), not a result. `pass` produces no results, which is what SARIF consumers treat as clean. The artefact location is `corpus/scenarios/<kind>/<id>.yaml` with `uriBaseId: %SRCROOT%`.
 - **drift**: a table keyed by scenario id over two results *of the same corpus digest* (a differing digest is exit `2`: comparing different corpora is noise, not drift; an unreadable result document is exit `2` for every `report` form):
   `regressed` (pass → fail or error), `fixed` (fail or error → pass), `unchanged` (the same status, `skipped` included), `changed` (fail ↔ error), `newly_skipped` (scored → skipped), `newly_scored` (skipped → scored), exhaustive over the four statuses; two results must also carry the same `selection` (`only` sorted, `kind`), else exit `2`, so every id is present in both and no scenario falls outside the buckets; plus, for scenarios scored in both, whether the trace digest changed
   (`same trace` means the agent did exactly the same thing; a changed digest with the same

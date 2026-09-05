@@ -65,8 +65,8 @@ durable journal, so a process can be restarted and answer a retried key exactly 
 the first time; the tokenizing, redacting admitter, so no caller identifier or free text
 has to reach disk; the policy layer with signed, single-use approvals; trace v2 derived
 from the journal; the invariant registry behind `ledgergate verify`; the stdio MCP runtime
-`ledgergate serve`; the OpenTelemetry GenAI adapter behind `ledgergate record`; and the corpus of twenty-one
-scripted scenarios, eight correct and thirteen red-team, that `ledgergate run` scores into
+`ledgergate serve`; the OpenTelemetry GenAI adapter behind `ledgergate record`; and the corpus of twenty-two
+scripted scenarios, nine correct and thirteen red-team, that `ledgergate run` scores into
 `result.json` and `ledgergate report` renders. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
@@ -242,7 +242,7 @@ results by behavioural digest; a regression or a vanished trace fails the gate.
 ```text
 $ ledgergate run --corpus corpus --out result.json && ledgergate report result.json
 # LedgerGate corpus result
-**21 pass, 0 fail, 0 error, 0 skipped** of 21.
+**22 pass, 0 fail, 0 error, 0 skipped** of 22.
 ```
 
 **The OpenTelemetry adapter (M5).** `ledgergate record --from-otel export.json` turns an

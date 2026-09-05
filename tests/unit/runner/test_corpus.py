@@ -24,6 +24,7 @@ from ledgergate.report import (
     render_sarif,
 )
 from ledgergate.runner import CorpusError, load_corpus, run
+from ledgergate.trace import dump_v2, load_any
 
 CORPUS = Path("corpus")
 
@@ -64,18 +65,14 @@ class TestShippedCorpus:
             named = (
                 set(ex.dispositions or {}) | set(ex.outcomes or {}) | set(ex.matched_rules or {})
             )
-            assert (
-                named
-                & {
-                    "invalid",
-                    "denied",
-                    "rejected",
-                    "conflict",
-                    "awaiting_approval",
-                    "runtime.approval_rejected",
-                }
-                or ex.matched_rules
-            ), sc.id
+            assert named & {
+                "invalid",
+                "denied",
+                "rejected",
+                "conflict",
+                "awaiting_approval",
+                "runtime.approval_rejected",
+            }, sc.id
 
     def test_traces_differ_between_runs_but_behavioural_digests_do_not(
         self, tmp_path: Path
@@ -100,51 +97,61 @@ class TestShippedCorpus:
 
 
 class TestLivePath:
-    def test_emit_setup_then_serve_then_score_gives_the_same_digest(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "scenario_id", ["retry-replays", "post-and-reverse", "reverse-setup-entry"]
+    )
+    def test_emit_setup_then_serve_then_score_gives_the_same_digest(
+        self, tmp_path: Path, scenario_id: str
+    ) -> None:
+        """The live path's evidence: the scenario's own script replayed through serve under a
+        system clock and random ids, entry_ref resolved against that journal, scores pass with
+        the scripted digest; post-and-reverse covers reverse by agent position, and
+        reverse-setup-entry a reverse of a setup entry that is then *replayed* (no ledger pair)."""
         corpus = load_corpus(CORPUS)
-        sc = next(s for s in corpus.scenarios if s.id == "retry-replays")
+        sc = next(s for s in corpus.scenarios if s.id == scenario_id)
         journal = tmp_path / "live.journal"
         assert main(["run", "--corpus", str(CORPUS), "--emit-setup", sc.id, str(journal)]) == 0
         policy = journal.with_name(journal.name + ".policy.json")
         assert policy.exists()
-        # the agent: the scenario's own script, replayed through serve under a system clock
-        lines = []
+        entries: dict[str, str] = {}
+        for call, result in _pairs(load_any(_derive(journal))):
+            if result is not None:
+                entries[call] = result
+        args_cmd = [
+            sys.executable,
+            "-m",
+            "ledgergate.cli",
+            "serve",
+            "--journal",
+            str(journal),
+            "--policy",
+            str(policy),
+        ]
         for n, step in enumerate(sc.agent.script or (), start=1):
             args = dict(step.arguments or {})
+            if "entry_ref" in args:
+                args["entry_id"] = entries[args.pop("entry_ref")]
             if step.key is not None:
                 args["idempotency_key"] = step.key
-            lines.append(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": n,
-                        "method": "tools/call",
-                        "params": {"name": step.tool, "arguments": args},
-                    }
-                )
+            line = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": n,
+                    "method": "tools/call",
+                    "params": {"name": step.tool, "arguments": args},
+                }
             )
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "ledgergate.cli",
-                "serve",
-                "--journal",
-                str(journal),
-                "--policy",
-                str(policy),
-            ],
-            input=("\n".join(lines) + "\n").encode(),
-            capture_output=True,
-            check=False,
-        )
-        assert proc.returncode == 0, proc.stderr
+            proc = subprocess.run(
+                args_cmd, input=(line + "\n").encode(), capture_output=True, check=False
+            )
+            assert proc.returncode == 0, proc.stderr
+            response = json.loads(proc.stdout)["result"]["structuredContent"]
+            result = response.get("result")
+            if response.get("ok") and isinstance(result, dict) and "entry_id" in result:
+                entries[f"agent-{n}"] = result["entry_id"]
         traces = tmp_path / "traces"
         traces.mkdir()
-        assert main(["verify", str(journal), "--emit-trace", str(traces / f"{sc.id}.json")]) in (
-            0,
-            3,
-        )
+        (traces / f"{sc.id}.json").write_text(_derive(journal))
         live = run(corpus, only=(sc.id,), traces=traces)
         scripted = run(corpus, only=(sc.id,))
         assert live.scenarios[0].status == "pass", live.scenarios[0]
@@ -300,6 +307,27 @@ class TestCorpusFaults:
         )
 
 
+def _derive(journal: Path) -> str:
+    from ledgergate.derive import trace as derive_trace
+
+    return dump_v2(derive_trace(str(journal)))
+
+
+def _pairs(trace: Any) -> list[tuple[str, str | None]]:
+    """(call_id, entry_id or None) per invocation of a v2 trace, in order."""
+    out: list[tuple[str, str | None]] = []
+    call: str | None = None
+    entry: str | None = None
+    for e in trace.events:
+        if e.type == "tool_call":
+            call, entry = e.call_id, None
+        elif e.type == "ledger_result":
+            entry = e.entry_id
+        elif e.type == "tool_result" and call is not None:
+            out.append((call, entry))
+    return out
+
+
 def _resummarize(scenarios: list[dict[str, Any]]) -> dict[str, Any]:
     from ledgergate.report import ScenarioResult, summarize
 
@@ -380,3 +408,53 @@ class TestReport:
         assert main(["report", str(tmp_path / "missing.json")]) == 2
         assert main(["report", "--drift", str(out), str(out)]) == 0
         assert main(["report", "--drift", str(out)]) == 2
+
+
+class TestImplementationReview:
+    def test_chart_faults_and_non_ijson_steps_are_corpus_faults(self, tmp_path: Path) -> None:
+        def edit(root: Path, rel: str, fn: Any) -> None:
+            p = root / rel
+            doc = yaml.safe_load(p.read_text())
+            fn(doc)
+            p.write_text(yaml.safe_dump(doc))
+
+        for mutate, needle in (
+            (lambda d: d["setup"]["chart"][0].__setitem__("currency", "XYZ"), "setup.chart"),
+            (lambda d: d["setup"]["chart"].append(dict(d["setup"]["chart"][0])), "setup.chart"),
+            (lambda d: d["agent"]["script"][0]["arguments"].__setitem__("n", 2**60), "not I-JSON"),
+        ):
+            root = _copy_corpus(tmp_path)
+            edit(root, "scenarios/correct/read-balance.yaml", mutate)
+            with pytest.raises(CorpusError, match=needle):
+                load_corpus(root)
+
+    def test_report_fails_closed_on_an_unknown_runner_error(self) -> None:
+        r = run(load_corpus(CORPUS), only=("read-balance",))
+        doc = json.loads(dump_result(r))
+        doc["scenarios"][0].update(
+            {
+                "status": "error",
+                "error": "something else",
+                "trace_digest": None,
+                "scorecard": None,
+                "expectations": [],
+            }
+        )
+        doc["summary"] = _resummarize(doc["scenarios"])
+        with pytest.raises(ResultError, match="outside the vocabulary"):
+            render_sarif(load_result(json.dumps(doc)))
+        other = dict(doc)
+        other["scenarios"] = []
+        other["summary"] = _resummarize([])
+        with pytest.raises(ResultError, match="same scenario ids"):
+            drift(r, load_result(json.dumps(other)))
+
+    def test_emit_setup_failure_leaves_no_orphan_policy_file(self, tmp_path: Path) -> None:
+        from ledgergate.runner import emit_setup
+
+        corpus = load_corpus(CORPUS)
+        sc = next(s for s in corpus.scenarios if s.id == "read-balance")
+        target = tmp_path / "nodir" / "j"  # parent missing: journal creation fails after policy
+        with pytest.raises((CorpusError, Exception)):
+            emit_setup(sc, target)
+        assert not target.with_name(target.name + ".policy.json").exists()

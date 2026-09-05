@@ -20,7 +20,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ledgergate import __version__
-from ledgergate.codec import canonical_text, decode_command, digest
+from ledgergate.codec import IJsonError, canonical_text, decode_command, digest, require_ijson
 from ledgergate.invariants import Scorecard, check
 from ledgergate.journal import (
     IdentityAdmitter,
@@ -36,6 +36,7 @@ from ledgergate.journal.approvals import _unb64 as unb64
 from ledgergate.ledger import (
     CURRENCIES,
     ChartOfAccounts,
+    LedgerError,
     SequentialIds,
     SteppingClock,
     command_fingerprint,
@@ -57,7 +58,7 @@ from ledgergate.trace.models import (
     LedgerResultEvent,
     ToolCallEvent,
 )
-from ledgergate.trace.v2 import InvocationResolution, PolicyDecision, TraceV2
+from ledgergate.trace.v2 import CommandIntent, InvocationResolution, PolicyDecision, TraceV2
 
 Kind = Literal["correct", "red-team"]
 _ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -229,6 +230,25 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
     if sc.setup.started_at.tzinfo is None:
         raise CorpusError(f"{path}: setup.started_at must carry a timezone")
     policy = _policy(sc.setup.policy, path)
+    try:
+        registry = dict(CURRENCIES)
+        registry.update((c.code, c.to_currency()) for c in sc.setup.currencies)
+        ChartOfAccounts(a.to_account(registry) for a in sc.setup.chart)
+    except (LookupError, LedgerError) as exc:
+        raise CorpusError(f"{path}: setup.chart: {type(exc).__name__}: {exc}") from exc
+    for name, step in zip(
+        [f"setup-{i + 1}" for i in range(len(sc.setup.before))]
+        + [f"agent-{i + 1}" for i in range(len(sc.agent.script or ()))],
+        list(sc.setup.before) + list(sc.agent.script or ()),
+        strict=True,
+    ):
+        try:
+            require_ijson(
+                step.request(name)
+                | ({"approval": step.approval} if step.approval is not None else {})
+            )
+        except IJsonError as exc:
+            raise CorpusError(f"{path}: step {name}: not I-JSON: {exc}") from exc
     if getattr(policy, "approve_above", ()) and sc.setup.approvals is None:
         raise CorpusError(f"{path}: policy can require approval but setup has no approvals key")
     capped = {c.kind for c in getattr(policy, "window_caps", ())}
@@ -404,11 +424,15 @@ def emit_setup(sc: Scenario, path: Path) -> None:
         raise CorpusError(f"{sc.id}: scripted_only; --emit-setup refuses it")
     if sc.setup.policy is not None:
         policy_path.write_text(json.dumps(sc.setup.policy, indent=2, sort_keys=True) + "\n")
-    journal, clock = _setup_journal(sc, str(path))
     try:
-        _apply(journal, clock, sc, sc.setup.before, "setup", {}, [])
-    finally:
-        journal.close()
+        journal, clock = _setup_journal(sc, str(path))
+        try:
+            _apply(journal, clock, sc, sc.setup.before, "setup", {}, [])
+        finally:
+            journal.close()
+    except (JournalError, UnresolvedEntryRefError, OSError):
+        policy_path.unlink(missing_ok=True)  # no orphan that would block a retry
+        raise
 
 
 # ------------------------------------------------------------------ scoring
@@ -418,6 +442,7 @@ def emit_setup(sc: Scenario, path: Path) -> None:
 class _Row:
     resolution: InvocationResolution
     call: ToolCallEvent
+    intent: CommandIntent | None
     decision: PolicyDecision | None
     command: LedgerCommandEvent | None
     result: LedgerResultEvent | None
@@ -429,6 +454,8 @@ def _rows(t: TraceV2) -> list[_Row]:
     for e in t.events:
         if isinstance(e, ToolCallEvent):
             current = {"call": e}
+        elif isinstance(e, CommandIntent):
+            current["intent"] = e
         elif isinstance(e, InvocationResolution):
             current["resolution"] = e
         elif isinstance(e, PolicyDecision):
@@ -437,13 +464,12 @@ def _rows(t: TraceV2) -> list[_Row]:
             current["command"] = e
         elif isinstance(e, LedgerResultEvent):
             current["result"] = e
-            if "resolution" in current:
-                pass
         if e.type == "tool_result" and "resolution" in current:
             rows.append(
                 _Row(
                     current["resolution"],
                     current["call"],
+                    current.get("intent"),
                     current.get("decision"),
                     current.get("command"),
                     current.get("result"),
@@ -484,8 +510,9 @@ def behavioural_digest(t: TraceV2, agent_rows: list[_Row]) -> str:
             content = None
         elif r.disposition == "read":
             content = canonical_text(row.call.arguments)
-        elif row.command is not None and row.command.command.kind == "reverse":
-            target_id = getattr(row.command.command, "entry_id", None)
+        elif row.intent is not None and row.intent.command.kind == "reverse":
+            # every reverse intent, applied or not: the fingerprint would carry the entry id
+            target_id = getattr(row.intent.command, "entry_id", None)
             target: Any
             if target_id in applied_entries:
                 target = ["agent", applied_entries.index(target_id)]
@@ -493,7 +520,7 @@ def behavioural_digest(t: TraceV2, agent_rows: list[_Row]) -> str:
                 target = ["setup", target_id]
             else:
                 target = None
-            content = ["reverse", target, getattr(row.command.command, "description", "")]
+            content = ["reverse", target, getattr(row.intent.command, "description", "")]
         else:
             content = r.attempted_digest
         items.append(
@@ -636,7 +663,7 @@ def run(
                         **base,
                         status="error",
                         source="none",
-                        error=f"setup failed: {type(exc).__name__}",
+                        error=f"journal refused: setup: {type(exc).__name__}",
                     )
                 )
                 continue
@@ -676,7 +703,7 @@ def run(
                             **base,
                             status="error",
                             source=source,
-                            error=f"journal refused the script: {type(exc).__name__}",
+                            error=f"journal refused: script: {type(exc).__name__}",
                         )
                     )
                     continue

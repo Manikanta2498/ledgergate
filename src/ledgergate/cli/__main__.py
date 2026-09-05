@@ -266,12 +266,15 @@ def run_command(args: argparse.Namespace) -> int:
             matches = [s for s in corpus.scenarios if s.id == scenario_id]
             if not matches:
                 raise CorpusError(f"no scenario {scenario_id!r}")
+            if args.traces or args.only or args.kind or args.out or args.keep_traces:
+                raise CorpusError("--emit-setup takes no other options")
             emit_setup(matches[0], Path(path))
-            print(
-                "ledgergate run: journal created for scoring only; the corpus signing key is"
-                " public data, so anyone can approve against it",
-                file=sys.stderr,
-            )
+            if matches[0].setup.approvals is not None:
+                print(
+                    "ledgergate run: journal created for scoring only; the corpus signing key"
+                    " is public data, so anyone can approve against it",
+                    file=sys.stderr,
+                )
             return 0
         result = run(
             corpus,

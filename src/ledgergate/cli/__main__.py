@@ -29,11 +29,30 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(
         dest="command", metavar="{journal,approve,serve,run,verify,record,report}"
     )
-    for name, help_text in (
-        ("run", "run an agent against the corpus and score it"),
-        ("report", "render a result.json into markdown, junit or sarif"),
-    ):
-        sub.add_parser(name, help=help_text)
+    run = sub.add_parser("run", help="score scripted or supplied traces against the corpus")
+    run.add_argument(
+        "--corpus", required=True, type=Path, help="corpus root (scenarios/, expectations/)"
+    )
+    run.add_argument("--traces", type=Path, help="directory of <id>.json traces to score")
+    run.add_argument("--out", type=Path, help="write result.json here; default stdout")
+    run.add_argument("--only", action="append", default=[], metavar="ID")
+    run.add_argument("--kind", choices=["correct", "red-team"])
+    run.add_argument("--keep-traces", type=Path, help="write the traces the runner produced")
+    run.add_argument(
+        "--emit-setup",
+        nargs=2,
+        metavar=("ID", "PATH"),
+        help="create the scenario's journal (and PATH.policy.json) for a live agent",
+    )
+    run.set_defaults(handler=run_command)
+
+    report = sub.add_parser("report", help="render a result.json, or a drift table over two")
+    report.add_argument("results", nargs="*", type=Path, help="result.json (two with --drift)")
+    report.add_argument("--format", choices=["md", "junit", "sarif", "json"], default="md")
+    report.add_argument("--drift", action="store_true", help="compare baseline and candidate")
+    report.add_argument("--allow-newly-skipped", action="store_true")
+    report.add_argument("--out", type=Path)
+    report.set_defaults(handler=report_command)
 
     record = sub.add_parser(
         "record",
@@ -225,6 +244,85 @@ def journal_approve(args: argparse.Namespace) -> int:
     )
     print(json.dumps(artefact.to_json(), sort_keys=True))
     return 0
+
+
+def _emit(text: str, out: Path | None) -> int:
+    if out is None:
+        sys.stdout.write(text)
+    else:
+        out.write_text(text, encoding="utf-8")
+    return 0
+
+
+def run_command(args: argparse.Namespace) -> int:
+    """Spec corpus.md: 0 all scored passed, 1 any fail/error, 2 corpus fault, 3 nothing scored."""
+    from ledgergate.report import dump_result
+    from ledgergate.runner import CorpusError, emit_setup, load_corpus, run
+
+    try:
+        corpus = load_corpus(args.corpus)
+        if args.emit_setup is not None:
+            scenario_id, path = args.emit_setup
+            matches = [s for s in corpus.scenarios if s.id == scenario_id]
+            if not matches:
+                raise CorpusError(f"no scenario {scenario_id!r}")
+            emit_setup(matches[0], Path(path))
+            print(
+                "ledgergate run: journal created for scoring only; the corpus signing key is"
+                " public data, so anyone can approve against it",
+                file=sys.stderr,
+            )
+            return 0
+        result = run(
+            corpus,
+            traces=args.traces,
+            only=tuple(args.only),
+            kind=args.kind,
+            keep_traces=args.keep_traces,
+        )
+    except CorpusError as exc:
+        print(f"ledgergate run: corpus fault: {exc}", file=sys.stderr)
+        return 2
+    _emit(dump_result(result), args.out)
+    return result.gate
+
+
+def report_command(args: argparse.Namespace) -> int:
+    from ledgergate.report import (
+        ResultError,
+        drift,
+        load_result,
+        render_drift_json,
+        render_drift_markdown,
+        render_junit,
+        render_markdown,
+        render_sarif,
+    )
+
+    def fail(message: str) -> int:
+        print(f"ledgergate report: {message}", file=sys.stderr)
+        return 2
+
+    try:
+        docs = [load_result(p.read_text(encoding="utf-8")) for p in args.results]
+    except (OSError, ResultError) as exc:
+        return fail(f"cannot read result: {type(exc).__name__}: {exc}")
+    if args.drift:
+        if len(docs) != 2:
+            return fail("--drift needs a baseline and a candidate")
+        try:
+            table = drift(docs[0], docs[1], allow_newly_skipped=args.allow_newly_skipped)
+        except ResultError as exc:
+            return fail(str(exc))
+        text = render_drift_json(table) if args.format == "json" else render_drift_markdown(table)
+        _emit(text, args.out)
+        return table.gate
+    if len(docs) != 1:
+        return fail("one result.json, or two with --drift")
+    renderers = {"md": render_markdown, "junit": render_junit, "sarif": render_sarif}
+    if args.format not in renderers:
+        return fail("--format json is for --drift only")
+    return _emit(renderers[args.format](docs[0]), args.out)
 
 
 def record_command(args: argparse.Namespace) -> int:
@@ -481,7 +579,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.parse_args(["journal", "--help"])
         return 0
 
-    print(f"'{args.command}' is not implemented yet (milestone M6).", file=sys.stderr)
+    parser.print_help()
     return 2
 
 

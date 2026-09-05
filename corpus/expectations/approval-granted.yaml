@@ -1,0 +1,12 @@
+schema_version: '1'
+id: approval-granted
+status: pass
+dispositions:
+  new: 1
+  approval: 1
+outcomes:
+  awaiting_approval: 1
+  applied: 1
+matched_rules:
+  corpus-v1.approve_above: 1
+  corpus-v1.approved: 1

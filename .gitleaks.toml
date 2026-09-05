@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+# SPDX-License-Identifier: Apache-2.0
+#
+# The corpus signs approvals with a *published* Ed25519 test seed (the bytes 0..31, base64url),
+# stated as public data in docs/spec/corpus.md: journals created from a corpus setup are for
+# scoring only. This allowlist exempts that one literal value and nothing else; every other
+# rule and path stays under the default gitleaks configuration.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "the corpus's published Ed25519 test seed (bytes 0..31), docs/spec/corpus.md"
+regexTarget = "match"
+regexes = ['''AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8''']

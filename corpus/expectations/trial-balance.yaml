@@ -1,0 +1,6 @@
+schema_version: '1'
+id: trial-balance
+status: pass
+dispositions:
+  read: 1
+invocations: 1

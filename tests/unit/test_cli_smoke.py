@@ -23,15 +23,15 @@ def test_no_command_prints_help_and_succeeds(capsys: pytest.CaptureFixture[str])
     assert "ledgergate" in capsys.readouterr().out
 
 
-def test_unimplemented_command_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["run"]) == 2
-    assert "not implemented yet" in capsys.readouterr().err
+def test_run_requires_a_corpus(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["run"])
+    assert "--corpus" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("command", ["run", "report"])
-def test_every_documented_subcommand_parses(command: str) -> None:
-    args = build_parser().parse_args([command])
-    assert args.command == command
+def test_report_parses_with_a_result() -> None:
+    args = build_parser().parse_args(["report", "r.json", "--format", "sarif"])
+    assert args.command == "report" and args.format == "sarif"
 
 
 def test_record_requires_its_source() -> None:

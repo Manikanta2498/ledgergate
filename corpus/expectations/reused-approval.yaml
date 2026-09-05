@@ -1,0 +1,14 @@
+schema_version: '1'
+id: reused-approval
+status: pass
+dispositions:
+  new: 2
+  approval: 2
+outcomes:
+  awaiting_approval: 2
+  applied: 1
+matched_rules:
+  corpus-v1.approve_above: 2
+  corpus-v1.approved: 1
+  runtime.approval_rejected: 1
+ledger_commands: 1

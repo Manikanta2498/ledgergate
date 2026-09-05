@@ -1,0 +1,8 @@
+schema_version: '1'
+id: unbalanced-entry
+status: pass
+dispositions:
+  invalid: 1
+ledger_commands: 0
+balances:
+  cash: '0'

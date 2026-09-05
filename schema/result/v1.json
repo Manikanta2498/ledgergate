@@ -1,0 +1,370 @@
+{
+  "$defs": {
+    "ExpectationDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "actual": {
+          "title": "Actual"
+        },
+        "expected": {
+          "title": "Expected"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "status",
+        "expected",
+        "actual"
+      ],
+      "title": "ExpectationDoc",
+      "type": "object"
+    },
+    "FindingDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "intent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Intent Id"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "message"
+      ],
+      "title": "FindingDoc",
+      "type": "object"
+    },
+    "InvariantDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FindingDoc"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "title": "InvariantDoc",
+      "type": "object"
+    },
+    "KindSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "title": "Error",
+          "type": "integer"
+        },
+        "fail": {
+          "title": "Fail",
+          "type": "integer"
+        },
+        "pass": {
+          "title": "Pass",
+          "type": "integer"
+        },
+        "scenarios": {
+          "title": "Scenarios",
+          "type": "integer"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "scenarios",
+        "pass",
+        "fail",
+        "error",
+        "skipped"
+      ],
+      "title": "KindSummary",
+      "type": "object"
+    },
+    "ScenarioResult": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "expectations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ExpectationDoc"
+          },
+          "title": "Expectations",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "correct",
+            "red-team"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "scorecard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScorecardDoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "enum": [
+            "script",
+            "trace",
+            "none"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "error",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "trace_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Digest"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "status",
+        "source"
+      ],
+      "title": "ScenarioResult",
+      "type": "object"
+    },
+    "ScorecardDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "intents": {
+          "title": "Intents",
+          "type": "integer"
+        },
+        "invariants": {
+          "items": {
+            "$ref": "#/$defs/InvariantDoc"
+          },
+          "title": "Invariants",
+          "type": "array"
+        },
+        "ledger_commands": {
+          "title": "Ledger Commands",
+          "type": "integer"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "passed",
+        "intents",
+        "ledger_commands",
+        "invariants"
+      ],
+      "title": "ScorecardDoc",
+      "type": "object"
+    },
+    "Selection": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "correct",
+                "red-team"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "only": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Only",
+          "type": "array"
+        }
+      },
+      "title": "Selection",
+      "type": "object"
+    },
+    "Summary": {
+      "additionalProperties": false,
+      "properties": {
+        "by_kind": {
+          "additionalProperties": {
+            "$ref": "#/$defs/KindSummary"
+          },
+          "title": "By Kind",
+          "type": "object"
+        },
+        "error": {
+          "title": "Error",
+          "type": "integer"
+        },
+        "fail": {
+          "title": "Fail",
+          "type": "integer"
+        },
+        "pass": {
+          "title": "Pass",
+          "type": "integer"
+        },
+        "scenarios": {
+          "title": "Scenarios",
+          "type": "integer"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "scenarios",
+        "pass",
+        "fail",
+        "error",
+        "skipped",
+        "by_kind"
+      ],
+      "title": "Summary",
+      "type": "object"
+    }
+  },
+  "$id": "https://ledgergate.dev/schema/result/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "corpus_digest": {
+      "title": "Corpus Digest",
+      "type": "string"
+    },
+    "ledgergate_version": {
+      "title": "Ledgergate Version",
+      "type": "string"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/ScenarioResult"
+      },
+      "title": "Scenarios",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selection": {
+      "$ref": "#/$defs/Selection"
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    }
+  },
+  "required": [
+    "ledgergate_version",
+    "corpus_digest",
+    "summary",
+    "selection",
+    "scenarios"
+  ],
+  "title": "Result",
+  "type": "object"
+}

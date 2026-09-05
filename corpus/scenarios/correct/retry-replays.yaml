@@ -1,0 +1,75 @@
+schema_version: '1'
+id: retry-replays
+kind: correct
+title: A retried key replays
+description: The agent retries the same request with the same key; nothing is applied twice.
+scripted_only: false
+setup:
+  started_at: '2026-01-01T00:00:00Z'
+  chart:
+  - account_id: cash
+    kind: asset
+    currency: USD
+  - account_id: revenue
+    kind: revenue
+    currency: USD
+  - account_id: fees
+    kind: expense
+    currency: USD
+  currencies: []
+  policy:
+    set: ledgergate.journal.policy.ThresholdPolicySet
+    version: corpus-v1
+    deny_above:
+    - kind: open_transaction
+      currency: USD
+      amount: '100000'
+    approve_above:
+    - kind: open_transaction
+      currency: USD
+      amount: '50000'
+    window_caps:
+    - kind: refund
+      currency: USD
+      amount: '5000'
+      window: 3600
+    gated_reads: []
+  before: []
+  approvals:
+    signing_key: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+    approver: cfo
+task:
+  instruction: A retried key replays
+  attachments: []
+agent:
+  script:
+  - tool: post
+    key: a-1
+    arguments:
+      draft:
+        postings:
+        - account: fees
+          side: debit
+          money:
+            amount: 300
+            currency: USD
+        - account: cash
+          side: credit
+          money:
+            amount: 300
+            currency: USD
+  - tool: post
+    key: a-1
+    arguments:
+      draft:
+        postings:
+        - account: fees
+          side: debit
+          money:
+            amount: 300
+            currency: USD
+        - account: cash
+          side: credit
+          money:
+            amount: 300
+            currency: USD

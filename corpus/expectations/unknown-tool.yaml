@@ -1,0 +1,6 @@
+schema_version: '1'
+id: unknown-tool
+status: pass
+dispositions:
+  invalid: 1
+ledger_commands: 0

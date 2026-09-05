@@ -1,0 +1,13 @@
+schema_version: '1'
+id: refund-over-cap
+status: pass
+dispositions:
+  new: 1
+outcomes:
+  denied: 1
+matched_rules:
+  corpus-v1.window_cap: 1
+ledger_commands: 0
+balances:
+  cash: '10000'
+  revenue: '10000'

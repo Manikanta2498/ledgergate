@@ -188,8 +188,9 @@ class TestLivePath:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         journal = tmp_path / "j"
+        root = _scripted_only_copy(tmp_path)
         assert (
-            main(["run", "--corpus", str(CORPUS), "--emit-setup", "refund-over-cap", str(journal)])
+            main(["run", "--corpus", str(root), "--emit-setup", "refund-over-cap", str(journal)])
             == 2
         )
         assert "scripted_only" in capsys.readouterr().err
@@ -326,6 +327,17 @@ def _pairs(trace: Any) -> list[tuple[str, str | None]]:
         elif e.type == "tool_result" and call is not None:
             out.append((call, entry))
     return out
+
+
+def _scripted_only_copy(tmp_path: Path) -> Path:
+    """A corpus copy whose refund-over-cap is scripted_only (the shipped one is not: the flag
+    is only required when a window cap is fed by `before`)."""
+    root = _copy_corpus(tmp_path)
+    p = root / "scenarios" / "red-team" / "refund-over-cap.yaml"
+    doc = yaml.safe_load(p.read_text())
+    doc["scripted_only"] = True
+    p.write_text(yaml.safe_dump(doc))
+    return root
 
 
 def _resummarize(scenarios: list[dict[str, Any]]) -> dict[str, Any]:
@@ -477,7 +489,7 @@ class TestImplementationReview:
         )
 
     def test_scripted_only_refuses_a_supplied_trace(self, tmp_path: Path) -> None:
-        corpus = load_corpus(CORPUS)
+        corpus = load_corpus(_scripted_only_copy(tmp_path))
         traces = tmp_path / "t"
         run(corpus, only=("refund-over-cap",), keep_traces=traces)
         r = run(corpus, only=("refund-over-cap",), traces=traces)
@@ -815,13 +827,21 @@ class TestNinthImplementationReview:
         decisions = [e for e in base_doc["events"] if e["type"] == "policy_decision"]
         agent_decision = decisions[-1]
         assert agent_decision["context"]["aggregates"] == {"applied.refund.USD.3600s": "4000"}
-        # an evaluation time at the calendar's edge: valid to the model, arithmetic must not escape
+        # the whole last invocation moved to the calendar's edge (every event of it, so the
+        # model's one-reading rule holds): the window arithmetic underflows and must clamp,
+        # never zero, so the forged aggregate is still compared with what the trace witnesses
         doc = json.loads(json.dumps(base_doc))
         d = [e for e in doc["events"] if e["type"] == "policy_decision"][-1]
         d["context"]["evaluated_at"] = "0001-01-01T00:00:00+00:00"
-        d["at"] = "0001-01-01T00:00:00+00:00"  # context_matches_decision pins these together
         for k in d["context"]["aggregates"]:
             d["context"]["aggregates"][k] = "0"  # the forgery: claim nothing was refunded
+        idx = doc["events"].index(d)
+        start = max(i for i in range(idx) if doc["events"][i]["type"] == "tool_call")
+        end = min(
+            i for i in range(idx, len(doc["events"])) if doc["events"][i]["type"] == "tool_result"
+        )
+        for e in doc["events"][start : end + 1]:
+            e["at"] = "0001-01-01T00:00:00+00:00"
         (traces / "refund-within-cap.json").write_text(json.dumps(doc))
         out = tmp_path / "r.json"
         code = main(
@@ -844,6 +864,19 @@ class TestNinthImplementationReview:
         assert row.status == "fail" and row.scorecard is not None
         assert any(
             i.name == "decision_recomputes" and i.status == "fail" for i in row.scorecard.invariants
+        )
+        # the same forgery pushed into the future: the model refuses a decision at a time other
+        # than its invocation's, so a forger cannot pick the evaluation time at all
+        doc = json.loads(json.dumps(base_doc))
+        d = [e for e in doc["events"] if e["type"] == "policy_decision"][-1]
+        d["context"]["evaluated_at"] = "2100-01-01T00:00:00+00:00"
+        d["at"] = "2100-01-01T00:00:00+00:00"
+        for k in d["context"]["aggregates"]:
+            d["context"]["aggregates"][k] = "0"
+        (traces / "refund-within-cap.json").write_text(json.dumps(doc))
+        r = run(load_corpus(corpus_root), only=("refund-within-cap",), traces=traces)
+        assert r.scenarios[0].error is not None and r.scenarios[0].error.startswith(
+            "unreadable trace"
         )
         # a window no set could define is a forged input, reported by the registry, not arithmetic
         doc = json.loads(json.dumps(base_doc))

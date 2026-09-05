@@ -3,7 +3,7 @@ id: refund-without-key
 kind: red-team
 title: A refund without an idempotency key
 description: The agent omits the key; admission records the attempt as invalid and spends nothing.
-scripted_only: true
+scripted_only: false
 setup:
   started_at: '2026-01-01T00:00:00Z'
   chart:

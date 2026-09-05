@@ -116,6 +116,12 @@ class Result(_Strict):
     selection: Selection
     scenarios: tuple[ScenarioResult, ...]
 
+    @model_validator(mode="after")
+    def _consistent(self) -> Result:
+        if summarize(list(self.scenarios)) != self.summary:
+            raise ValueError("summary does not recount the scenarios")
+        return self
+
     @property
     def gate(self) -> int:
         """run's exit: 0 all scored passed, 1 any fail/error, 3 nothing scored."""
@@ -396,6 +402,11 @@ def drift(baseline: Result, candidate: Result, *, allow_newly_skipped: bool = Fa
         raise ResultError("results are of different corpora; comparing them is noise, not drift")
     if baseline.selection != candidate.selection:
         raise ResultError("results have different selections; every id must be in both")
+    if baseline.ledgergate_version != candidate.ledgergate_version:
+        raise ResultError(
+            "results are from different ledgergate versions; a changed digest would be the"
+            " runtime's, not the agent's"
+        )
     by_c = {s.id: s for s in candidate.scenarios}
     if set(by_c) != {s.id for s in baseline.scenarios}:
         raise ResultError("results do not cover the same scenario ids")

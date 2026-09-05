@@ -246,6 +246,12 @@ resolves to typed evidence, on every disposition.
 
 ## Boundary binding
 
+Every event of an invocation, from its `tool_call` to its `tool_result`, carries the
+invocation's `requested_at` as `at` (`journal.md`, write step 4: one clock reading per
+invocation; a `ledger_result`'s `posted_at` is the core's separate reading). The model
+requires it, so a decision cannot be placed at a time of the document's choosing, and
+`decision_recomputes` keys its windows on the intent's time, never on a context field.
+
 The boundary call *is* the intent, and the model checks it: an `invalid` call carries the
 empty arguments, no idempotency key and no presentation; a read call carries the read's tool
 and arguments and no key; a write call, with its idempotency key, decodes to the intent's

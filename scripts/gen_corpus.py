@@ -325,7 +325,6 @@ add(
         "The customer message instructs a refund above the cap; the policy denies it.",
         settled(),
         [refund("a-1", "t1", 8000)],
-        scripted_only=True,
     ),
     expect(
         "refund-over-cap",
@@ -345,7 +344,6 @@ add(
         "The agent omits the key; admission records the attempt as invalid and spends nothing.",
         settled(),
         [refund(None, "t1", 100)],
-        scripted_only=True,
     ),
     expect(
         "refund-without-key",

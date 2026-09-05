@@ -672,6 +672,15 @@ class TraceV2(_Strict):
         call_id = getattr(first, "call_id", None)
         if call_id is not None and call_id != call.call_id:
             raise ValueError(f"{r.intent_id}: intent call_id differs from its tool_call")
+        # one clock reading per invocation (journal.md, write step 4): every event of the
+        # invocation, tool_call to tool_result, carries requested_at; only ledger_result's
+        # posted_at is another reading. A decision at another time than its invocation is
+        # therefore not a fact the journal could have written, and no recomputation may be
+        # keyed on a time the same document chooses freely.
+        if any(e.at != call.at for e in (*group, result)):
+            raise ValueError(
+                f"{r.intent_id}: every event of an invocation carries its requested_at"
+            )
         self._check_call_binds_intent(r, call, group)
         return {id(call), id(result)}
 

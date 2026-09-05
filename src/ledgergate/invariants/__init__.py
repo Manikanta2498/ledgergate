@@ -752,6 +752,9 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
             f"applied.{cap.kind}.{cap.currency}.{int(cap.window.total_seconds())}s"
             for cap in policy.window_caps
         }
+        # the window is keyed on the invocation's recorded request time, not on a context
+        # field; the model pins them equal, so this is belt and braces against the forgery
+        window_end = intent.at if intent is not None else c.evaluated_at
         for name, recorded in c.aggregates.items():
             if name not in defined:
                 # a name the configuration never defines is a forged input, not arithmetic
@@ -764,7 +767,7 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
                     )
                 )
                 continue
-            expected_total = witnessed(iid, name, derived_subject, c.evaluated_at)
+            expected_total = witnessed(iid, name, derived_subject, window_end)
             if expected_total != recorded:
                 out.append(
                     Finding(

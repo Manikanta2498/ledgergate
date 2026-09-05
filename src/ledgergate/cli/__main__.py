@@ -246,11 +246,16 @@ def journal_approve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _emit(text: str, out: Path | None) -> int:
-    if out is None:
-        sys.stdout.write(text)
-    else:
-        out.write_text(text, encoding="utf-8")
+def _emit(text: str, out: Path | None, who: str) -> int:
+    try:
+        if out is None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        else:
+            out.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        print(f"ledgergate {who}: cannot write: {type(exc).__name__}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -286,8 +291,8 @@ def run_command(args: argparse.Namespace) -> int:
     except CorpusError as exc:
         print(f"ledgergate run: corpus fault: {exc}", file=sys.stderr)
         return 2
-    _emit(dump_result(result), args.out)
-    return result.gate
+    written = _emit(dump_result(result), args.out, "run")
+    return written or result.gate
 
 
 def report_command(args: argparse.Namespace) -> int:
@@ -318,14 +323,14 @@ def report_command(args: argparse.Namespace) -> int:
         except ResultError as exc:
             return fail(str(exc))
         text = render_drift_json(table) if args.format == "json" else render_drift_markdown(table)
-        _emit(text, args.out)
-        return table.gate
+        written = _emit(text, args.out, "report")
+        return written or table.gate
     if len(docs) != 1:
         return fail("one result.json, or two with --drift")
     renderers = {"md": render_markdown, "junit": render_junit, "sarif": render_sarif}
     if args.format not in renderers:
         return fail("--format json is for --drift only")
-    return _emit(renderers[args.format](docs[0]), args.out)
+    return _emit(renderers[args.format](docs[0]), args.out, "report")
 
 
 def record_command(args: argparse.Namespace) -> int:

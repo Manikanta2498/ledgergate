@@ -10,7 +10,7 @@ import json
 from typing import Any, Literal
 from xml.sax.saxutils import escape, quoteattr
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 Status = Literal["pass", "fail", "error", "skipped"]
 Kind = Literal["correct", "red-team"]
@@ -48,6 +48,11 @@ class ExpectationDoc(_Strict):
     actual: Any
 
 
+RUNNER_ERRORS = ("setup mismatch", "unreadable trace", "unresolved entry_ref", "journal refused")
+"""The closed vocabulary of runner error messages (corpus.md); a document outside it does not
+load, so every renderer fails closed by construction."""
+
+
 class ScenarioResult(_Strict):
     id: str
     kind: Kind
@@ -58,6 +63,22 @@ class ScenarioResult(_Strict):
     scorecard: ScorecardDoc | None = None
     expectations: tuple[ExpectationDoc, ...] = ()
     error: str | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> ScenarioResult:
+        if (self.status == "error") != (self.error is not None):
+            raise ValueError("error is present exactly for an error scenario")
+        if self.error is not None and not self.error.startswith(RUNNER_ERRORS):
+            raise ValueError("runner error outside the vocabulary")
+        if self.status in ("error", "skipped") and (
+            self.trace_digest is not None or self.scorecard is not None or self.expectations
+        ):
+            raise ValueError("an unscored scenario carries no digest, scorecard or expectations")
+        if self.status in ("pass", "fail") and (
+            self.trace_digest is None or self.scorecard is None
+        ):
+            raise ValueError("a scored scenario carries a digest and a scorecard")
+        return self
 
 
 class KindSummary(_Strict):
@@ -229,10 +250,10 @@ _RUNNER_RULES = {
 
 
 def _runner_rule(error: str | None) -> str:
-    for prefix, rule in _RUNNER_RULES.items():
-        if error is not None and error.startswith(prefix):
-            return rule
-    raise ResultError(f"runner error outside the vocabulary: {error!r}")  # fail closed
+    # the model already refused anything outside RUNNER_ERRORS; this cannot miss
+    return next(
+        rule for prefix, rule in _RUNNER_RULES.items() if error and error.startswith(prefix)
+    )
 
 
 def render_sarif(result: Result) -> str:

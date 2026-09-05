@@ -324,10 +324,10 @@ class TestApprovalProtocol:
         pending(gated, "k1")
         clock = gated.clock
         assert isinstance(clock, SteppingClock)
-        peek = clock._next
+        peek = clock.peek()
         r = present(gated, "k1", artefact(gated, "k1", expires_at=peek))
         assert r.error_message == "runtime.approval_rejected: approval_expired"
-        peek = clock._next
+        peek = clock.peek()
         ok = present(
             gated,
             "k1",

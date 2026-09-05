@@ -440,21 +440,57 @@ class TestImplementationReview:
                 "expectations": [],
             }
         )
-        doc["summary"] = _resummarize(doc["scenarios"])
+        bad = json.dumps({**doc, "summary": json.loads(dump_result(r))["summary"]})
         with pytest.raises(ResultError, match="outside the vocabulary"):
-            render_sarif(load_result(json.dumps(doc)))
-        other = dict(doc)
+            load_result(bad)  # the model, not a renderer, refuses it
+        good = json.loads(dump_result(r))
+        good["scenarios"][0]["error"] = "setup mismatch: x"  # error on a pass row
+        with pytest.raises(ResultError, match="exactly for an error"):
+            load_result(json.dumps(good))
+        other = json.loads(dump_result(r))
         other["scenarios"] = []
         other["summary"] = _resummarize([])
         with pytest.raises(ResultError, match="same scenario ids"):
             drift(r, load_result(json.dumps(other)))
 
-    def test_emit_setup_failure_leaves_no_orphan_policy_file(self, tmp_path: Path) -> None:
-        from ledgergate.runner import emit_setup
+    def test_emit_setup_failure_inside_before_leaves_nothing_and_a_retry_succeeds(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "reverse-setup-entry.yaml"
+        doc = yaml.safe_load(p.read_text())
+        # the setup's post is unbalanced: it applies no entry, so a `before` reverse by
+        # entry_ref fails inside _apply, after the journal and policy exist
+        doc["setup"]["before"][0]["arguments"]["draft"]["postings"][1]["money"]["amount"] = 1
+        doc["setup"]["before"].append(
+            {"tool": "reverse", "key": "setup-2", "arguments": {"entry_ref": "setup-1"}}
+        )
+        p.write_text(yaml.safe_dump(doc))
+        target = tmp_path / "j"
+        args = ["run", "--corpus", str(root), "--emit-setup", "reverse-setup-entry", str(target)]
+        assert main(args) == 2
+        assert "failed while applying before" in capsys.readouterr().err
+        assert not target.exists() and not target.with_name("j.policy.json").exists()
+        # the same target is free for a retry against a good scenario
+        assert (
+            main(["run", "--corpus", str(root), "--emit-setup", "read-balance", str(target)]) == 0
+        )
 
+    def test_scripted_only_refuses_a_supplied_trace(self, tmp_path: Path) -> None:
         corpus = load_corpus(CORPUS)
-        sc = next(s for s in corpus.scenarios if s.id == "read-balance")
-        target = tmp_path / "nodir" / "j"  # parent missing: journal creation fails after policy
-        with pytest.raises((CorpusError, Exception)):
-            emit_setup(sc, target)
-        assert not target.with_name(target.name + ".policy.json").exists()
+        traces = tmp_path / "t"
+        run(corpus, only=("refund-over-cap",), keep_traces=traces)
+        r = run(corpus, only=("refund-over-cap",), traces=traces)
+        assert r.scenarios[0].status == "error"
+        assert r.scenarios[0].error is not None and "scripted_only" in r.scenarios[0].error
+
+    def test_out_to_an_unwritable_path_is_exit_2(self, tmp_path: Path) -> None:
+        bad_out = str(tmp_path / "no" / "r.json")
+        assert (
+            main(["run", "--corpus", str(CORPUS), "--only", "read-balance", "--out", bad_out]) == 2
+        )
+        out = tmp_path / "r.json"
+        assert (
+            main(["run", "--corpus", str(CORPUS), "--only", "read-balance", "--out", str(out)]) == 0
+        )
+        assert main(["report", str(out), "--out", str(tmp_path / "no" / "x.md")]) == 2

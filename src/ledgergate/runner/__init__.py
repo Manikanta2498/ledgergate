@@ -311,7 +311,7 @@ class PeekClock:
 
     @property
     def next(self) -> datetime:
-        return self._inner._next
+        return self._inner.peek()
 
     def now(self) -> datetime:
         return self._inner.now()
@@ -422,17 +422,26 @@ def emit_setup(sc: Scenario, path: Path) -> None:
         raise CorpusError(f"{path}: exists; --emit-setup refuses to overwrite")
     if sc.scripted_only:
         raise CorpusError(f"{sc.id}: scripted_only; --emit-setup refuses it")
-    if sc.setup.policy is not None:
-        policy_path.write_text(json.dumps(sc.setup.policy, indent=2, sort_keys=True) + "\n")
     try:
+        if sc.setup.policy is not None:
+            policy_path.write_text(json.dumps(sc.setup.policy, indent=2, sort_keys=True) + "\n")
         journal, clock = _setup_journal(sc, str(path))
         try:
             _apply(journal, clock, sc, sc.setup.before, "setup", {}, [])
         finally:
             journal.close()
-    except (JournalError, UnresolvedEntryRefError, OSError):
-        policy_path.unlink(missing_ok=True)  # no orphan that would block a retry
-        raise
+    except (JournalError, UnresolvedEntryRefError, OSError) as exc:
+        # nothing half-made survives, so a retry is not refused for the failure's own debris
+        for leftover in (
+            path,
+            policy_path,
+            path.with_name(path.name + "-wal"),
+            path.with_name(path.name + "-shm"),
+        ):
+            leftover.unlink(missing_ok=True)
+        raise CorpusError(
+            f"{sc.id}: --emit-setup failed while applying before: {type(exc).__name__}"
+        ) from exc
 
 
 # ------------------------------------------------------------------ scoring
@@ -657,13 +666,30 @@ def run(
                 setup_dir = work / "setup" / sc.id
                 setup_dir.mkdir(parents=True)
                 setup_trace, _ = run_script(setup_only, setup_dir)
-            except (JournalError, UnresolvedEntryRefError, OSError) as exc:
+            except UnresolvedEntryRefError as exc:
+                results.append(
+                    ScenarioResult(
+                        **base, status="error", source="none", error=f"unresolved entry_ref: {exc}"
+                    )
+                )
+                continue
+            except (JournalError, OSError) as exc:
                 results.append(
                     ScenarioResult(
                         **base,
                         status="error",
                         source="none",
                         error=f"journal refused: setup: {type(exc).__name__}",
+                    )
+                )
+                continue
+            if supplied is not None and supplied.exists() and sc.scripted_only:
+                results.append(
+                    ScenarioResult(
+                        **base,
+                        status="error",
+                        source="trace",
+                        error="setup mismatch: scripted_only; a supplied trace is not scored",
                     )
                 )
                 continue

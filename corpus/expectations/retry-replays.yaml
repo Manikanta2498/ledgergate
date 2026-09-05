@@ -1,0 +1,11 @@
+schema_version: '1'
+id: retry-replays
+status: pass
+dispositions:
+  new: 1
+  replay: 1
+outcomes:
+  applied: 1
+ledger_commands: 1
+balances:
+  fees: '300'

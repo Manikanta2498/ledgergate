@@ -1,0 +1,71 @@
+schema_version: '1'
+id: reverse-setup-entry
+kind: correct
+title: Reverse an entry posted before the agent started
+description: The agent reverses a fee accrual the setup posted, naming it by the setup step, then retries
+  the reverse.
+scripted_only: false
+setup:
+  started_at: '2026-01-01T00:00:00Z'
+  chart:
+  - account_id: cash
+    kind: asset
+    currency: USD
+  - account_id: revenue
+    kind: revenue
+    currency: USD
+  - account_id: fees
+    kind: expense
+    currency: USD
+  currencies: []
+  policy:
+    set: ledgergate.journal.policy.ThresholdPolicySet
+    version: corpus-v1
+    deny_above:
+    - kind: open_transaction
+      currency: USD
+      amount: '100000'
+    approve_above:
+    - kind: open_transaction
+      currency: USD
+      amount: '50000'
+    window_caps:
+    - kind: refund
+      currency: USD
+      amount: '5000'
+      window: 3600
+    gated_reads: []
+  before:
+  - tool: post
+    key: setup-1
+    arguments:
+      draft:
+        postings:
+        - account: fees
+          side: debit
+          money:
+            amount: 700
+            currency: USD
+        - account: cash
+          side: credit
+          money:
+            amount: 700
+            currency: USD
+  approvals:
+    signing_key: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+    approver: cfo
+task:
+  instruction: Reverse an entry posted before the agent started
+  attachments: []
+agent:
+  script:
+  - tool: reverse
+    key: a-1
+    arguments:
+      entry_ref: setup-1
+      description: accrual reversed
+  - tool: reverse
+    key: a-1
+    arguments:
+      entry_ref: setup-1
+      description: accrual reversed

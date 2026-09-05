@@ -4,15 +4,15 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestones M0 to M5 complete.** The deterministic ledger core (M1),
+> **Status: pre-alpha, milestones M0 to M6 complete.** The deterministic ledger core (M1),
 > the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
 > the tokenizing, redacting admitter (M2c), the policy and approval layer, trace v2 with
 > journal derivation, the invariant registry behind `ledgergate verify` (M3), and the stdio MCP runtime
 > `ledgergate serve` (M4), and the OpenTelemetry GenAI observational adapter behind
-> `ledgergate record` (M5) are implemented and tested. An agent run can be recorded, validated against the published
+> `ledgergate record` (M5), and the scenario and red-team corpus with `ledgergate run` and
+> `report` (M6) are implemented and tested. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
-> the answer it got the first time. The corpus is not built yet. See
-> [Roadmap](#roadmap).
+> the answer it got the first time. See [Roadmap](#roadmap).
 
 ---
 
@@ -65,8 +65,9 @@ durable journal, so a process can be restarted and answer a retried key exactly 
 the first time; the tokenizing, redacting admitter, so no caller identifier or free text
 has to reach disk; the policy layer with signed, single-use approvals; trace v2 derived
 from the journal; the invariant registry behind `ledgergate verify`; the stdio MCP runtime
-`ledgergate serve`; and the OpenTelemetry GenAI adapter behind `ledgergate record`. The corpus
-lands in M6. The gates that keep all of it honest run in CI on every pull request and every push
+`ledgergate serve`; the OpenTelemetry GenAI adapter behind `ledgergate record`; and the corpus of twenty-two
+scripted scenarios, nine correct and thirteen red-team, that `ledgergate run` scores into
+`result.json` and `ledgergate report` renders. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
 ## The trace schema
@@ -223,6 +224,26 @@ bound to that one operation in that one journal (`ledgergate journal pending`,
 `ledgergate approve`), and the retry presents it. A valid artefact is consumed exactly once;
 an invalid, expired, mis-scoped or reused one is refused by the runtime without invoking
 policy, and the operation stays pending for a correct one. Every verdict is a row.
+
+**The corpus (M6).** `corpus/scenarios/{correct,red-team}/<id>.yaml` plus
+`corpus/expectations/<id>.yaml`: pure data, Apache-2.0. A scenario is a setup (chart, policy,
+a test approval key, `before` steps), a task, and, for every shipped scenario, a script that
+stands in for the agent; expectations are a closed vocabulary over the derived v2 trace
+(dispositions, produced outcomes, matched rules, balances, counts), never message text.
+`ledgergate run --corpus corpus` runs each script through a journal, derives the trace,
+binds it to the setup, checks the invariant registry and the expectations, and writes a
+deterministic `result.json` (`schema/result/v1.json`); a supplied trace from a live agent
+against `--emit-setup`'s journal is scored the same way. Every red-team scenario passing means
+the runtime *contained* the misbehaviour: an over-cap refund `denied`, a missing key
+`invalid`, a forged or expired or reused approval `runtime.approval_rejected`, a lifecycle
+jump `rejected`. `ledgergate report` renders md, JUnit and SARIF, and `--drift` compares two
+results by behavioural digest; a regression or a vanished trace fails the gate.
+
+```text
+$ ledgergate run --corpus corpus --out result.json && ledgergate report result.json
+# LedgerGate corpus result
+**22 pass, 0 fail, 0 error, 0 skipped** of 22.
+```
 
 **The OpenTelemetry adapter (M5).** `ledgergate record --from-otel export.json` turns an
 OTLP/JSON export of an agent instrumented to the GenAI semantic conventions (1.37) into a v1
@@ -435,7 +456,7 @@ These are enforced by CI gates, not by convention:
 | **M3** | **Policy layer** over an explicit, persisted `PolicyContext` with validated, single-use (per journal) approvals. Trace schema v2 built around *intents* and *dispositions* (a denied command never reaches the ledger, a retry never re-evaluates policy, an imported v1 trace carries no invented policy evidence or tool events, and the schema says all of it), with journal-to-trace derivation; invariant registry; scorecard; `ledgergate verify` | **done** |
 | **M4** | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log; designed in [docs/spec/mcp-runtime.md](docs/spec/mcp-runtime.md) | **done** |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
-| M6 | Scenario corpus and **red-team corpus**; SARIF/JUnit; drift table across model versions | |
+| M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
 | M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
 | M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
 
@@ -464,7 +485,7 @@ CI additionally scans the **full Git history** for secrets, not just the working
 Source-available, split deliberately:
 
 - `corpus/` and `schema/` are **Apache-2.0**. Adopt, redistribute and cite them freely,
-  including in production. The trace schema is published; the corpus lands in M6.
+  including in production. The trace and result schemas and the corpus are published.
 - The runtime under `src/ledgergate/` is **BUSL-1.1**. Read it, modify it, run it in
   development, CI and evaluation. Production use requires a commercial license. Converts
   to Apache-2.0 on 2030-08-31.

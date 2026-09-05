@@ -1,0 +1,10 @@
+schema_version: '1'
+id: amount-over-deny-line
+status: pass
+dispositions:
+  new: 1
+outcomes:
+  denied: 1
+matched_rules:
+  corpus-v1.deny_above: 1
+ledger_commands: 0

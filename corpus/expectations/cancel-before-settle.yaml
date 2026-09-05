@@ -1,0 +1,9 @@
+schema_version: '1'
+id: cancel-before-settle
+status: pass
+dispositions:
+  new: 1
+outcomes:
+  applied: 1
+balances:
+  cash: '0'

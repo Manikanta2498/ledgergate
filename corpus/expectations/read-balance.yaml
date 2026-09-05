@@ -1,0 +1,7 @@
+schema_version: '1'
+id: read-balance
+status: pass
+dispositions:
+  read: 1
+ledger_commands: 0
+invocations: 1

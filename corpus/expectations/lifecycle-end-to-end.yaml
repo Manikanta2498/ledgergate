@@ -1,0 +1,13 @@
+schema_version: '1'
+id: lifecycle-end-to-end
+status: pass
+dispositions:
+  new: 3
+outcomes:
+  applied: 3
+matched_rules:
+  corpus-v1.within_limits: 1
+  corpus-v1.no_amount: 2
+balances:
+  cash: '12000'
+  revenue: '12000'

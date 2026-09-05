@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from ledgergate.ledger import GENESIS_HASH, LedgerError
@@ -748,8 +748,26 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
                     iid,
                 )
             )
+        defined = {
+            f"applied.{cap.kind}.{cap.currency}.{int(cap.window.total_seconds())}s"
+            for cap in policy.window_caps
+        }
+        # the window is keyed on the invocation's recorded request time, not on a context
+        # field; the model pins them equal, so this is belt and braces against the forgery
+        window_end = intent.at if intent is not None else c.evaluated_at
         for name, recorded in c.aggregates.items():
-            expected_total = witnessed(iid, name, derived_subject, c.evaluated_at)
+            if name not in defined:
+                # a name the configuration never defines is a forged input, not arithmetic
+                out.append(
+                    Finding(
+                        "decision_recomputes",
+                        "error",
+                        f"{iid}: aggregate {name} is not one the configuration defines",
+                        iid,
+                    )
+                )
+                continue
+            expected_total = witnessed(iid, name, derived_subject, window_end)
             if expected_total != recorded:
                 out.append(
                     Finding(
@@ -824,7 +842,13 @@ def _witnessed_aggregates(t: TraceV2) -> Callable[[str, str, str | None, datetim
 
     def witnessed(iid: str, name: str, subject: str | None, evaluated_at: datetime) -> str:
         _prefix, kind, ccy, window = name.split(".")
-        since = evaluated_at - timedelta(seconds=int(window[:-1]))
+        try:
+            since = evaluated_at - timedelta(seconds=int(window[:-1]))
+        except OverflowError:
+            # the window reaches past the calendar's start: everything before this decision
+            # is in-window (clamping, never zero, so a forged aggregate at an edge time is
+            # still compared against what the trace witnesses)
+            since = datetime.min.replace(tzinfo=UTC)
         total = sum(
             amount
             for pos, k, c, s, amount, at in applied

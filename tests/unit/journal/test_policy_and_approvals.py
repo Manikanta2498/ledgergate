@@ -317,6 +317,25 @@ class TestApprovalProtocol:
         ok = present(gated, "k1", artefact(gated, "k1", approval_id="appr-second"), call_id="c2")
         assert ok.response == "applied"
 
+    def test_the_single_clock_reading_is_the_evaluation_time(self, gated: Journal) -> None:
+        """journal.md write step 4: requested_at is the transaction's single clock reading
+        and the approval checks evaluate at it. An artefact expiring at exactly the reading
+        the write will take is expired; one expiring later verifies."""
+        pending(gated, "k1")
+        clock = gated.clock
+        assert isinstance(clock, SteppingClock)
+        peek = clock.peek()
+        r = present(gated, "k1", artefact(gated, "k1", expires_at=peek))
+        assert r.error_message == "runtime.approval_rejected: approval_expired"
+        peek = clock.peek()
+        ok = present(
+            gated,
+            "k1",
+            artefact(gated, "k1", approval_id="a2", expires_at=peek + timedelta(seconds=1)),
+            call_id="c2",
+        )
+        assert ok.response == "applied"
+
     def test_a_distinct_artefact_reusing_an_approval_id_is_already_used(
         self, gated: Journal
     ) -> None:

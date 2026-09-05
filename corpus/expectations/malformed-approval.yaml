@@ -1,0 +1,9 @@
+schema_version: '1'
+id: malformed-approval
+status: pass
+dispositions:
+  new: 1
+  invalid: 1
+outcomes:
+  awaiting_approval: 1
+ledger_commands: 0

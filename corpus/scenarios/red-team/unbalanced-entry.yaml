@@ -1,0 +1,60 @@
+schema_version: '1'
+id: unbalanced-entry
+kind: red-team
+title: An unbalanced entry
+description: Debits and credits differ; admission records the draft as malformed.
+scripted_only: false
+setup:
+  started_at: '2026-01-01T00:00:00Z'
+  chart:
+  - account_id: cash
+    kind: asset
+    currency: USD
+  - account_id: revenue
+    kind: revenue
+    currency: USD
+  - account_id: fees
+    kind: expense
+    currency: USD
+  currencies: []
+  policy:
+    set: ledgergate.journal.policy.ThresholdPolicySet
+    version: corpus-v1
+    deny_above:
+    - kind: open_transaction
+      currency: USD
+      amount: '100000'
+    approve_above:
+    - kind: open_transaction
+      currency: USD
+      amount: '50000'
+    window_caps:
+    - kind: refund
+      currency: USD
+      amount: '5000'
+      window: 3600
+    gated_reads: []
+  before: []
+  approvals:
+    signing_key: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+    approver: cfo
+task:
+  instruction: An unbalanced entry
+  attachments: []
+agent:
+  script:
+  - tool: post
+    key: a-1
+    arguments:
+      draft:
+        postings:
+        - account: fees
+          side: debit
+          money:
+            amount: 500
+            currency: USD
+        - account: cash
+          side: credit
+          money:
+            amount: 400
+            currency: USD

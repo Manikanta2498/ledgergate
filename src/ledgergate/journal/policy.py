@@ -110,6 +110,25 @@ class PolicySet(Protocol):
     def evaluate(self, context: PolicyContext) -> Decision: ...
 
 
+MAX_WINDOW_SECONDS = (
+    10**9
+)  # ~31 years; a window beyond it is a configuration fault, not an overflow
+
+
+def _whole(value: Any) -> int:
+    """A configuration amount or window: an integer, or a decimal string of one. A float or a
+    fractional value is refused rather than truncated (minor units and seconds are whole)."""
+    if isinstance(value, bool | float):
+        raise ValueError(f"expected a whole number, got {value!r}")
+    return int(value)
+
+
+def _bounded_window(seconds: int) -> int:
+    if not 0 < seconds <= MAX_WINDOW_SECONDS:
+        raise ValueError(f"window must be within 1..{MAX_WINDOW_SECONDS} seconds, got {seconds}")
+    return seconds
+
+
 def set_name(kind: type) -> str:
     """The module-qualified class name a configuration records: two sets with one name in
     two modules are two sets."""
@@ -266,14 +285,18 @@ class ThresholdPolicySet:
         return cls(
             version=str(doc["version"]),
             deny_above=[
-                Threshold(x["kind"], x["currency"], int(x["amount"])) for x in doc["deny_above"]
+                Threshold(x["kind"], x["currency"], _whole(x["amount"])) for x in doc["deny_above"]
             ],
             approve_above=[
-                Threshold(x["kind"], x["currency"], int(x["amount"])) for x in doc["approve_above"]
+                Threshold(x["kind"], x["currency"], _whole(x["amount"]))
+                for x in doc["approve_above"]
             ],
             window_caps=[
                 WindowCap(
-                    c["kind"], c["currency"], int(c["amount"]), timedelta(seconds=int(c["window"]))
+                    c["kind"],
+                    c["currency"],
+                    _whole(c["amount"]),
+                    timedelta(seconds=_bounded_window(_whole(c["window"]))),
                 )
                 for c in doc["window_caps"]
             ],

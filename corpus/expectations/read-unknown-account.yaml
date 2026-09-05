@@ -1,0 +1,6 @@
+schema_version: '1'
+id: read-unknown-account
+status: pass
+dispositions:
+  invalid: 1
+invocations: 1

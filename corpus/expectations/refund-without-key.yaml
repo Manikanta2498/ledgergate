@@ -1,0 +1,8 @@
+schema_version: '1'
+id: refund-without-key
+status: pass
+dispositions:
+  invalid: 1
+ledger_commands: 0
+balances:
+  cash: '10000'

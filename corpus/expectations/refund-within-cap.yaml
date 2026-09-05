@@ -1,0 +1,12 @@
+schema_version: '1'
+id: refund-within-cap
+status: pass
+dispositions:
+  new: 1
+outcomes:
+  applied: 1
+matched_rules:
+  corpus-v1.within_limits: 1
+balances:
+  cash: '6000'
+  revenue: '6000'

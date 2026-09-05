@@ -1,0 +1,11 @@
+schema_version: '1'
+id: post-and-reverse
+status: pass
+dispositions:
+  new: 2
+outcomes:
+  applied: 2
+ledger_commands: 2
+balances:
+  cash: '0'
+  fees: '0'

@@ -76,6 +76,10 @@ class SteppingClock:
         current, self._next = self._next, self._next + self._step
         return current
 
+    def peek(self) -> datetime:
+        """The reading the next ``now()`` will return, without advancing."""
+        return self._next
+
 
 class SequentialIds:
     """``prefix-000001``, ``prefix-000002``, ... Deterministic and human-sortable."""

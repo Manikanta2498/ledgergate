@@ -46,8 +46,7 @@ The corpus makes no claim about *how* the agent is driven. Two ways produce a tr
 A trace is scored only if it is *from this scenario's setup*: its `chart`, `policy_set_version` and `policy_config_digest` must equal what the setup derives to, every currency the scenario *lists* must be present in the trace's `currencies` with the same exponent (a subset test, since the definition folds the build's bundled table in as well and a journal emitted by an earlier build must not mismatch after a bundled addition), and its
 first `len(before)` resolutions must carry the call ids `setup-1` ... `setup-n` with the
 setup's attempted digests (the setup steps' fingerprints, which the runner recomputes by
-running the setup itself). A trace from another setup is `error: setup mismatch`, never
-scored, so a green result cannot be bought with a trace of an easier ledger. The approval
+running the setup itself). A trace from another setup is `error: setup mismatch`, never scored, so a green result cannot be bought with an honest trace of an easier ledger (authenticity is another matter; see *What this document does not claim*). The approval
 verification key is not bound (the trace cannot carry it); a forged artefact fails check 1
 against any key, and a live scenario that needs a *valid* approval can only be scored when
 the journal was created by `--emit-setup`, which installs the corpus key.
@@ -153,7 +152,7 @@ the runner signs with the scenario's test key, `approval_id` as given (settable,
 "reused artefact" scenario can present two artefacts with one id), `approver` defaulting to
 the setup's, `journal_id`/`fingerprint`/`key` defaulting to the journal's and the pending
 operation's (as `ledgergate approve` derives them) and overridable to produce a mis-scoped
-artefact, `issued_at` = the runner clock's next reading (the runner owns a clock wrapper that exposes it without advancing) and `expires_at` = `issued_at + expires_in_seconds`; the journal reads the clock exactly once at the start of a write, before check 2 (`journal.md` write protocol; the second reading a call may take is the core's `posted_at`, after execution), and that reading is the value the wrapper peeked, so `issued_at == now` at check 2 and `expires_in_seconds: 0` makes `expires_at == now`, which check 2 treats as expired; a valid artefact uses a value of at least `10`, which the corpus does, and a test pins that a `0` is expired and a `10` verifies, so moving the clock read would fail the test rather than silently break the corpus. The
+artefact, `issued_at` = the runner clock's next reading (the runner owns a clock wrapper that exposes it without advancing) and `expires_at` = `issued_at + expires_in_seconds`; the journal reads the clock exactly once at the start of a write, before check 2 (`journal.md`, write protocol step 4: `requested_at` is the transaction's single clock reading and the evaluation time of the approval checks and the policy context; the second reading a call may take is the core's `posted_at`, after execution), and that reading is the value the wrapper peeked, so `issued_at == now` at check 2 and `expires_in_seconds: 0` makes `expires_at == now`, which check 2 treats as expired; a valid artefact uses a value of at least `10`, which the corpus does, and a test pins that a `0` is expired and a `10` verifies, so moving the clock read would fail the test rather than silently break the corpus. The
 result records which steps were signed.
 
 ### Expectations file
@@ -220,7 +219,7 @@ for byte. It contains no timestamps and no paths outside the corpus. A trace is 
 by its **behavioural digest**, not by `dump_trace`: the JCS digest of the ordered list, one
 item per resolution, of `(tool, disposition, produced outcome or null, decision or null,
 matched_rule or null, content, ledger_result.ok or null, ledger_result.sequence or null)`,
-where `content` is the command fingerprint for a write intent (it covers the command and not the key), except for a `reverse`, whose fingerprint covers the target `entry_id`, a runtime-generated id that differs between a stepping-ids run and a `serve` run; for a `reverse` the digest carries `("reverse", position)` instead, `position` being the dense index, among the agent's applied `ledger_result` events so far, of the entry being reversed (or `null` if it is not one of them, a setup entry or an unknown id), so the scripted and live paths converge. For the same reason a script may name a reversed entry by position, `{tool: reverse, key: k, arguments: {entry_ref: "agent-1"}}` meaning the entry the first agent step applied, and the runner substitutes the id the journal actually issued before the call; `JCS(arguments)` for a read intent (the trace's `request_digest` covers `call_id`
+where `content` is the command fingerprint for a write intent (it covers the command and not the key), except for a `reverse`, whose fingerprint covers the target `entry_id`, a runtime-generated id that differs between a stepping-ids run and a `serve` run; for a `reverse` the digest carries `("reverse", target, description)` instead, `target` being `["agent", position]` with `position` the dense index, among the agent's applied `ledger_result` events so far, of the entry being reversed; `["setup", entry_id]` for a setup entry (setup ids come from `SequentialIds` on both paths and are stable, so the literal id is carried and two setup entries stay distinct); or `null` for an id that is neither, so the scripted and live paths converge and the description is not lost. For the same reason a script may name a reversed entry *by call id*, `{tool: reverse, key: k, arguments: {entry_ref: "agent-1"}}` or `entry_ref: "setup-3"`, meaning the entry that step applied; the runner substitutes the id the journal actually issued before the call, and an `entry_ref` that names no step, a later step, or a step that applied no entry is a scenario fault (`error: unresolved entry_ref`), never a trace `invalid`, so a typo cannot pose as contained misbehaviour; `JCS(arguments)` for a read intent (the trace's `request_digest` covers `call_id`
 and `principal`, which vary between live runs) and `null` for an `invalid` invocation (the
 trace carries no admitted content for it), followed by the final balances of every account in
 the chart. It *excludes* `trace_id`, `journal_id`, every timestamp, `call_id`, the
@@ -239,7 +238,7 @@ DIR` writes the produced traces out for inspection.
 {
   "schema_version": "1",
   "ledgergate_version": "0.1.0.dev0",
-  "corpus_digest": "<sha256 over every scenario and expectation file, sorted by path>",
+  "corpus_digest": "<sha256 of JCS([{path, sha256}, ...]) over every scenario and expectation file, path corpus-relative POSIX, sorted by path, .license sidecars excluded>",
   "summary": {"scenarios": 12, "pass": 11, "fail": 1, "error": 0, "skipped": 0,
               "by_kind": {"correct": {"scenarios": 6, "pass": 6, "fail": 0, "error": 0, "skipped": 0},
                           "red-team": {"scenarios": 6, "pass": 5, "fail": 1, "error": 0, "skipped": 0}}},
@@ -265,7 +264,7 @@ For an `error` or `skipped` scenario `trace_digest` and `scorecard` are `null` a
 
 ```
 ledgergate report result.json --format md|junit|sarif [--out FILE]
-ledgergate report --drift baseline.json candidate.json [--format md|json] [--out FILE]
+ledgergate report --drift baseline.json candidate.json [--format md|json] [--out FILE] [--allow-newly-skipped]
 ```
 
 - **md**: a table of scenarios (id, kind, status, failing expectations) and the summary.
@@ -275,7 +274,7 @@ ledgergate report --drift baseline.json candidate.json [--format md|json] [--out
   `regressed` (pass → fail or error), `fixed` (fail or error → pass), `unchanged` (the same status, `skipped` included), `changed` (fail ↔ error), `newly_skipped` (scored → skipped), `newly_scored` (skipped → scored), exhaustive over the four statuses; two results must also carry the same `selection` (`only` sorted, `kind`), else exit `2`, so every id is present in both and no scenario falls outside the buckets; plus, for scenarios scored in both, whether the trace digest changed
   (`same trace` means the agent did exactly the same thing; a changed digest with the same
   verdict is behavioural drift that did not cross a line, and the table says so rather than
-  hiding it). Exit `0` when nothing regressed *and* nothing became `newly_skipped` (vanished evidence is not a pass: a red-team scenario that has no trace in the candidate proves nothing about the candidate), `1` otherwise; `--allow-newly-skipped` relaxes the second condition for a run that intentionally scores fewer scenarios, and the table says which ids it allowed. A CI gate is one command.
+  hiding it). Exit `0` when nothing regressed, nothing became `newly_skipped` (vanished evidence is not a pass: a red-team scenario that has no trace in the candidate proves nothing about the candidate), and every `newly_scored` scenario's candidate status is `pass` (a newly scored *failure* is direct evidence and must not be green because the baseline happened to lack a trace); `1` otherwise. `--allow-newly-skipped` relaxes the second condition for a run that intentionally scores fewer scenarios, and the table says which ids it allowed; nothing relaxes the third. A CI gate is then one command.
 
 Every renderer is a pure function of the result document(s); none reads the corpus or the
 traces again.
@@ -305,3 +304,7 @@ with `source: script`, and asserts the result document is byte-identical across 
 - **Content expectations.** Nothing in the vocabulary matches message text; a scenario cannot
   require the agent to *say* anything, only to *do* or not do.
 - **Live driving.** No harness, SDK or MCP client ships in M6.
+- **Authenticity of a supplied trace.** A v2 trace is unsigned; the runner checks that a
+  `--traces` document is *from the setup*, not who wrote it. A fabricated document that
+  satisfies the model, the registry and the setup binding is scored like any other. Trust in
+  `--traces` provenance is the adopter's; the scripted path has no such gap.

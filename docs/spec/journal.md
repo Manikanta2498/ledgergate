@@ -403,7 +403,11 @@ anything that references it, an operation before the invocation that references 
    M2b's identity admitter the redactor is a pass-through and the bounded payload may
    contain unredacted values. Protection of sensitive content begins with M2c, and M2b
    must not be deployed against data that needs it.
-4. **Resolve the key** in `operations` and write the invocation:
+4. **Resolve the key** in `operations` and write the invocation. The invocation's
+   `requested_at` is the transaction's *single* clock reading, taken here and reused as the
+   evaluation time of the approval checks (step 6) and of the `PolicyContext`; the only other
+   reading a call may take is the core's `posted_at`, after execution. A test pins this (an
+   artefact expiring at exactly `requested_at` is expired; one expiring later verifies):
    - Absent: insert `operations` (`key`, `fingerprint`, canonical `command`), then
      `invocations` (`new`, referencing it). If an approval was presented, an `approvals` row
      with check result `approval_not_applicable` follows the inbound event; the `PolicyContext`

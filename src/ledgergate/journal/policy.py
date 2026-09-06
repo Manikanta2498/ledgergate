@@ -123,6 +123,15 @@ def _whole(value: Any) -> int:
     return int(value)
 
 
+def _line_doc(x: Threshold) -> dict[str, Any]:
+    """A threshold line as configuration: `approvers` only when present, so a configuration
+    without it digests exactly as before schema 7."""
+    doc: dict[str, Any] = {"kind": x.kind, "currency": x.currency, "amount": str(x.amount)}
+    if x.approvers is not None:
+        doc["approvers"] = list(x.approvers)
+    return doc
+
+
 def _bounded_window(seconds: int) -> int:
     if not 0 < seconds <= MAX_WINDOW_SECONDS:
         raise ValueError(f"window must be within 1..{MAX_WINDOW_SECONDS} seconds, got {seconds}")
@@ -189,11 +198,19 @@ class NullPolicySet:
 
 @dataclass(frozen=True, slots=True)
 class Threshold:
-    """A monetary line for one command kind in one currency, in minor units."""
+    """A monetary line for one command kind in one currency, in minor units. An
+    ``approve_above`` line may name the approvers it admits (schema 7, principals.md);
+    ``None`` admits any registered approver, and an empty tuple is refused at construction
+    (a line nobody may approve is stranded by construction)."""
 
     kind: str
     currency: str
     amount: int
+    approvers: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.approvers is not None and len(self.approvers) == 0:
+            raise ValueError(f"{self!r}: an empty approvers list admits nobody")
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +275,9 @@ class ThresholdPolicySet:
                 )
             if not isinstance(line.currency, str) or len(line.currency) != 3:
                 raise ValueError(f"{line!r}: currency must be a three-letter code")
+        for line in self.deny_above:
+            if line.approvers is not None:
+                raise ValueError(f"{line!r}: a deny line admits no approver")
         for cap in self.window_caps:
             seconds = cap.window.total_seconds()
             if seconds <= 0 or seconds != int(seconds):
@@ -269,8 +289,8 @@ class ThresholdPolicySet:
         return {
             "set": set_name(type(self)),
             "version": self.version,
-            "deny_above": [{**asdict(x), "amount": str(x.amount)} for x in self.deny_above],
-            "approve_above": [{**asdict(x), "amount": str(x.amount)} for x in self.approve_above],
+            "deny_above": [_line_doc(x) for x in self.deny_above],
+            "approve_above": [_line_doc(x) for x in self.approve_above],
             "window_caps": [
                 {**asdict(c), "amount": str(c.amount), "window": int(c.window.total_seconds())}
                 for c in self.window_caps
@@ -288,7 +308,12 @@ class ThresholdPolicySet:
                 Threshold(x["kind"], x["currency"], _whole(x["amount"])) for x in doc["deny_above"]
             ],
             approve_above=[
-                Threshold(x["kind"], x["currency"], _whole(x["amount"]))
+                Threshold(
+                    x["kind"],
+                    x["currency"],
+                    _whole(x["amount"]),
+                    None if "approvers" not in x else tuple(str(a) for a in x["approvers"]),
+                )
                 for x in doc["approve_above"]
             ],
             window_caps=[
@@ -385,3 +410,18 @@ class ThresholdPolicySet:
                     f"{kind} of {amount} {ccy} exceeds {line.amount} and needs an approval",
                 )
         return Decision("allow", f"{self.version}.within_limits", "within every configured line")
+
+    def approvers_for(
+        self, command_kind: str | None, currency: str | None, amount: str | None
+    ) -> frozenset[str] | None:
+        """Check 1b's input (principals.md): the approvers admitted by the first
+        ``approve_above`` line matching the three fields by ``evaluate``'s own predicate, or
+        ``None`` for any approver (no matching line, a line without the field, or a command
+        without an amount)."""
+        if command_kind is None or currency is None or amount is None:
+            return None
+        value = int(amount)
+        for line in self.approve_above:
+            if line.kind == command_kind and line.currency == currency and value > line.amount:
+                return None if line.approvers is None else frozenset(line.approvers)
+        return None

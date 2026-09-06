@@ -1,8 +1,8 @@
 schema_version: '1'
-id: lifecycle-end-to-end
+id: signed-request-applied
 kind: correct
-title: Open, authorize, settle
-description: A transaction is taken through its lifecycle.
+title: A request signed by a registered principal is applied
+description: The agent signs its request; the journal attributes the invocation to the signer.
 scripted_only: false
 setup:
   started_at: '2026-01-01T00:00:00Z'
@@ -40,37 +40,27 @@ setup:
     seed: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
   - name: controller
     seed: ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8
+  principals:
+  - name: treasury-agent
+    seed: QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8
 task:
-  instruction: Open, authorize, settle
+  instruction: A request signed by a registered principal is applied
   attachments: []
 agent:
   script:
-  - tool: open_transaction
+  - tool: post
     key: a-1
     arguments:
-      transaction_id: t1
-      amount:
-        amount: 12000
-        currency: USD
-  - tool: advance
-    key: a-2
-    arguments:
-      transaction_id: t1
-      event: authorize
-  - tool: advance
-    key: a-3
-    arguments:
-      transaction_id: t1
-      event: settle
-      entry:
+      draft:
         postings:
-        - account: cash
+        - account: fees
           side: debit
           money:
-            amount: 12000
+            amount: 150
             currency: USD
-        - account: revenue
+        - account: cash
           side: credit
           money:
-            amount: 12000
+            amount: 150
             currency: USD
+    sign_as: treasury-agent

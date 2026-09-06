@@ -21,7 +21,10 @@ from pathlib import Path
 # 2: token_check; 3: policy_config, nullable approval identity; 4: message rows carry `at`;
 # 5: definition.policy_configuration, approvals.invocation UNIQUE, decision<->consumption link
 # 6: indexes serving the capacity check (events messages, invocations disposition)
-SCHEMA_VERSION = 6
+# 7: principal and approver registries (docs/spec/principals.md); invocations carry the
+#    authenticated attribution and the verified auth envelope, with the replay UNIQUE;
+#    approval_wrong_approver in both verdict vocabularies; the definition carries no key
+SCHEMA_VERSION = 7
 
 FACT_TABLES = (
     "definition",
@@ -34,6 +37,8 @@ FACT_TABLES = (
     "approval_consumptions",
     "events",
     "reads",
+    "principal_events",
+    "approver_events",
 )
 
 _DDL = """
@@ -56,7 +61,6 @@ CREATE TABLE IF NOT EXISTS definition (
     token_check TEXT NOT NULL,
     policy_config TEXT NOT NULL,
     policy_configuration TEXT,
-    approval_key TEXT NOT NULL,
     chart TEXT NOT NULL,
     currencies TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -74,6 +78,10 @@ CREATE TABLE IF NOT EXISTS invocations (
     operation INTEGER REFERENCES operations(journal_sequence),
     requested_at TEXT NOT NULL,
     principal TEXT NOT NULL,
+    authentication TEXT NOT NULL CHECK (authentication IN ('transport','signed','rejected')),
+    auth_principal TEXT,
+    auth_expires_at TEXT,
+    auth_signature TEXT,
     disposition TEXT NOT NULL
         CHECK (disposition IN ('new','replay','conflict','approval','read','invalid')),
     attempted_fingerprint TEXT,
@@ -81,8 +89,21 @@ CREATE TABLE IF NOT EXISTS invocations (
     request_digest TEXT,
     call_id TEXT,
     CHECK ((disposition IN ('read','invalid')) = (operation IS NULL)),
-    CHECK ((disposition = 'invalid') = (request_digest IS NULL))
+    CHECK ((disposition = 'invalid') = (request_digest IS NULL)),
+    -- schema 7: the verified envelope is stored exactly on a signed row, and only then is the
+    -- row's principal the envelope's; a rejected envelope is always an invalid call
+    CHECK ((authentication = 'signed') = (auth_principal IS NOT NULL)),
+    CHECK ((authentication = 'signed') = (auth_expires_at IS NOT NULL)),
+    CHECK ((authentication = 'signed') = (auth_signature IS NOT NULL)),
+    CHECK (authentication <> 'signed' OR principal = auth_principal),
+    CHECK (authentication <> 'rejected' OR disposition = 'invalid')
 );
+
+-- schema 7: the replay guarantee. A signed message presented twice is refused; the refusal
+-- row is `invalid` and so outside the index, which is why the predicate excludes it.
+CREATE UNIQUE INDEX IF NOT EXISTS invocations_signed_call
+    ON invocations(principal, call_id)
+    WHERE authentication = 'signed' AND disposition <> 'invalid';
 
 CREATE TABLE IF NOT EXISTS approvals (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
@@ -100,7 +121,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     signature TEXT NOT NULL,
     verified INTEGER NOT NULL CHECK (verified IN (0, 1)),
     check_result TEXT NOT NULL CHECK (check_result IN (
-        'checks_passed','approval_invalid','approval_expired',
+        'checks_passed','approval_invalid','approval_wrong_approver','approval_expired',
         'approval_scope_mismatch','approval_not_applicable')),
     -- Identity and display fields are the approver's words only once the signature
     -- verified; an unverified presentation keeps fixed-grammar bindings and the signature.
@@ -143,7 +164,8 @@ CREATE TABLE IF NOT EXISTS decisions (
     presentation INTEGER REFERENCES approvals(journal_sequence),
     approval_verdict TEXT CHECK (approval_verdict IS NULL OR approval_verdict IN (
         'approval_valid','approval_already_used','approval_not_applicable',
-        'approval_invalid','approval_expired','approval_scope_mismatch')),
+        'approval_invalid','approval_wrong_approver','approval_expired',
+        'approval_scope_mismatch')),
     consumption INTEGER UNIQUE REFERENCES approval_consumptions(journal_sequence),
     CHECK ((presentation IS NULL) = (approval_verdict IS NULL)),
     CHECK ((consumption IS NOT NULL) = (approval_verdict IS 'approval_valid'))
@@ -238,6 +260,71 @@ CREATE TABLE IF NOT EXISTS reads (
     head TEXT NOT NULL,
     result_digest TEXT NOT NULL
 );
+
+-- schema 7 (docs/spec/principals.md): append-only registries. A name has exactly one `add`,
+-- at most one `revoke`, never an `add` after a `revoke`; `by` is a live transport principal;
+-- on principal_events only, a revoke is by someone else and the first row is the bootstrap.
+CREATE TABLE IF NOT EXISTS principal_events (
+    journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
+    name TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('add','revoke')),
+    kind TEXT CHECK (kind IS NULL OR kind IN ('transport','signed')),
+    verification_key TEXT,
+    by TEXT NOT NULL,
+    at TEXT NOT NULL,
+    CHECK ((action = 'add') = (kind IS NOT NULL)),
+    CHECK ((action = 'add' AND kind = 'signed') = (verification_key IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS principal_events_one_add
+    ON principal_events(name) WHERE action = 'add';
+
+CREATE TRIGGER IF NOT EXISTS principal_events_monotone
+BEFORE INSERT ON principal_events
+BEGIN
+    SELECT RAISE(ABORT, 'principal already revoked')
+    WHERE EXISTS (SELECT 1 FROM principal_events WHERE name = NEW.name AND action = 'revoke');
+    SELECT RAISE(ABORT, 'principal was never added')
+    WHERE NEW.action = 'revoke'
+      AND NOT EXISTS (SELECT 1 FROM principal_events WHERE name = NEW.name AND action = 'add');
+    SELECT RAISE(ABORT, 'a principal cannot revoke itself')
+    WHERE NEW.action = 'revoke' AND NEW.by = NEW.name;
+    SELECT RAISE(ABORT, 'the first principal is the bootstrap transport principal by itself')
+    WHERE NOT EXISTS (SELECT 1 FROM principal_events)
+      AND NOT (NEW.action = 'add' AND NEW.kind = 'transport' AND NEW.by = NEW.name);
+    SELECT RAISE(ABORT, 'registry change by a principal that is not a live transport principal')
+    WHERE EXISTS (SELECT 1 FROM principal_events)
+      AND NOT (EXISTS (SELECT 1 FROM principal_events
+                       WHERE name = NEW.by AND action = 'add' AND kind = 'transport')
+               AND NOT EXISTS (SELECT 1 FROM principal_events
+                               WHERE name = NEW.by AND action = 'revoke'));
+END;
+
+CREATE TABLE IF NOT EXISTS approver_events (
+    journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
+    name TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('add','revoke')),
+    verification_key TEXT,
+    by TEXT NOT NULL,
+    at TEXT NOT NULL,
+    CHECK ((action = 'add') = (verification_key IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS approver_events_one_add
+    ON approver_events(name) WHERE action = 'add';
+
+CREATE TRIGGER IF NOT EXISTS approver_events_monotone
+BEFORE INSERT ON approver_events
+BEGIN
+    SELECT RAISE(ABORT, 'approver already revoked')
+    WHERE EXISTS (SELECT 1 FROM approver_events WHERE name = NEW.name AND action = 'revoke');
+    SELECT RAISE(ABORT, 'approver was never added')
+    WHERE NEW.action = 'revoke'
+      AND NOT EXISTS (SELECT 1 FROM approver_events WHERE name = NEW.name AND action = 'add');
+    SELECT RAISE(ABORT, 'registry change by a principal that is not a live transport principal')
+    WHERE NOT (EXISTS (SELECT 1 FROM principal_events
+                       WHERE name = NEW.by AND action = 'add' AND kind = 'transport')
+               AND NOT EXISTS (SELECT 1 FROM principal_events
+                               WHERE name = NEW.by AND action = 'revoke'));
+END;
 """
 
 

@@ -68,6 +68,11 @@ def request_for_call(rpc_id: Any, params: Any) -> dict[str, Any]:
             value["arguments"] = rest
         else:
             value["arguments"] = arguments
+    meta = params.get("_meta")
+    if isinstance(meta, dict) and "ledgergate" in meta:
+        # the one _meta member forwarded: the request's own authentication, which the journal
+        # verifies (docs/spec/principals.md); nothing else in _meta is an input to the ledger
+        value["auth"] = meta["ledgergate"]
     return value
 
 
@@ -178,6 +183,9 @@ class Server:
                     "protocolVersion": PROTOCOL_VERSION,
                     "serverInfo": {"name": "ledgergate", "version": __version__},
                     "capabilities": {"tools": {}},
+                    # read from the immutable definition at start, no journal transaction: a
+                    # client signs requests bound to this journal (principals.md)
+                    "_meta": {"ledgergate": {"journal_id": self.journal.definition.journal_id}},
                 },
             )
         elif method == "ping":

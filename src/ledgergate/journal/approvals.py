@@ -33,6 +33,7 @@ from ledgergate.ledger.identifiers import require_identifier
 CheckResult = Literal[
     "checks_passed",
     "approval_invalid",
+    "approval_wrong_approver",
     "approval_expired",
     "approval_scope_mismatch",
     "approval_not_applicable",
@@ -42,6 +43,7 @@ Verdict = Literal[
     "approval_already_used",
     "approval_not_applicable",
     "approval_invalid",
+    "approval_wrong_approver",
     "approval_expired",
     "approval_scope_mismatch",
 ]
@@ -176,12 +178,21 @@ def generate_signing_key() -> Ed25519PrivateKey:
     return Ed25519PrivateKey.generate()
 
 
+def private_bytes(private: Ed25519PrivateKey) -> bytes:
+    """The 32-byte seed of a private key, for `ledgergate keygen`."""
+    from cryptography.hazmat.primitives import serialization
+
+    return private.private_bytes(
+        serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()
+    )
+
+
 def signing_key_from_bytes(raw: bytes) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(raw)
 
 
 def verification_key_text(private: Ed25519PrivateKey) -> str:
-    """The base64url raw public key, as stored in ``definition.approval_key``."""
+    """The base64url raw public key, as the registries store it."""
     from cryptography.hazmat.primitives import serialization
 
     raw = private.public_key().public_bytes(

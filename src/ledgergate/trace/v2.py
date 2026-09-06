@@ -55,9 +55,41 @@ Verdict = Literal[
     "approval_already_used",
     "approval_not_applicable",
     "approval_invalid",
+    "approval_wrong_approver",
     "approval_expired",
     "approval_scope_mismatch",
 ]
+Authentication = Literal["transport", "signed", "rejected"]
+ADMISSION_CAUSES = frozenset(
+    {
+        # journal.md, *Admission cause vocabulary* (schema 7): owned there, mirrored here as
+        # the model's closed set
+        "not_an_object",
+        "unknown_field",
+        "unknown_tool",
+        "wrong_type",
+        "wrong_shape",
+        "missing_field",
+        "unexpected_field",
+        "invalid_identifier",
+        "unknown_account",
+        "unknown_entry",
+        "payload_too_large",
+        "approval_malformed",
+        "malformed_command",
+        "authentication_malformed",
+        "unknown_principal",
+        "bad_signature",
+        "request_expired",
+        "request_expiry_unbounded",
+        "replayed_call",
+        "revoked_principal",
+    }
+)
+
+
+def is_admission_cause(value: str) -> bool:
+    return value in ADMISSION_CAUSES or value.startswith("malformed_command:")
 
 
 class _V2Event(_Strict):
@@ -108,11 +140,24 @@ class InvocationResolution(_V2Event):
     outcome_ref: OutcomeRef | None = None
     attempted_digest: Sha256
     presentation_ref: PresentationRef | None = None
+    # schema 7 (principals.md): the authenticated attribution; absent in earlier documents
+    principal: Identifier | None = None
+    authentication: Authentication | None = None
+    error_type: ShortText | None = None
 
     @model_validator(mode="after")
     def _shape(self) -> InvocationResolution:
         if self.disposition == "approval" and self.presentation_ref is None:
             raise ValueError("an approval disposition is defined by a presented artefact")
+        if (self.principal is None) != (self.authentication is None):
+            raise ValueError("principal and authentication come together (schema 7)")
+        if self.authentication == "rejected" and self.disposition != "invalid":
+            raise ValueError("a rejected envelope is always an invalid call")
+        wants_error = self.authentication is not None and self.disposition == "invalid"
+        if (self.error_type is not None) != wants_error:
+            raise ValueError("error_type is present exactly on a schema-7 invalid resolution")
+        if self.error_type is not None and not is_admission_cause(self.error_type):
+            raise ValueError(f"error_type {self.error_type!r} is outside the admission causes")
         has_op = self.operation_id is not None
         if self.disposition in ("read", "invalid") and has_op:
             raise ValueError(f"{self.disposition} resolution carries no operation")
@@ -131,6 +176,7 @@ class ApprovalRef(_Strict):
 class ContextApproval(_Strict):
     presentation: Annotated[StrictInt, Field(ge=1)]
     verdict: Verdict
+    approver: Identifier | None = None  # schema 7: the authenticated name when check 1 passed
 
 
 DecimalText = Annotated[str, Field(pattern=r"^-?[0-9]{1,40}$")]
@@ -208,6 +254,7 @@ class ApprovalPresentation(_V2Event):
     check_result: Literal[
         "checks_passed",
         "approval_invalid",
+        "approval_wrong_approver",
         "approval_expired",
         "approval_scope_mismatch",
         "approval_not_applicable",
@@ -233,6 +280,30 @@ class ApprovalPresentation(_V2Event):
         return self
 
 
+class RegistryChange(_V2Event):
+    """A registry event (schema 7, principals.md): standalone, no invocation anchor, at its
+    journal_sequence position, so a verifier computes liveness at any sequence."""
+
+    name: Identifier
+    action: Literal["add", "revoke"]
+    by: Identifier
+
+
+class PrincipalChange(RegistryChange):
+    type: Literal["principal_change"] = "principal_change"
+    kind: Literal["transport", "signed"] | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> PrincipalChange:
+        if (self.action == "add") != (self.kind is not None):
+            raise ValueError("kind is present exactly on an add")
+        return self
+
+
+class ApproverChange(RegistryChange):
+    type: Literal["approver_change"] = "approver_change"
+
+
 class ReadResult(_V2Event):
     type: Literal["read_result"] = "read_result"
     intent_id: Identifier
@@ -254,6 +325,8 @@ AnyV2Event = (
     | LedgerCommandEvent
     | LedgerResultEvent
     | ReadResult
+    | PrincipalChange
+    | ApproverChange
 )
 V2Event = Annotated[AnyV2Event, Field(discriminator="type")]
 
@@ -681,6 +754,16 @@ class TraceV2(_Strict):
             raise ValueError(
                 f"{r.intent_id}: every event of an invocation carries its requested_at"
             )
+        if r.disposition == "invalid":
+            served = None if result.error is None else result.error.type
+            if r.authentication is not None:
+                # schema 7: the resolution's cause is the served error type (principals.md)
+                if served != r.error_type:
+                    raise ValueError(f"{r.intent_id}: error_type differs from the served error")
+            elif served != "AdmissionError":
+                raise ValueError(
+                    f"{r.intent_id}: a pre-schema-7 invalid call serves AdmissionError"
+                )
         self._check_call_binds_intent(r, call, group)
         return {id(call), id(result)}
 

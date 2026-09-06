@@ -9,7 +9,7 @@
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestones M0 to M7 complete.** The deterministic ledger core (M1),
+> **Status: pre-alpha, milestones M0 to M7 and M8a complete.** The deterministic ledger core (M1),
 > the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
 > the tokenizing, redacting admitter (M2c), the policy and approval layer, trace v2 with
 > journal derivation, the invariant registry behind `ledgergate verify` (M3), and the stdio MCP runtime
@@ -72,8 +72,8 @@ durable journal, so a process can be restarted and answer a retried key exactly 
 the first time; the tokenizing, redacting admitter, so no caller identifier or free text
 has to reach disk; the policy layer with signed, single-use approvals; trace v2 derived
 from the journal; the invariant registry behind `ledgergate verify`; the stdio MCP runtime
-`ledgergate serve`; the OpenTelemetry GenAI adapter behind `ledgergate record`; and the corpus of twenty-two
-scripted scenarios, nine correct and thirteen red-team, that `ledgergate run` scores into
+`ledgergate serve`; the OpenTelemetry GenAI adapter behind `ledgergate record`; and the corpus of twenty-five
+scripted scenarios, ten correct and fifteen red-team (three of them signed requests and named approvers), that `ledgergate run` scores into
 `result.json` and `ledgergate report` renders. The gates that keep all of it honest run in CI on every pull request and every push
 to `main`.
 
@@ -232,6 +232,20 @@ bound to that one operation in that one journal (`ledgergate journal pending`,
 an invalid, expired, mis-scoped or reused one is refused by the runtime without invoking
 policy, and the operation stays pending for a correct one. Every verdict is a row.
 
+**Principals and approvers (M8a).** Journal schema 7 makes *who* a recorded fact. A
+principal registry (`ledgergate journal principal add|revoke`) and an approver registry are
+append-only logs in the journal itself, seeded at `create` (the operator's transport
+principal by itself; `--approver NAME=KEYFILE`), so "who was `treasury-agent` at sequence
+*n*" has one answer. A request may carry an Ed25519 `auth` envelope over its own canonical
+content, the journal id and the call id; the journal verifies it before decoding the command,
+attributes the invocation to the signer, and refuses a replayed message by a `UNIQUE` index.
+An approval artefact now verifies only under the key registered for the approver it names, and
+a policy line may say `approvers: [cfo]`: the controller's valid artefact is
+`approval_wrong_approver`, decided before anything is consumed. Every invocation row and trace
+resolution carries `principal` and `authentication`; an `invalid` call's error type is the
+admission cause (`bad_signature`, `unknown_principal`, ...), so a trace names the refusal, and
+`verify` gains `attributions_are_registered`. Nothing listens on a network yet (M8b).
+
 **The corpus (M6).** `corpus/scenarios/{correct,red-team}/<id>.yaml` plus
 `corpus/expectations/<id>.yaml`: pure data, Apache-2.0. A scenario is a setup (chart, policy,
 a test approval key, `before` steps), a task, and, for every shipped scenario, a script that
@@ -254,8 +268,8 @@ misbehaviours were contained ([docs/spec/assurance.md](docs/spec/assurance.md)).
 ```text
 $ ledgergate run --corpus corpus --out result.json && ledgergate report result.json
 # LedgerGate corpus result
-**Conformance: L2 (22 scenarios, 13 red-team; no baseline)**
-**22 pass, 0 fail, 0 error, 0 skipped** of 22.
+**Conformance: L2 (25 scenarios, 15 red-team; no baseline)**
+**25 pass, 0 fail, 0 error, 0 skipped** of 25.
 ```
 
 **The OpenTelemetry adapter (M5).** `ledgergate record --from-otel export.json` turns an
@@ -473,7 +487,7 @@ These are enforced by CI gates, not by convention:
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
 | M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | **done**, release pipeline unrehearsed: nothing is tagged until it has run against TestPyPI |
-| M8a | Authenticated principals (registry + signed requests, verified in admission) and named approvers (registry; policy may require a named approver) ([docs/spec/principals.md](docs/spec/principals.md)) | next |
+| M8a | Authenticated principals (registry + signed requests, verified in admission) and named approvers (registry; policy may require a named approver) ([docs/spec/principals.md](docs/spec/principals.md)) | **done** (journal schema 7) |
 | M8b | Network transport: a thin MCP listener over signed requests | |
 | M8c | External execution via outbox and reconciliation; the cross-clone approval consumption authority | |
 

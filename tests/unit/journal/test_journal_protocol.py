@@ -67,6 +67,8 @@ class TestGlobalSequenceAndAppendOnly:  # family 12
         journal.handle(balance("cash"))
         if table in ("approvals", "approval_consumptions"):
             _seed_approval_rows(raw)
+        if table == "approver_events":
+            _seed_approver_row(raw)
         assert count(raw, table), f"{table} must have a row for the trigger to fire"
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             raw.execute(f"DELETE FROM {table}")
@@ -93,7 +95,10 @@ class TestNewOperation:  # families 3, 7, 10
         kinds = [
             k
             for (_s, k) in raw.execute(
-                "SELECT journal_sequence, kind FROM journal WHERE kind != 'definition' ORDER BY 1"
+                "SELECT journal_sequence, kind FROM journal"
+                # the create transaction: the definition and the bootstrap registry rows
+                " WHERE kind NOT IN ('definition', 'principal_events', 'approver_events')"
+                " ORDER BY 1"
             )
         ]
         assert kinds == [
@@ -186,7 +191,7 @@ class TestReplayAndConflict:  # family 4
         )
         inv = rows(raw, "invocations")[1]
         resp = rows(raw, "invocation_responses")[1]
-        assert inv[4] == "replay" and inv[1] == rows(raw, "operations")[0][0]
+        assert inv[8] == "replay" and inv[1] == rows(raw, "operations")[0][0]
         assert resp[3] == first.outcome and resp[4] == "replayed"
         assert journal.ledger.sequence == 1
 
@@ -203,8 +208,8 @@ class TestReplayAndConflict:  # family 4
         )
         inv = rows(raw, "invocations")[1]
         (op,) = rows(raw, "operations")
-        assert inv[4] == "conflict" and inv[5] != op[2]  # attempted fingerprint differs
-        assert json.loads(inv[6])["draft"]["postings"][0]["money"]["amount"] == 5
+        assert inv[8] == "conflict" and inv[9] != op[2]  # attempted fingerprint differs
+        assert json.loads(inv[10])["draft"]["postings"][0]["money"]["amount"] == 5
         assert rows(raw, "invocation_responses")[1][3] is None
         assert count(raw, "outcomes") == 1
 
@@ -265,14 +270,15 @@ class TestInvalidAdmission:  # family 2
     ) -> None:
         r = journal.handle(value)
         assert (r.disposition, r.response, r.ok) == ("invalid", "invalid", False)
-        assert r.error_message == f"{code} at {path}"
+        # schema 7: the cause is the error type and the path is the whole message
+        assert (r.error_type, r.error_message) == (code, path)
         assert (
             count(raw, "operations") == 0
             and count(raw, "outcomes") == 0
             and count(raw, "decisions") == 0
         )
         (inv,) = rows(raw, "invocations")
-        assert inv[4] == "invalid" and inv[1] is None and inv[7] is None  # no request_digest
+        assert inv[8] == "invalid" and inv[1] is None and inv[11] is None  # no request_digest
         inbound, outbound = rows(raw, "events")
         envelope = json.loads(inbound[3])
         assert envelope["error"] == {"code": code, "path": path}
@@ -288,7 +294,7 @@ class TestInvalidAdmission:  # family 2
         journal.handle({"tool": "post", "call_id": "fine", "key": "k", "arguments": {}})
         journal.handle({"tool": "post", "call_id": "bad\rid", "key": "k", "arguments": {}})
         first, second = rows(raw, "invocations")
-        assert first[8] == "fine" and second[8] is None
+        assert first[12] == "fine" and second[12] is None
 
     def test_a_malformed_artefact_writes_no_presentation_row(
         self, journal: Journal, raw: sqlite3.Connection
@@ -316,7 +322,7 @@ class TestReads:  # family 5
         (rd,) = rows(raw, "reads")
         assert rd[2] == journal.cursor and rd[3] == journal.ledger.head and len(rd[4]) == 64
         inv = rows(raw, "invocations")[1]
-        assert inv[4] == "read" and inv[1] is None and inv[7] is not None
+        assert inv[8] == "read" and inv[1] is None and inv[11] is not None
         assert count(raw, "decisions") == 1  # the write's; the null policy gates no reads
         assert count(raw, "operations") == 1 and count(raw, "outcomes") == 1
 
@@ -325,7 +331,7 @@ class TestReads:  # family 5
     ) -> None:
         r = journal.handle(balance("nope"))
         assert (r.disposition, r.response, r.ok) == ("invalid", "invalid", False)
-        assert r.error_message == "unknown_account at arguments.account"
+        assert (r.error_type, r.error_message) == ("unknown_account", "arguments.account")
         assert count(raw, "reads") == 0 and count(raw, "invocation_responses") == 1
 
     def test_trial_balance_amounts_are_decimal_strings(self, journal: Journal) -> None:
@@ -685,8 +691,8 @@ class TestAdmissionEdges:
         self, journal: Journal, value: object, code: str, path: str
     ) -> None:
         r = journal.handle(value)
-        assert r.response == "invalid" and r.error_message == f"{code} at {path}"
-        assert "k" not in (r.error_message or "").split(" at ")[0]  # the code, not the value
+        assert r.response == "invalid" and (r.error_type, r.error_message) == (code, path)
+        assert "k" not in (r.error_type or "")  # the code, not the value
 
 
 class TestReviewFindings:
@@ -718,7 +724,7 @@ class TestReviewFindings:
             {"tool": "post", "call_id": "c", "key": "k", "arguments": {"draft": draft}}
         )
         assert (r.disposition, r.response) == ("invalid", "invalid")
-        assert r.error_message == f"malformed_command:{error} at arguments"
+        assert (r.error_type, r.error_message) == (f"malformed_command:{error}", "arguments")
         assert count(raw, "invocations") == 1 and count(raw, "operations") == 0
         # and the key is not spent by a malformed attempt
         ok = journal.handle(post("k", call_id="c2"))
@@ -814,7 +820,7 @@ class TestReviewFindings:
         seq = raw.execute("INSERT INTO journal (kind) VALUES ('definition')").lastrowid
         with pytest.raises(sqlite3.IntegrityError):
             raw.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:])
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *d[1:])
             )
         raw.execute("ROLLBACK")
 
@@ -833,7 +839,7 @@ class TestReviewFindings:
                 "principal": "local",
             }
         )
-        assert inv[7] == expected
+        assert inv[11] == expected
 
 
 class TestEffectFaults:
@@ -923,7 +929,7 @@ class TestRedactionSeam:
             }
         )
         (d,) = rows(raw, "definition")
-        assert json.loads(d[12])[0]["name"] == "[redacted]"
+        assert json.loads(d[11])[0]["name"] == "[redacted]"
         message = next(e for e in rows(raw, "events") if e[2] == "message")
         assert json.loads(message[3])["content"] == "[redacted]"
         (out,) = rows(raw, "outcomes")
@@ -957,7 +963,7 @@ class TestRedactionSeam:
         )
         j.handle({"tool": "post", "call_id": "c2", "key": "k", "arguments": {}, "SSN 123-45": 1})
         first, _second = rows(raw, "invocations")
-        assert first[8] == "tok_16"
+        assert first[12] == "tok_16"
         envelope = json.loads(rows(raw, "events")[0][3])
         assert envelope["call_id"] == "tok_16" and envelope["payload"] == "[redacted]"
         assert '"4111"' not in json.dumps(envelope)  # quoted: cannot occur inside a hex digest
@@ -1046,7 +1052,7 @@ class TestIdentifiersInsideArguments:
     ) -> None:
         r = journal.handle({"tool": tool, "call_id": "c", "key": "k", "arguments": arguments})
         assert (r.disposition, r.response) == ("invalid", "invalid")
-        assert r.error_message == f"invalid_identifier at {path}"
+        assert (r.error_type, r.error_message) == ("invalid_identifier", path)
         assert count(raw, "operations") == 0
         assert journal.handle(open_txn("k", "t-ok")).response == "applied"  # key not spent
 
@@ -1072,7 +1078,7 @@ class TestRegistryBinding:
                 "arguments": {"transaction_id": "t", "amount": {"amount": 1, "currency": "ZZZ"}},
             }
         )
-        assert r.response == "invalid" and "malformed_command" in (r.error_message or "")
+        assert r.response == "invalid" and "malformed_command" in (r.error_type or "")
         j.close()
 
     def test_undecodable_applied_outcome_is_an_integrity_failure(
@@ -1110,7 +1116,10 @@ class TestRegistryBinding:
             {"tool": "post", "call_id": "c", "key": "k", "arguments": {"draft": draft}}
         )
         assert r.response == "invalid"
-        assert r.error_message == "unknown_account at arguments.draft.postings[0].account"
+        assert (r.error_type, r.error_message) == (
+            "unknown_account",
+            "arguments.draft.postings[0].account",
+        )
         assert count(raw, "operations") == 0
         assert journal.handle(post("k")).response == "applied"  # the key was never spent
 
@@ -1238,7 +1247,7 @@ class TestSchemaVersionRefusal:
 def _seed_approval_rows(raw: sqlite3.Connection) -> None:
     """Hand-written presentation and consumption rows, shaped as the protocol writes them,
     so the append-only triggers on both tables are exercised."""
-    (inv,) = [r for r in rows(raw, "invocations") if r[4] == "new"]
+    (inv,) = [r for r in rows(raw, "invocations") if r[8] == "new"]
     raw.execute("BEGIN")
     pres = raw.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
     raw.execute(
@@ -1263,4 +1272,16 @@ def _seed_approval_rows(raw: sqlite3.Connection) -> None:
     )
     cons = raw.execute("INSERT INTO journal (kind) VALUES ('approval_consumptions')").lastrowid
     raw.execute("INSERT INTO approval_consumptions VALUES (?,?,?,?)", (cons, "a1", pres, inv[0]))
+    raw.execute("COMMIT")
+
+
+def _seed_approver_row(raw: sqlite3.Connection) -> None:
+    """One hand-written approver add, by the bootstrap transport principal, so the
+    append-only triggers on the schema-7 registry table are exercised too."""
+    raw.execute("BEGIN")
+    seq = raw.execute("INSERT INTO journal (kind) VALUES ('approver_events')").lastrowid
+    raw.execute(
+        "INSERT INTO approver_events VALUES (?,?,?,?,?,?)",
+        (seq, "cfo", "add", "A" * 43, "local", "2026-01-01T00:00:00+00:00"),
+    )
     raw.execute("COMMIT")

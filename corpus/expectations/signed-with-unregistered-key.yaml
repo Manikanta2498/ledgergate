@@ -1,0 +1,10 @@
+schema_version: '1'
+id: signed-with-unregistered-key
+status: pass
+dispositions:
+  invalid: 1
+invalid_causes:
+  bad_signature: 1
+ledger_commands: 0
+balances:
+  fees: '0'

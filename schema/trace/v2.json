@@ -201,6 +201,7 @@
           "enum": [
             "checks_passed",
             "approval_invalid",
+            "approval_wrong_approver",
             "approval_expired",
             "approval_scope_mismatch",
             "approval_not_applicable"
@@ -285,6 +286,7 @@
             "approval_already_used",
             "approval_not_applicable",
             "approval_invalid",
+            "approval_wrong_approver",
             "approval_expired",
             "approval_scope_mismatch"
           ],
@@ -297,6 +299,58 @@
         "verdict"
       ],
       "title": "ApprovalRef",
+      "type": "object"
+    },
+    "ApproverChange": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "add",
+            "revoke"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "by": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "By",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "approver_change",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "at",
+        "by",
+        "name",
+        "seq",
+        "type"
+      ],
+      "title": "ApproverChange",
       "type": "object"
     },
     "CommandIntent": {
@@ -376,6 +430,21 @@
     "ContextApproval": {
       "additionalProperties": false,
       "properties": {
+        "approver": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approver"
+        },
         "presentation": {
           "minimum": 1,
           "title": "Presentation",
@@ -387,6 +456,7 @@
             "approval_already_used",
             "approval_not_applicable",
             "approval_invalid",
+            "approval_wrong_approver",
             "approval_expired",
             "approval_scope_mismatch"
           ],
@@ -493,6 +563,23 @@
           "title": "Attempted Digest",
           "type": "string"
         },
+        "authentication": {
+          "anyOf": [
+            {
+              "enum": [
+                "transport",
+                "signed",
+                "rejected"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authentication"
+        },
         "disposition": {
           "enum": [
             "new",
@@ -505,6 +592,19 @@
           ],
           "title": "Disposition",
           "type": "string"
+        },
+        "error_type": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Type"
         },
         "intent_id": {
           "maxLength": 256,
@@ -553,6 +653,21 @@
           ],
           "default": null,
           "title": "Presentation Ref"
+        },
+        "principal": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Principal"
         },
         "seq": {
           "minimum": 1,
@@ -1232,6 +1347,74 @@
       "title": "PostingDoc",
       "type": "object"
     },
+    "PrincipalChange": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "add",
+            "revoke"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "by": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "By",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "transport",
+                "signed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000](?:[^\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000]*[^\\s\r\n\u000b\f\u001c\u001d\u001e\u0085\u2028\u2029\u0000])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "principal_change",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "at",
+        "by",
+        "name",
+        "seq",
+        "type"
+      ],
+      "title": "PrincipalChange",
+      "type": "object"
+    },
     "ReadIntent": {
       "additionalProperties": false,
       "properties": {
@@ -1608,6 +1791,7 @@
         "discriminator": {
           "mapping": {
             "approval_presentation": "#/$defs/ApprovalPresentation",
+            "approver_change": "#/$defs/ApproverChange",
             "command_intent": "#/$defs/CommandIntent",
             "invocation_resolution": "#/$defs/InvocationResolution",
             "ledger_command": "#/$defs/LedgerCommandEvent",
@@ -1615,6 +1799,7 @@
             "legacy_intent": "#/$defs/LegacyIntent",
             "message": "#/$defs/MessageEvent",
             "policy_decision": "#/$defs/PolicyDecision",
+            "principal_change": "#/$defs/PrincipalChange",
             "read_intent": "#/$defs/ReadIntent",
             "read_result": "#/$defs/ReadResult",
             "tool_call": "#/$defs/ToolCallEvent",
@@ -1658,6 +1843,12 @@
           },
           {
             "$ref": "#/$defs/ReadResult"
+          },
+          {
+            "$ref": "#/$defs/PrincipalChange"
+          },
+          {
+            "$ref": "#/$defs/ApproverChange"
           }
         ]
       },

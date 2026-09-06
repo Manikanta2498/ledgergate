@@ -139,6 +139,10 @@ class TestWireGrammar:
         )
         assert responses[0]["result"]["protocolVersion"] == PROTOCOL_VERSION
         assert responses[0]["result"]["capabilities"] == {"tools": {}}
+        # schema 7: a client learns the journal id here, to sign requests bound to it
+        assert responses[0]["result"]["_meta"] == {
+            "ledgergate": {"journal_id": j.definition.journal_id}
+        }
         assert responses[1]["result"] == {}
         j.close()
 
@@ -165,6 +169,14 @@ class TestMapping:
             "key": "k",
             "approval": {"a": 1},
             "arguments": {"draft": DRAFT},
+        }  # every _meta member but `ledgergate` stays out of the value
+        signed = request_for_call(
+            7, {"name": "trial_balance", "_meta": {"x": 1, "ledgergate": {"principal": "agent"}}}
+        )
+        assert signed == {
+            "call_id": "rpc-n7",
+            "tool": "trial_balance",
+            "auth": {"principal": "agent"},  # the one member forwarded, as `auth`
         }
         assert request_for_call("7", {"name": "post"}) == {"call_id": "rpc-s7", "tool": "post"}
         assert request_for_call(1, {}) == {"call_id": "rpc-n1"}
@@ -199,17 +211,20 @@ class TestMapping:
             ),  # id renders to a non-identifier: recorded, unrecoverable call id
         )
         results = [r["result"]["structuredContent"] for r in responses]
-        errors = [x["error"]["message"] if not x["ok"] else "ok" for x in results]
+        # schema 7: the type is the admission cause, the message the path alone
+        errors = [
+            (x["error"]["type"], x["error"]["message"]) if not x["ok"] else "ok" for x in results
+        ]
         assert errors == [
-            "unknown_tool at tool",
-            "wrong_type at tool",
-            "missing_field at tool",
-            "wrong_type at arguments",
-            "missing_field at key",
-            "wrong_type at key",
-            "unexpected_field at key",
+            ("unknown_tool", "tool"),
+            ("wrong_type", "tool"),
+            ("missing_field", "tool"),
+            ("wrong_type", "arguments"),
+            ("missing_field", "key"),
+            ("wrong_type", "key"),
+            ("unexpected_field", "key"),
             "ok",
-            "invalid_identifier at call_id",
+            ("invalid_identifier", "call_id"),
         ]
         assert all(
             r["result"]["isError"] == (not x["ok"]) for r, x in zip(responses, results, strict=True)
@@ -501,7 +516,7 @@ class TestServeCli:
 
         j = str(tmp_path / "j.journal")
         assert main(["serve", "--journal", j, "--principal", "a b\n"]) == 2
-        assert main(["serve", "--journal", j, "--approval-key", "x"]) == 2  # only with --create
+        assert main(["serve", "--journal", j, "--approver", "cfo=x.key"]) == 2  # only with --create
         assert main(["serve", "--journal", j, "--create"]) == 2  # needs --chart
         assert main(["serve", "--journal", j]) == 2  # does not exist
         short = tmp_path / "short.key"
@@ -661,7 +676,7 @@ class TestWrapperClassificationEndToEnd:
         assert err[-1].endswith("IntegrityError")
         j.close()
 
-    def test_policy_and_approval_key_flag_errors_are_named(
+    def test_policy_and_approver_flag_errors_are_named(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ledgergate.cli.__main__ import main
@@ -673,5 +688,11 @@ class TestWrapperClassificationEndToEnd:
         chart = tmp_path / "chart.json"
         chart.write_text(json.dumps([{"account_id": "cash", "kind": "asset", "currency": "USD"}]))
         create = ["serve", "--journal", str(tmp_path / "j"), "--create", "--chart", str(chart)]
-        assert main([*create, "--approval-key", "not-a-key"]) == 2
-        assert "--approval-key is not" in capsys.readouterr().err
+        bad_key = tmp_path / "bad.key"
+        bad_key.write_text("not-a-key")
+        assert main([*create, "--approver", f"cfo={bad_key}"]) == 2
+        assert "approver 'cfo': not an Ed25519 verification key" in capsys.readouterr().err
+        assert main([*create, "--approver", "no-equals-sign"]) == 2
+        assert "--approver expects NAME=KEYFILE" in capsys.readouterr().err
+        assert main([*create, "--approver", f"cfo={tmp_path / 'missing.key'}"]) == 2
+        assert "cannot read approver key file" in capsys.readouterr().err

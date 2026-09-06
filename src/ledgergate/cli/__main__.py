@@ -92,7 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--create", action="store_true", help="create the journal from --chart")
     serve.add_argument("--chart", type=Path, help="JSON array of accounts (AccountDoc shape)")
     serve.add_argument("--policy", type=Path, help="ThresholdPolicySet configuration document")
-    serve.add_argument("--approval-key", help="Ed25519 verification key text; with --create only")
+    serve.add_argument(
+        "--approver",
+        action="append",
+        default=[],
+        metavar="NAME=KEYFILE",
+        help="seed the approver registry (with --create only; repeatable)",
+    )
     serve.add_argument("--token-key-file", type=Path, help="tokenizer key, 32+ raw bytes")
     serve.add_argument("--principal", default="local", help="the one local principal")
     serve.set_defaults(handler=serve_command)
@@ -119,13 +125,54 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("--approver", required=True, help="who approves (an identifier)")
     approve.add_argument("--approval-id", required=True, help="a fresh, unique identifier")
     approve.add_argument(
-        "--signing-key",
+        "--seed-file",
         required=True,
         type=Path,
-        help="file holding the 32-byte Ed25519 private key (raw or hex)",
+        help="file holding the 32-byte Ed25519 seed (raw or hex); must be the key registered"
+        " under --approver",
     )
     approve.add_argument("--valid-hours", type=float, default=24.0)
     approve.set_defaults(handler=journal_approve)
+
+    keygen = sub.add_parser("keygen", help="write an Ed25519 seed and print its verification key")
+    keygen.add_argument("--seed-file", required=True, type=Path)
+    keygen.set_defaults(handler=keygen_command)
+
+    sign = sub.add_parser(
+        "sign", help="produce the auth envelope for a request value (docs/spec/principals.md)"
+    )
+    sign.add_argument("request", type=Path, help="JSON file: the step-4 request value")
+    sign.add_argument("--seed-file", required=True, type=Path)
+    sign.add_argument("--journal-id", required=True)
+    sign.add_argument("--principal", required=True)
+    sign.add_argument("--expires-in", type=int, default=300, help="seconds, at most 86340")
+    sign.set_defaults(handler=sign_command)
+
+    jid = journal_sub.add_parser("id", help="print the journal id")
+    jid.add_argument("path")
+    jid.set_defaults(handler=journal_id_command)
+    for registry, help_text in (
+        ("principal", "the principal registry (docs/spec/principals.md)"),
+        ("approver", "the approver registry"),
+    ):
+        reg = journal_sub.add_parser(registry, help=help_text)
+        reg_sub = reg.add_subparsers(dest="registry_command", metavar="{add,revoke,list}")
+        add = reg_sub.add_parser("add")
+        add.add_argument("path")
+        add.add_argument("name")
+        add.add_argument("--verification-key-file", type=Path, help="base64url Ed25519 key")
+        if registry == "principal":
+            add.add_argument("--kind", choices=["transport", "signed"], default="signed")
+        add.add_argument("--principal", default="local", help="the operator running this")
+        add.set_defaults(handler=registry_command, registry=registry, action="add")
+        revoke = reg_sub.add_parser("revoke")
+        revoke.add_argument("path")
+        revoke.add_argument("name")
+        revoke.add_argument("--principal", default="local")
+        revoke.set_defaults(handler=registry_command, registry=registry, action="revoke")
+        lst = reg_sub.add_parser("list")
+        lst.add_argument("path")
+        lst.set_defaults(handler=registry_command, registry=registry, action="list")
 
     return parser
 
@@ -169,6 +216,151 @@ def journal_pending(args: argparse.Namespace) -> int:
     return 0
 
 
+def _live_registry_key(conn: sqlite3.Connection, table: str, name: str) -> str | None:
+    """The verification key registered under ``name`` and live at the head, or None."""
+    assert table in ("principal_events", "approver_events")
+    row = conn.execute(
+        f"SELECT verification_key FROM {table} WHERE name = ? AND action = 'add'",  # noqa: S608
+        (name,),
+    ).fetchone()
+    if row is None:
+        return None
+    revoked = conn.execute(
+        f"SELECT 1 FROM {table} WHERE name = ? AND action = 'revoke'",  # noqa: S608 - fixed
+        (name,),
+    ).fetchone()
+    return None if revoked is not None else str(row[0])
+
+
+def _read_seed(path: Path) -> Any:
+    from ledgergate.journal import signing_key_from_bytes
+
+    raw = path.read_bytes()
+    return signing_key_from_bytes(
+        raw if len(raw) == 32 else bytes.fromhex(raw.decode("ascii").strip())
+    )
+
+
+def keygen_command(args: argparse.Namespace) -> int:
+    import os
+
+    from ledgergate.journal import generate_signing_key, verification_key_text
+    from ledgergate.journal.approvals import private_bytes
+
+    if args.seed_file.exists():
+        print(f"{args.seed_file} exists; refusing to overwrite a seed", file=sys.stderr)
+        return 2
+    private = generate_signing_key()
+    fd = os.open(args.seed_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(private_bytes(private))
+    print(verification_key_text(private))
+    return 0
+
+
+def sign_command(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime, timedelta
+
+    from ledgergate.journal.auth import SIGN_CAP_SECONDS, sign_request
+
+    if not 0 < args.expires_in <= SIGN_CAP_SECONDS:
+        print(f"--expires-in must be within 1..{SIGN_CAP_SECONDS}", file=sys.stderr)
+        return 2
+    try:
+        private = _read_seed(args.seed_file)
+        request = json.loads(args.request.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        print(f"cannot read input: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    if not isinstance(request, dict) or "auth" in request:
+        print("the request must be a JSON object without an auth member", file=sys.stderr)
+        return 2
+    envelope = sign_request(
+        request,
+        private=private,
+        journal_id=args.journal_id,
+        principal=args.principal,
+        expires_at=datetime.now(UTC) + timedelta(seconds=args.expires_in),
+    )
+    print(json.dumps(envelope, sort_keys=True))
+    return 0
+
+
+def journal_id_command(args: argparse.Namespace) -> int:
+    try:
+        conn = _read_only(args.path)
+        try:
+            (jid,) = conn.execute("SELECT journal_id FROM definition").fetchone()
+        finally:
+            conn.close()
+    except (sqlite3.Error, TypeError) as exc:
+        print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
+        return 2
+    print(jid)
+    return 0
+
+
+def registry_command(args: argparse.Namespace) -> int:
+    """`journal principal|approver add|revoke|list`: the operator's registry changes, run as
+    the named transport principal (docs/spec/principals.md)."""
+    from ledgergate.journal import ConfigurationError, Journal, JournalError
+    from ledgergate.mcp.effects import RandomIds, SystemClock
+
+    table = f"{args.registry}_events"
+    if args.action == "list":
+        try:
+            conn = _read_only(args.path)
+            try:
+                rows = conn.execute(
+                    f"SELECT journal_sequence, name, action, by, at FROM {table}"  # noqa: S608
+                    " ORDER BY journal_sequence"
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
+            return 2
+        for seq, name, action, by, at in rows:
+            print(json.dumps({"sequence": seq, "name": name, "action": action, "by": by, "at": at}))
+        return 0
+    key_text: str | None = None
+    if args.action == "add" and getattr(args, "verification_key_file", None) is not None:
+        try:
+            key_text = args.verification_key_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"cannot read key file: {exc}", file=sys.stderr)
+            return 2
+    try:
+        journal = Journal.open(
+            args.path, clock=SystemClock(), ids=RandomIds(), principal=args.principal
+        )
+    except (JournalError, ConfigurationError) as exc:
+        print(f"cannot open journal: {exc}", file=sys.stderr)
+        return 2
+    try:
+        if args.registry == "principal" and args.action == "add":
+            kind = args.kind
+            if kind == "signed" and key_text is None:
+                print("a signed principal needs --verification-key-file", file=sys.stderr)
+                return 2
+            journal.add_principal(args.name, kind, key_text if kind == "signed" else None)
+        elif args.registry == "principal":
+            journal.revoke_principal(args.name)
+        elif args.action == "add":
+            if key_text is None:
+                print("an approver needs --verification-key-file", file=sys.stderr)
+                return 2
+            journal.add_approver(args.name, key_text)
+        else:
+            journal.revoke_approver(args.name)
+    except (JournalError, ConfigurationError, ValueError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        journal.close()
+    return 0
+
+
 def journal_approve(args: argparse.Namespace) -> int:
     """Issue an artefact bound to the named pending operation. The signing key never leaves
     this process; only the artefact is printed."""
@@ -185,9 +377,9 @@ def journal_approve(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     try:
-        raw = args.signing_key.read_bytes()
+        raw = args.seed_file.read_bytes()
     except OSError as exc:
-        print(f"cannot read signing key: {exc}", file=sys.stderr)
+        print(f"cannot read seed file: {exc}", file=sys.stderr)
         return 2
     try:
         # 32 raw bytes as written, or 64 hex characters (whitespace around the hex ignored;
@@ -212,7 +404,7 @@ def journal_approve(args: argparse.Namespace) -> int:
             )
             return 2
         match = [r for r in _pending_rows(conn) if r[0] == args.key]
-        (approval_key,) = conn.execute("SELECT approval_key FROM definition").fetchone()
+        approval_key = _live_registry_key(conn, "approver_events", args.approver)
         used = conn.execute(
             "SELECT 1 FROM approval_consumptions WHERE approval_id = ?", (args.approval_id,)
         ).fetchone()
@@ -222,7 +414,10 @@ def journal_approve(args: argparse.Namespace) -> int:
     finally:
         conn.close()
     if approval_key != verification_key_text(private):
-        print("signing key does not match the journal's verification key", file=sys.stderr)
+        print(
+            f"the seed is not the key registered under approver {args.approver!r}",
+            file=sys.stderr,
+        )
         return 1
     if used is not None:
         print(f"approval id {args.approval_id!r} has already been consumed", file=sys.stderr)
@@ -279,7 +474,7 @@ def run_command(args: argparse.Namespace) -> int:
             if args.traces or args.only or args.kind or args.out or args.keep_traces:
                 raise CorpusError("--emit-setup takes no other options")
             emit_setup(matches[0], Path(path))
-            if matches[0].setup.approvals is not None:
+            if matches[0].setup.approvers or matches[0].setup.principals:
                 print(
                     "ledgergate run: journal created for scoring only; the corpus signing key"
                     " is public data, so anyone can approve against it",
@@ -466,15 +661,24 @@ def serve_command(args: argparse.Namespace) -> int:
         require_identifier(args.principal, "--principal")
     except InvalidIdentifierError as exc:
         return fail(str(exc))
-    if args.approval_key is not None and not args.create:
-        return fail("--approval-key is meaningful only with --create")
-    if args.approval_key is not None:
-        from ledgergate.journal import verification_key
-
+    if args.approver and not args.create:
+        return fail("--approver is meaningful only with --create")
+    approvers: dict[str, str] = {}
+    for spec in args.approver:
+        name, sep, keyfile = spec.partition("=")
+        if not sep or "=" in name:
+            return fail(f"--approver expects NAME=KEYFILE, got {spec!r}")
         try:
-            verification_key(args.approval_key)
+            approvers[name] = Path(keyfile).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            return fail(f"cannot read approver key file {keyfile!r}: {type(exc).__name__}")
+    from ledgergate.journal import verification_key
+
+    for name, key_text in approvers.items():
+        try:
+            verification_key(key_text)
         except ValueError as exc:
-            return fail(f"--approval-key is not an Ed25519 verification key: {type(exc).__name__}")
+            return fail(f"approver {name!r}: not an Ed25519 verification key: {type(exc).__name__}")
     if args.create != (args.chart is not None):
         return fail("--create and --chart go together")
 
@@ -522,7 +726,7 @@ def serve_command(args: argparse.Namespace) -> int:
                 admitter=admitter,
                 policy=policy,
                 principal=args.principal,
-                approval_key=args.approval_key or "none",
+                approvers=approvers,
             )
         else:
             journal = Journal.open(

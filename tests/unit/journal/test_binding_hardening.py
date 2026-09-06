@@ -155,7 +155,7 @@ class TestRequestDigestAndLimits:
         j = _journal(tmp_path)
         wide = {"draft": SALE, "noise": [0] * 10_001}
         r = j.handle({"tool": "post", "call_id": "c", "key": "k", "arguments": wide})
-        assert r.response == "invalid" and "payload_too_large" in (r.error_message or "")
+        assert r.response == "invalid" and "payload_too_large" in (r.error_type or "")
         j.close()
 
     def test_too_many_postings_and_too_long_messages_are_refused(self, tmp_path: Path) -> None:
@@ -193,7 +193,7 @@ class TestSchemaLinks:
         pol = ThresholdPolicySet(
             version="p", approve_above=[Threshold("open_transaction", "USD", 100)]
         )
-        j = _journal(tmp_path, policy=pol, approval_key=verification_key_text(signer))
+        j = _journal(tmp_path, policy=pol, approvers={"cfo": verification_key_text(signer)})
         from ledgergate.journal import issue
 
         for key in ("a", "b"):

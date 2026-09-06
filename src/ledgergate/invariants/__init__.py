@@ -18,6 +18,7 @@ checked; the validator is one of the mechanisms.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -27,9 +28,12 @@ from ledgergate.ledger import GENESIS_HASH, LedgerError
 from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent, ToolResultEvent
 from ledgergate.trace.replay import replay_trace
 from ledgergate.trace.v2 import (
+    ApprovalPresentation,
+    ApproverChange,
     CommandIntent,
     InvocationResolution,
     PolicyDecision,
+    PrincipalChange,
     ReadIntent,
     ReadResult,
     TraceV2,
@@ -517,7 +521,10 @@ def committed_response_matches_journal(t: TraceV2) -> list[Finding]:
         expected_ok: bool
         expected_error: str | None
         if r.disposition == "invalid":
-            expected_ok, expected_error = False, "AdmissionError"
+            # schema 7: the resolution names the admission cause; earlier documents served
+            # the fixed AdmissionError (trace-v2.md, committed response)
+            expected_ok = False
+            expected_error = r.error_type if r.authentication is not None else "AdmissionError"
         elif r.disposition == "conflict":
             expected_ok, expected_error = False, "IdempotencyConflictError"
         elif r.disposition == "read":
@@ -728,6 +735,7 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
     witnessed = _witnessed_aggregates(t)
     intents = {e.intent_id: e for e in t.events if isinstance(e, CommandIntent)}
     for iid, d in _decided(t).items():
+        out.extend(_check_approver_line(policy, iid, d))
         if d.runtime_written:
             continue
         c = d.context
@@ -795,6 +803,157 @@ def decision_recomputes(t: TraceV2) -> list[Finding]:
                 )
             )
     return out
+
+
+def _check_approver_line(policy: Any, iid: str, d: PolicyDecision) -> list[Finding]:
+    """Check 1b recomputed (principals.md): when the context carries an authenticated approver
+    (check 1 passed), the verdict is approval_wrong_approver exactly when the approver is
+    outside the line's admitted set; a wrong-approver verdict with no approver is impossible."""
+    a = d.context.approval
+    if a is None:
+        return []
+    if a.verdict == "approval_wrong_approver" and a.approver is None:
+        return [
+            Finding(
+                "decision_recomputes",
+                "error",
+                f"{iid}: approval_wrong_approver without an authenticated approver",
+                iid,
+            )
+        ]
+    if a.approver is None:
+        return []
+    admitted = policy.approvers_for(d.context.command_kind, d.context.currency, d.context.amount)
+    outside = admitted is not None and a.approver not in admitted
+    if outside != (a.verdict == "approval_wrong_approver"):
+        return [
+            Finding(
+                "decision_recomputes",
+                "error",
+                f"{iid}: approver {a.approver} is {'outside' if outside else 'within'} the line's"
+                f" admitted set but the verdict is {a.verdict}",
+                iid,
+            )
+        ]
+    return []
+
+
+def _liveness(
+    t: TraceV2,
+) -> tuple[dict[str, list[tuple[int, str, str | None]]], dict[str, list[tuple[int, str]]]]:
+    """Per name, the (position, action, kind) events, in trace order, for both registries."""
+    principals: dict[str, list[tuple[int, str, str | None]]] = defaultdict(list)
+    approvers: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for pos, e in enumerate(t.events):
+        if isinstance(e, PrincipalChange):
+            principals[e.name].append((pos, e.action, e.kind))
+        elif isinstance(e, ApproverChange):
+            approvers[e.name].append((pos, e.action))
+    return principals, approvers
+
+
+def _live_at(events: list[tuple[int, str, Any]] | list[tuple[int, str]], pos: int) -> Any:
+    """The kind (or True for an approver) if the name is live at position ``pos``: added at
+    or before it and not revoked at or before it."""
+    kind: Any = None
+    for ev in events:
+        if ev[0] > pos:
+            break
+        if ev[1] == "add":
+            kind = ev[2] if len(ev) > 2 else True
+        elif ev[1] == "revoke":
+            return None
+    return kind
+
+
+def attributions_are_registered(t: TraceV2) -> list[Finding]:
+    """Every attribution names a registry entry live at its sequence (principals.md): a
+    non-rejected resolution's principal with the matching kind (a revoked_principal row's
+    principal has a revoke before it instead), a rejected row's session principal as a live
+    transport principal, every authenticated approver and every verified presentation's
+    approver, and every change event's `by` as a live transport principal, the bootstrap
+    add by itself excepted."""
+    out: list[Finding] = []
+    principals, approvers = _liveness(t)
+    changes = [e for e in t.events if isinstance(e, PrincipalChange | ApproverChange)]
+    for pos, e in enumerate(t.events):
+        if isinstance(e, PrincipalChange | ApproverChange):
+            first = changes[0] is e
+            bootstrap = (
+                first
+                and isinstance(e, PrincipalChange)
+                and e.action == "add"
+                and e.kind == "transport"
+                and e.by == e.name
+            )
+            if not bootstrap and _live_at(principals[e.by], pos) != "transport":
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.type} of {e.name} by {e.by}, not a live transport principal",
+                    )
+                )
+        elif isinstance(e, InvocationResolution) and e.authentication is not None:
+            assert e.principal is not None
+            if e.authentication == "rejected":
+                if _live_at(principals[e.principal], pos) != "transport":
+                    out.append(
+                        Finding(
+                            "attributions_are_registered",
+                            "error",
+                            f"{e.intent_id}: rejected envelope on a session whose principal"
+                            f" {e.principal} is not live",
+                            e.intent_id,
+                        )
+                    )
+            elif e.error_type == "revoked_principal":
+                revoked = any(ev[0] < pos and ev[1] == "revoke" for ev in principals[e.principal])
+                if not revoked:
+                    out.append(
+                        Finding(
+                            "attributions_are_registered",
+                            "error",
+                            f"{e.intent_id}: revoked_principal but {e.principal} was not revoked",
+                            e.intent_id,
+                        )
+                    )
+            elif _live_at(principals[e.principal], pos) != e.authentication:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: {e.authentication} principal {e.principal} is not live"
+                        " with that kind",
+                        e.intent_id,
+                    )
+                )
+        elif isinstance(e, PolicyDecision) and e.context.approval is not None:
+            name = e.context.approval.approver
+            if name is not None and _live_at(approvers[name], pos) is None:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: approver {name} is not live at the decision",
+                        e.intent_id,
+                    )
+                )
+        elif isinstance(e, ApprovalPresentation) and e.verified and e.approver is not None:
+            if _live_at(approvers[e.approver], pos) is None:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: verified presentation by {e.approver}, not live",
+                        e.intent_id,
+                    )
+                )
+    return out
+
+
+def _has_registry(t: TraceV2) -> bool:
+    return any(isinstance(e, PrincipalChange | ApproverChange) for e in t.events)
 
 
 def _context_of(d: PolicyDecision) -> Any:
@@ -961,6 +1120,13 @@ REGISTRY: tuple[Invariant, ...] = (
         "docs/spec/journal.md, read protocol (result_digest)",
         read_result_binds_the_served_value,
         lambda t: any(isinstance(e, ReadResult) for e in t.events),
+    ),
+    Invariant(
+        "attributions_are_registered",
+        attributions_are_registered.__doc__ or "",
+        "docs/spec/principals.md, trace v2",
+        attributions_are_registered,
+        _has_registry,
     ),
     Invariant(
         "decision_recomputes",

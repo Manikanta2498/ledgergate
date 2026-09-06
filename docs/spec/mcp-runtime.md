@@ -296,7 +296,7 @@ because the invariant must hold on every transaction and not only at open: immed
 after the binding check inside every `BEGIN IMMEDIATE` transaction (under the write lock, so
 two writers cannot both pass a stale count, and a full and misbound journal reports the
 binding fault) the journal evaluates
-`9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
+`9 * count(invocations) + count(events WHERE invocation IS NULL) + count(principal_events) + count(approver_events) + cost <= 5,000,000` (schema 7 adds the registry terms; `journal.md` owns the formula), with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
 up to seven events, a write up to eight) and 1 for a message, nine being the number of
 ordinal slots and therefore an upper bound. SQLite has no O(1) row count: each `count(*)` is

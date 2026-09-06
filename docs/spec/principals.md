@@ -82,7 +82,7 @@ transaction holds the registry rule:
   `authentication` = `transport`.
 - A request **with** an `auth` member is a signed invocation: attributed by the signature, not
   the session (a signed request over any stdio session is accepted; the session's principal
-  is not consulted). `principal` = the envelope's, `authentication` = `signed`, once verified.
+  is not consulted for *attribution*, though its liveness is checked first, below). `principal` = the envelope's, `authentication` = `signed`, once verified.
 - A request whose `auth` member fails one of the **clockless** checks (shape, unknown
   principal, bad signature) is recorded `invalid` with the cause below; `principal` = **the
   session's transport principal** (who delivered it; the claimed name is caller text and is
@@ -149,7 +149,7 @@ as an untyped blob, and its keyed `input_digest`), the one shape `invalid` has (
 
 **What is stored.** Every invocation whose `authentication` is `signed` (a verified envelope,
 whatever the disposition, `request_expired` and `replayed_call` rows included) persists
-`auth_principal`, `auth_expires_at` and `auth_signature` on its row, like a presentation persists an artefact; the signature is
+`auth_principal`, `auth_expires_at` and `auth_signature` on its row (an intra-row `CHECK`, as the `approvals` table already has for verified-only fields: the three are non-null iff `authentication = 'signed'`, `principal = auth_principal` when signed, and `authentication = 'rejected'` implies `disposition = 'invalid'`), like a presentation persists an artefact; the signature is
 evidence of *who*, not something a later verifier can recompute (arguments and call ids are
 tokenized before storage, so the signed bytes are gone by design), and the trace carries
 `authentication` and `principal`, not the signature.
@@ -158,8 +158,9 @@ tokenized before storage, so the signed bytes are gone by design), and the trace
 
 Ed25519, as approvals already are. `ledgergate keygen --seed-file FILE` writes a seed (mode
 0600) and prints the verification key; a seed never enters a journal. Compromise is handled by
-`revoke` and a new name (a principal cannot revoke itself: the `BEFORE INSERT` trigger requires `by` to have an `add`
-and no `revoke` in the table and, on a `revoke`, `by <> name`, the bootstrap row exempt
+`revoke` and a new name (a principal cannot revoke itself: the `BEFORE INSERT` trigger requires `by` to have a `transport` `add`
+and no `revoke` in `principal_events` (a subselect, for `approver_events` too) and, on a
+`revoke`, `by <> name`, the bootstrap row exempt
 because the table is then empty; so a journal whose only transport principal is `local` adds
 another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
 name makes "who signed this" a question about the clock, and the clock is the signer's).
@@ -240,7 +241,7 @@ sees the stranding before, not after, the last revoke.
   principal, live; every non-null `context.approval.approver` (check 1 passed; a verified
   `approval_not_applicable` presentation has none, since check 1 did not run, and its `verified`
   flag is computed against the registry at the presenting sequence as check 1 would) is live
-  at its sequence; every change event's `by` is live at its sequence, except the first
+  at its sequence; every change event's `by` is a live *transport* principal at its sequence, except the first
   event of the trace when it is the bootstrap `add` of a transport principal by itself.
   `no_evidence` for a document without change events (a lifted v1, an earlier v2).
 - The v2 capacity bound (`journal.md`, *Segmentation*; `mcp-runtime.md`) counts registry
@@ -253,7 +254,8 @@ carries the cause as today.
 ## CLI and corpus
 
 - `ledgergate keygen`, `ledgergate sign`, `ledgergate journal id`, `ledgergate journal
-  principal {add,revoke,list}`, `ledgergate journal approver {add,revoke,list}`; `create`
+  principal {add,revoke,list}`, `ledgergate journal approver {add,revoke,list}`; `journal
+  pending` lists each pending operation's admitted approvers and which are live; `create`
   gains `--approver NAME=KEYFILE` (replacing `--approval-key`); `approve` gains `--seed-file`
   and `--approver`; `initialize` returns `journal_id` in `_meta`.
 - Corpus grammar: `setup.approvers: [{name, seed}]` (published test seeds) replaces
@@ -276,7 +278,8 @@ carries the cause as today.
   1b added, `approvers_for` among the guarded policy calls; the tables section gains the two
   registry tables, the `invocations` attribution columns and the new verdict; capacity
   formula; the clone limit's owner is M8c.
-- `mcp-runtime.md` (made): step 4 forwards `params._meta.ledgergate` as `auth`; the
+- `mcp-runtime.md` (made): step 4 forwards `params._meta.ledgergate` as `auth`; the capacity
+  formula gains the registry terms (`journal.md` owns it); the
   single-principal statements become "one *transport* principal per session; any number of
   signed ones"; `initialize` carries `journal_id` in `result._meta.ledgergate` (read from the
   definition at start, no journal transaction); `--approval-key` becomes `--approver`.

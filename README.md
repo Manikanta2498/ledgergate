@@ -473,7 +473,9 @@ These are enforced by CI gates, not by convention:
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
 | M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | **done**, release pipeline unrehearsed: nothing is tagged until it has run against TestPyPI |
-| M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
+| M8a | Authenticated principals (registry + signed requests, verified in admission) and named approvers (registry; policy may require a named approver) ([docs/spec/principals.md](docs/spec/principals.md)) | next |
+| M8b | Network transport: a thin MCP listener over signed requests | |
+| M8c | External execution via outbox and reconciliation | |
 
 The reasoning behind this order, and what was deliberately left out, is in
 [ADR-0002](docs/adr/0002-runtime-surface-and-plan.md). The normative protocols the

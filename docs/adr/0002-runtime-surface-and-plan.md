@@ -172,7 +172,9 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 | M5 | OpenTelemetry GenAI observational adapter with completeness validation and cassettes, designed in [docs/spec/otel-adapter.md](../spec/otel-adapter.md); thin framework wrappers are conveniences over it and are not part of M5 |
 | M6 | Scenario corpus and red-team corpus, `ledgergate run` scoring scripted or supplied traces against closed-vocabulary expectations, `result.json` (schema `schema/result/v1.json`), `ledgergate report` to md/junit/sarif, and the drift table over two results; designed in [docs/spec/corpus.md](../spec/corpus.md) |
 | M7 | Conformance levels rendered from `result.json`, a ratcheting mutation gate over the core and the registry, CodeQL and OpenSSF Scorecard, and tag-driven trusted-publishing releases with provenance; designed in [docs/spec/assurance.md](../spec/assurance.md) |
-| M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation |
+| M8a | Authenticated principals (a registry plus Ed25519-signed requests verified in admission, transport-independent) and named approvers (a registry; policy lines may require a named approver); designed in [docs/spec/principals.md](../spec/principals.md) |
+| M8b | Network transport: a thin MCP listener that forwards signed requests and adds nothing the journal trusts |
+| M8c | External execution via outbox and reconciliation |
 
 ## Consequences
 

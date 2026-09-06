@@ -38,7 +38,7 @@ A **principal** is an identifier (the existing grammar) with an authentication k
 
 `principal_events` is append-only, like every journal table: `journal_sequence`, `principal`,
 `action` (`add` | `revoke`), `kind` (on `add`), `verification_key` (base64url Ed25519 on a
-`signed` add, null otherwise), `by` (the principal whose invocation appended it), `at` (the
+`signed` add, null otherwise), `by` (the CLI's transport principal that appended it; a registry event has no invocation), `at` (the
 transaction's single clock reading). Monotonicity per name is enforced by a partial
 `UNIQUE (principal) WHERE action = 'add'` and a `BEFORE INSERT` trigger (a `CHECK` cannot see
 other rows): an `add` requires no prior row for the name, a `revoke` requires a prior `add`
@@ -86,8 +86,9 @@ transaction holds the registry rule:
 - A request whose `auth` member fails one of the **clockless** checks (shape, unknown
   principal, bad signature) is recorded `invalid` with the cause below; `principal` = **the
   session's transport principal** (who delivered it; the claimed name is caller text and is
-  never stored, per `identifiers-and-redaction.md` §4: it resolves to a registry name or it is
-  content), `authentication` = `rejected`.
+  never stored *as `principal`*, per `identifiers-and-redaction.md` §4: it resolves to a
+  registry name or it is content, and content lives only inside the redacted failure-envelope
+  blob), `authentication` = `rejected`.
 - Attribution is **fixed at signature verification**: a verified envelope whose request then
   fails (`request_expired`, `replayed_call`, or a command that does not decode) is an
   `invalid` row with `principal` = the envelope's and `authentication` = `signed`, since the
@@ -139,14 +140,16 @@ recomputed bytes → `invalid: bad_signature`. Admission runs on the pre-tokeniz
 checks that need the clock run at the protocol's **single reading**: in the write protocol at
 step 4 and in the read protocol at its own reading (`journal.md`), `expires_at <=
 requested_at` → `invalid: request_expired`, and `(principal, call_id)` in the replay set →
-`invalid: replayed_call` (served by a partial index on `invocations (principal, call_id)
-WHERE authentication = 'signed' AND disposition <> 'invalid'`, so the lookup does not walk the
-journal); such a row is written in the step-3 failure-envelope shape (an
+`invalid: replayed_call` (enforced by a partial `UNIQUE` index on `invocations (principal, call_id) WHERE
+authentication = 'signed' AND disposition <> 'invalid'`, so the `SELECT` that produces the
+recorded refusal is, as for check 4, merely the optimisation and the constraint is the
+guarantee); such a row is written in the step-3 failure-envelope shape (an
 `invalid` invocation with a null `request_digest`, the redacted raw payload including `auth`
 as an untyped blob, and its keyed `input_digest`), the one shape `invalid` has (a replayed message is refused; a legitimate retry is a *new* call with the *same idempotency key*, which the write protocol answers as it always has). The one-reading rule is untouched.
 
-**What is stored.** A verified signed invocation persists `auth_principal`, `auth_expires_at`
-and `auth_signature` on its row, like a presentation persists an artefact; the signature is
+**What is stored.** Every invocation whose `authentication` is `signed` (a verified envelope,
+whatever the disposition, `request_expired` and `replayed_call` rows included) persists
+`auth_principal`, `auth_expires_at` and `auth_signature` on its row, like a presentation persists an artefact; the signature is
 evidence of *who*, not something a later verifier can recompute (arguments and call ids are
 tokenized before storage, so the signed bytes are gone by design), and the trace carries
 `authentication` and `principal`, not the signature.
@@ -155,9 +158,10 @@ tokenized before storage, so the signed bytes are gone by design), and the trace
 
 Ed25519, as approvals already are. `ledgergate keygen --seed-file FILE` writes a seed (mode
 0600) and prints the verification key; a seed never enters a journal. Compromise is handled by
-`revoke` and a new name (a principal cannot revoke itself: `by` must be live *after* the
-event, and the event ends its liveness, so a journal whose only transport principal is
-`local` adds another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
+`revoke` and a new name (a principal cannot revoke itself: the `BEFORE INSERT` trigger requires `by` to have an `add`
+and no `revoke` in the table and, on a `revoke`, `by <> name`, the bootstrap row exempt
+because the table is then empty; so a journal whose only transport principal is `local` adds
+another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
 name makes "who signed this" a question about the clock, and the clock is the signer's).
 `ledgergate sign --seed-file FILE --journal-id ID --expires-in SECONDS REQUEST.json` produces
 the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`; in the
@@ -183,7 +187,8 @@ validity is a fact about the presentation).
 unchanged, and includes it when present, so a changed list is a changed policy. The policy
 protocol gains one **pure** method, `approvers_for(command_kind, currency, amount) ->
 frozenset[str] | None`: the names admitted by the first `approve_above` line matching those
-three fields by `evaluate`'s own predicate (kind and currency equal, amount above the line), or `None` when no line matches or the matching line has no `approvers` (the
+three fields by `evaluate`'s own predicate (kind and currency equal, amount above the line;
+any `None` input, a command without an amount, yields `None`), or `None` when no line matches or the matching line has no `approvers` (the
 null set always returns `None`). It is deliberately *not* a prediction of `evaluate`: it
 reads nothing but the `approve_above` lines, needs no context, no subject, no aggregates, so
 it runs before any `PolicyContext` exists and the failed-verdict rule ("on a failed verdict
@@ -205,8 +210,14 @@ trip it. Check 1 is deterministic under the write lock rather than pure in the o
 reads the registry at the presenting sequence.
 
 A line naming an approver later revoked is not a fault (the registry is history, the
-definition is not): the line can no longer be satisfied and its operations stay pending until
-the operator adds an allowed approver, which `journal pending` shows.
+definition is not), but its operations are stranded: every name a line may ever accept was
+seeded at `create`, a revoked name can never be re-added (a new key is a new name), and the
+line itself is in the definition, so once the last admitted approver is revoked nothing in
+this journal can complete those operations. The remedy is the one every definition change
+has (`journal.md`, *Tables*, `definition`: "changing it means a new journal"): a new journal
+under a new definition, the pending operations left behind with the old one. `journal
+pending` lists each pending operation's admitted approvers and which are live, so an operator
+sees the stranding before, not after, the last revoke.
 
 ## Trace v2 (additive)
 
@@ -267,7 +278,8 @@ carries the cause as today.
   formula; the clone limit's owner is M8c.
 - `mcp-runtime.md` (made): step 4 forwards `params._meta.ledgergate` as `auth`; the
   single-principal statements become "one *transport* principal per session; any number of
-  signed ones"; `initialize` carries `journal_id`; `--approval-key` becomes `--approver`.
+  signed ones"; `initialize` carries `journal_id` in `result._meta.ledgergate` (read from the
+  definition at start, no journal transaction); `--approval-key` becomes `--approver`.
 - `trace-v2.md` (made): the additive fields, the two events, the invariant, the verdict.
 - `corpus.md` (made): `setup.approvals` becomes `setup.approvers`; `setup.principals`,
   `sign_as`, `sign.approver`.
@@ -284,6 +296,9 @@ carries the cause as today.
 - **Cross-clone consumption authority.** The clone limit stands; M8c.
 - **Key custody or rotation.** The journal holds verification keys; seeds are the operator's.
 - **Recomputation of a request signature from a trace.** Stored as evidence, not re-derivable.
+- **Hiding which names are registered.** `unknown_principal` and `bad_signature` are distinct
+  causes, so a caller on a stdio session can learn whether a name is registered. The session
+  is the process owner's; a listener (M8b) decides whether to collapse them.
 - **Client libraries.** The signed `call_id` is derived from the JSON-RPC `id`
   (`mcp-runtime.md`), so a signer must control the `id` its client sends; many MCP client
   libraries assign it. A client that cannot is M8b's concern (a listener could accept a

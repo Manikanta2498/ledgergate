@@ -197,8 +197,8 @@ is built. The checks run **in order and short-circuit: the first failure is the 
 and no later check runs**. Checks 1 to 3 read nothing but the artefact, the pending operation and (schema 7, check 1) the approver registry at the presenting sequence; under the write lock they are deterministic and run first; the `approvals`
 presentation row is then written carrying their result; check 4 (consumption) runs only if
 they all passed and references that row. The final verdict is recorded on the `decisions`
-row, which is written after check 4 and so can hold it. An invalid, expired or mis-scoped
-artefact never touches `approval_consumptions`.
+row, which is written after check 4 and so can hold it. An invalid, wrongly approved (schema 7),
+expired or mis-scoped artefact never touches `approval_consumptions`.
 
 1. Signature verifies against the key registered for the artefact's `approver` in the approver registry, live at the presenting invocation's sequence (schema 7, [principals](principals.md); before M8a, the definition's single key), else verdict `approval_invalid`. **1b** (schema 7), immediately after 1 and before 2: the authenticated approver is admitted by the policy's pure `approvers_for(command_kind, currency, amount)` over the *presenting request's* command (the three fields the persisted context will carry; the matching predicate is `evaluate`'s own: kind and currency equal, amount above the line), or that is `None`, else check result and verdict `approval_wrong_approver`; nothing is consumed. The signature covers every field the artefact carries (`journal_id`, `approval_id`,
    approver, `fingerprint`, `key`, subject, amount, currency, `issued_at`, `expires_at`),

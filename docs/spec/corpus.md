@@ -172,6 +172,8 @@ balances:                      # final Ledger.balance, minor units as strings, n
   cash: "10000"
   revenue: "10000"
 ledger_commands: 0             # ledger pairs produced by the agent's invocations
+invalid_causes: {}             # exact counts of error_type over invalid agent calls
+approval_verdicts: {}          # exact counts of approval verdicts over agent decisions
 invocations: 2                 # the agent's invocation count
 ```
 
@@ -186,6 +188,8 @@ Semantics, each decidable from the trace alone:
 | `balances` | `Ledger.balance` of each named account after replaying the trace's ledger pairs, rendered as a decimal string of minor units on the account's **normal side** (a revenue account credited 10,000 is `"10000"`, a cash account debited 10,000 is `"10000"`; a negative means the account is on its abnormal side), equals the string; unnamed accounts are unconstrained |
 | `ledger_commands` | the number of `ledger_command` events among agent invocations |
 | `invocations` | the number of agent invocations |
+| `invalid_causes` | the multiset of `error_type` over agent `invalid` resolutions equals the mapping (schema 7 corpus; `bad_signature: 1` says *which* refusal contained the call) |
+| `approval_verdicts` | the multiset of `context.approval.verdict` over agent decisions that carry one equals the mapping (`approval_wrong_approver: 1` names the check) |
 
 "Agent invocations" are the resolutions after the first `len(before)`, positionally: the binding check has already required those first resolutions to be the setup's, so no prefix rule on call ids is needed (under `serve` an agent's call ids are `rpc-...` and could not collide with `setup-` anyway).
 

@@ -129,7 +129,7 @@ and `expires_at` is covered. A client learns `journal_id` from `initialize`'s
 `ledgergate journal id PATH`.
 
 **Where each check runs.** Admission is clockless and reads nothing outside its scope; the
-journal hands it, under the lock at step 3, the live `signed` principals as part of the
+journal hands it, under the lock at step 3, the live `signed` principals and the `journal_id` as part of the
 `AdmissionScope` (as it already hands the currency registry), so it does what needs no clock:
 `auth` present but not this shape → `invalid: authentication_malformed`; `principal` not a
 live `signed` principal at the current head → `invalid: unknown_principal` (a `transport`
@@ -155,10 +155,14 @@ tokenized before storage, so the signed bytes are gone by design), and the trace
 
 Ed25519, as approvals already are. `ledgergate keygen --seed-file FILE` writes a seed (mode
 0600) and prints the verification key; a seed never enters a journal. Compromise is handled by
-`revoke` and a new name; rotation under one name is not offered (two keys over time under one
+`revoke` and a new name (a principal cannot revoke itself: `by` must be live *after* the
+event, and the event ends its liveness, so a journal whose only transport principal is
+`local` adds another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
 name makes "who signed this" a question about the clock, and the clock is the signer's).
-`ledgergate sign --seed-file FILE --journal-id ID REQUEST.json` produces the envelope for a
-request value, what a client library would do, so tests and the corpus can produce signed
+`ledgergate sign --seed-file FILE --journal-id ID --expires-in SECONDS REQUEST.json` produces
+the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`; in the
+corpus, a `sign_as` step takes `expires_in_seconds` against the runner's peeked clock, as a
+`sign` step does, so the behavioural digest is stable), what a client library would do, so tests and the corpus can produce signed
 requests without one.
 
 ## Approvers
@@ -179,7 +183,7 @@ validity is a fact about the presentation).
 unchanged, and includes it when present, so a changed list is a changed policy. The policy
 protocol gains one **pure** method, `approvers_for(command_kind, currency, amount) ->
 frozenset[str] | None`: the names admitted by the first `approve_above` line matching those
-three fields, or `None` when no line matches or the matching line has no `approvers` (the
+three fields by `evaluate`'s own predicate (kind and currency equal, amount above the line), or `None` when no line matches or the matching line has no `approvers` (the
 null set always returns `None`). It is deliberately *not* a prediction of `evaluate`: it
 reads nothing but the `approve_above` lines, needs no context, no subject, no aggregates, so
 it runs before any `PolicyContext` exists and the failed-verdict rule ("on a failed verdict
@@ -222,8 +226,10 @@ the operator adds an allowed approver, which `journal pending` shows.
   not `rejected` names a principal live at its sequence (a `transport` one as a `transport`
   add, a `signed` one as a `signed` add), except an `invalid: revoked_principal` row, whose
   principal must have a `revoke` before it; a `rejected` row names the session's transport
-  principal, live; every verified presentation's approver (`context.approval.approver`) is
-  live at its sequence; every change event's `by` is live at its sequence, except the first
+  principal, live; every non-null `context.approval.approver` (check 1 passed; a verified
+  `approval_not_applicable` presentation has none, since check 1 did not run, and its `verified`
+  flag is computed against the registry at the presenting sequence as check 1 would) is live
+  at its sequence; every change event's `by` is live at its sequence, except the first
   event of the trace when it is the bootstrap `add` of a transport principal by itself.
   `no_evidence` for a document without change events (a lifted v1, an earlier v2).
 - The v2 capacity bound (`journal.md`, *Segmentation*; `mcp-runtime.md`) counts registry
@@ -248,8 +254,9 @@ carries the cause as today.
   scenario signs a registered name with a key the registry does not hold.
   Three new scenarios: a signed request applied (`correct/`), a request signed with a key not
   registered for its principal, and an approval by a registered approver the line does not
-  admit (`red-team/`), each expecting the containing mechanism (`invalid: bad_signature`,
-  `runtime.approval_rejected` with `approval_wrong_approver`).
+  admit (`red-team/`), each expecting the containing mechanism through two expectation keys the corpus grammar
+  gains for it, `invalid_causes` and `approval_verdicts` (`corpus.md`), so `bad_signature: 1`
+  and `approval_wrong_approver: 1` are what the expectations say, not merely `invalid: 1`.
 
 ## Amendments to earlier documents (made in this change; the remainder at implementation)
 

@@ -373,8 +373,7 @@ forms) and the seven of [principals](principals.md): `authentication_malformed`,
 `unknown_principal`, `bad_signature`, `request_expired`, `request_expiry_unbounded`,
 `replayed_call`, `revoked_principal`. The v2 model requires an `invalid` result's `error.type` to be in it when
 the resolution carries `authentication` (every schema-7 derivation) and accepts exactly
-`AdmissionError` when it does not (every earlier one); the list is owned here and mirrored
-nowhere. The message becomes the path alone (`$` for the whole value), the code having moved
+`AdmissionError` when it does not (every earlier one); the list is owned here; the trace model carries the same set (`ADMISSION_CAUSES`), and a test pins the two to the codes admission actually raises. The message becomes the path alone (`$` for the whole value), the code having moved
 to the type.
 
 ## Write protocol

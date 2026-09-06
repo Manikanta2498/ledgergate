@@ -284,8 +284,9 @@ sees the stranding before, not after, the last revoke.
   event of the trace when it is the bootstrap `add` of a transport principal by itself.
   The walk also requires each name's log to be monotone (one `add`, at most one `revoke` after
   it, nothing after a `revoke`), since a trace whose log is not could give liveness two answers;
-  `by` is judged live *before* the change event. `no_evidence` for a document without change
-  events (a lifted v1, an earlier v2).
+  `by` is judged live *before* the change event. `no_evidence` only for a document with
+  neither change events nor any attribution nor any authenticated approver (a lifted v1, an
+  earlier v2); a document with attributions and no registry is judged, and fails.
 - The v2 capacity bound (`journal.md`, *Segmentation*; `mcp-runtime.md`) counts registry
   events alongside invocations and null-invocation events; the formula is amended.
 
@@ -362,6 +363,14 @@ the v2 model refuses an `invalid` result whose `error.type` is outside it.
   writable copy), and the same M8c authority would close it.
 - **Key custody or rotation.** The journal holds verification keys; seeds are the operator's.
 - **Recomputation of a request signature from a trace.** Stored as evidence, not re-derivable.
+- **Attribution evidence in a supplied trace beyond its optional fields.** The schema-7 fields
+  are additive so earlier documents load; a forger who strips change events, attributions and
+  `error_type` and rewrites every `invalid` result to `AdmissionError` produces a document
+  indistinguishable from a pre-M8a derivation, which passes with `attributions_are_registered:
+  no_evidence`. A consumer that needs schema-7 evidence requires change events to be present
+  (treating `no_evidence` on that row as a failure); the corpus binding does so implicitly,
+  since a schema-7 setup trace always has them and the first `len(before)` invocations must
+  match.
 - **Hiding which names are registered.** `unknown_principal` and `bad_signature` are distinct
   causes, so a caller on a stdio session can learn whether a name is registered. The session
   is the process owner's; a listener (M8b) decides whether to collapse them.

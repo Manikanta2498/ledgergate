@@ -241,8 +241,9 @@ content, the journal id and the call id; the journal verifies it before decoding
 attributes the invocation to the signer, and refuses a replayed message by a `UNIQUE` index.
 An approval artefact now verifies only under the key registered for the approver it names, and
 a policy line may say `approvers: [cfo]`: the controller's valid artefact is
-`approval_wrong_approver`, decided before anything is consumed. Every invocation row and trace
-resolution carries `principal` and `authentication`; an `invalid` call's error type is the
+`approval_wrong_approver`, decided before anything is consumed. Every invocation row and derived trace
+resolution carries `principal` and `authentication` (a *supplied* trace proves only what its
+optional fields carry; the spec states the limit); an `invalid` call's error type is the
 admission cause (`bad_signature`, `unknown_principal`, ...), so a trace names the refusal, and
 `verify` gains `attributions_are_registered`. Nothing listens on a network yet (M8b).
 

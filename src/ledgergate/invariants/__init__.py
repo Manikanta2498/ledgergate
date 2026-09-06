@@ -994,7 +994,20 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
 
 
 def _has_registry(t: TraceV2) -> bool:
-    return any(isinstance(e, PrincipalChange | ApproverChange) for e in t.events)
+    """Applicable to any document with schema-7 evidence: change events, an attribution on
+    any resolution, or an authenticated approver; a document that carries attributions but no
+    registry is then judged (and fails), rather than switching the row off."""
+    return (
+        any(isinstance(e, PrincipalChange | ApproverChange) for e in t.events)
+        or any(
+            e.authentication is not None for e in t.events if isinstance(e, InvocationResolution)
+        )
+        or any(
+            e.context.approval is not None and e.context.approval.approver is not None
+            for e in t.events
+            if isinstance(e, PolicyDecision)
+        )
+    )
 
 
 def _context_of(d: PolicyDecision) -> Any:

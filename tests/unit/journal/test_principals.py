@@ -1050,3 +1050,36 @@ class TestSecondImplementationReview:
             == 2
         )
         assert "twice" in capsys.readouterr().err
+
+
+class TestThirdImplementationReview:
+    def test_a_trace_with_attributions_and_no_registry_fails_rather_than_switching_off(
+        self, j: Journal
+    ) -> None:
+        j.handle(signed(j, post("k1")))
+        doc = json.loads(dump_v2(derive_trace(j.path)))
+        stripped = json.loads(json.dumps(doc))
+        stripped["events"] = [e for e in stripped["events"] if not e["type"].endswith("_change")]
+        for i, e in enumerate(stripped["events"], start=1):
+            e["seq"] = i
+        card = verify(load_any(json.dumps(stripped)))
+        assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"
+
+    def test_the_trace_models_cause_set_is_what_admission_raises(self) -> None:
+        import re
+
+        from ledgergate.trace.v2 import ADMISSION_CAUSES
+
+        src = Path("src/ledgergate/journal")
+        raised = set()
+        for f in ("admission.py", "store.py"):
+            raised |= set(re.findall(r'AdmissionError\("([a-z_]+)"', (src / f).read_text()))
+        raised |= set(re.findall(r'AuthError\("([a-z_]+)"', (src / "auth.py").read_text()))
+        raised |= set(
+            re.findall(
+                r'"(request_expired|request_expiry_unbounded|replayed_call)"',
+                (src / "auth.py").read_text() + (src / "store.py").read_text(),
+            )
+        )
+        assert raised <= ADMISSION_CAUSES
+        assert ADMISSION_CAUSES - raised == set(), ADMISSION_CAUSES - raised

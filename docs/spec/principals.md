@@ -166,7 +166,7 @@ because the table is then empty; so a journal whose only transport principal is 
 another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
 name makes "who signed this" a question about the clock, and the clock is the signer's).
 `ledgergate sign --seed-file FILE --journal-id ID --expires-in SECONDS REQUEST.json` produces
-the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`; in the
+the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`, at most 86,400 seconds: the journal refuses an envelope whose `expires_at` is more than a day past `requested_at` as `authentication_malformed`, since the replay set already bounds reuse and a request valid for years is a signed blank cheque; in the
 corpus, a `sign_as` step takes `expires_in_seconds` against the runner's peeked clock, as a
 `sign` step does, so the behavioural digest is stable), what a client library would do, so tests and the corpus can produce signed
 requests without one.
@@ -257,7 +257,7 @@ admission code (`unknown_tool`, `missing_key`, ...) lives only in the journal's 
 failure envelope, which no trace carries; a trace therefore cannot say *which* refusal
 contained a call. Schema 7 changes the `invalid` outbound body: `error.type` **is the
 admission cause code** (the closed vocabulary `admission.py` already defines, plus the six
-above), `error.message` the path as today. This is a body-shape change the schema-7 bump
+above), `error.message` the path alone (`$` for the whole value), the code having moved to the type. This is a body-shape change the schema-7 bump
 licenses (`journal.md`, *Tables*, `events`), the derived `tool_result.error.type` carries it,
 the corpus's `invalid_causes` counts it, and the trace invariant's `revoked_principal`
 exemption reads it. The vocabulary is listed once, in `journal.md`'s admission section, and
@@ -313,7 +313,10 @@ the v2 model refuses an `invalid` result whose `error.type` is outside it.
 - **A network transport.** Nothing listens. Signed requests are transport-independent so that
   M8b can be a thin listener that forwards and adds nothing the journal trusts.
 - **Confidentiality.** Signatures authenticate; they do not encrypt.
-- **Cross-clone consumption authority.** The clone limit stands; M8c.
+- **Cross-clone consumption authority.** The clone limit stands; M8c. The replay set is the
+  same kind of guarantee, a SQLite-local `UNIQUE` per writable file lineage: a captured signed
+  request is applicable once in each writable clone, the same operator rule applies (one
+  writable copy), and the same M8c authority would close it.
 - **Key custody or rotation.** The journal holds verification keys; seeds are the operator's.
 - **Recomputation of a request signature from a trace.** Stored as evidence, not re-derivable.
 - **Hiding which names are registered.** `unknown_principal` and `bad_signature` are distinct

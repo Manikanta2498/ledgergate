@@ -96,7 +96,9 @@ setup:
     gated_reads: []
   approvers:                           # optional; *test* seeds, Apache data (schema 7: a registry)
     - {name: cfo, seed: "<base64url Ed25519 seed>"}
-  principals: []                       # optional; signed principals as {name, seed}
+  principals: []                       # optional; signed principals as {name, seed}: the runner appends their
+                                       # `add` rows as registry transactions (by = its transport principal, under
+                                       # the stepping clock) before `before`, so they precede setup-1 in the trace
   before:                              # tool calls applied before the agent starts
     - tool: open_transaction
       key: setup-1

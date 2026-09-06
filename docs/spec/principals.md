@@ -36,11 +36,14 @@ A **principal** is an identifier (the existing grammar) with an authentication k
 
 ### The registry is a log
 
-`principal_events` is append-only, like every journal table: `journal_sequence`, `principal`,
+`principal_events` is append-only, like every journal table: `journal_sequence`, `name`,
 `action` (`add` | `revoke`), `kind` (on `add`), `verification_key` (base64url Ed25519 on a
-`signed` add, null otherwise), `by` (the CLI's transport principal that appended it; a registry event has no invocation), `at` (the
+`signed` add, null otherwise; intra-row `CHECK`s: `(action = 'add') = (kind IS NOT NULL)` and
+`(action = 'add' AND kind = 'signed') = (verification_key IS NOT NULL)`, and on
+`approver_events` `(action = 'add') = (verification_key IS NOT NULL)`, so a name that could
+never verify is refused rather than written), `by` (the CLI's transport principal that appended it; a registry event has no invocation), `at` (the
 transaction's single clock reading). Monotonicity per name is enforced by a partial
-`UNIQUE (principal) WHERE action = 'add'` and a `BEFORE INSERT` trigger (a `CHECK` cannot see
+`UNIQUE (name) WHERE action = 'add'` and a `BEFORE INSERT` trigger (a `CHECK` cannot see
 other rows): an `add` requires no prior row for the name, a `revoke` requires a prior `add`
 and no prior `revoke`; so exactly one `add`, at most one `revoke`, and never an `add` after a
 `revoke` (a new key
@@ -95,8 +98,12 @@ invocation transaction and every registry transaction holds the registry rule (a
   `invalid` row with `principal` = the envelope's and `authentication` = `signed`, since the
   signer is known and pretending otherwise would be a then-versus-now error. The **replay set**
   is the `(principal, call_id)` pairs of verified signed invocations whose disposition is not
-  `invalid`: a rejected envelope never enters it, and neither does an expired or undecodable
-  one, so nothing a third party can send blocks a principal's own later call id.
+  `invalid`. `invalid` rows are excluded because the `replayed_call` refusal row itself would
+  collide with a full-width `UNIQUE`; the consequence is stated: a verified request the journal
+  refused at step 3 or 4 can be re-presented by anyone holding the bytes until `expires_at`,
+  and each presentation is admitted anew and gets admission's answer at *that* time (the same
+  answer, admission being deterministic over the projection). A rejected envelope never enters
+  the set either, so a third party cannot block a principal's later call id.
 - Order of checks on one request: the session's `revoked_principal` check first (a revoked
   operator's session delivers nothing, envelope or not), then the envelope's clockless checks,
   then admission of the command, then, at the single reading, expiry, the expiry bound and
@@ -174,14 +181,15 @@ tokenized before storage, so the signed bytes are gone by design), and the trace
 Ed25519, as approvals already are. `ledgergate keygen --seed-file FILE` writes a seed (mode
 0600) and prints the verification key; a seed never enters a journal. Compromise is handled by
 `revoke` and a new name (a principal cannot revoke itself: the `BEFORE INSERT` trigger requires `by` to have a `transport` `add`
-and no `revoke` in `principal_events` (a subselect, for `approver_events` too) and, on a
-`revoke`, `by <> name`, the bootstrap row, when the table is empty, required instead to be `action = 'add'`,
-`kind = 'transport'`, `by = name`, so the trigger and not the CLI guarantees the shape the
-trace invariant expects; so a journal whose only transport principal is `local` adds
+and no `revoke` in `principal_events` (a subselect, for `approver_events` too) and, on
+`principal_events` only, a `revoke` requires `by <> name`, and the first row, when the table
+is empty, must be `action = 'add'`, `kind = 'transport'`, `by = name`, so the trigger and not
+the CLI guarantees the shape the trace invariant expects (`approver_events` has no `kind` and
+its seeds' `by` is the transport principal); so a journal whose only transport principal is `local` adds
 another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
 name makes "who signed this" a question about the clock, and the clock is the signer's).
 `ledgergate sign --seed-file FILE --journal-id ID --expires-in SECONDS REQUEST.json` produces
-the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`, at most 86,400 seconds: at step 4, beside the expiry check, the journal refuses an envelope whose `expires_at` is more than a day past `requested_at` as `invalid: request_expiry_unbounded`, a `signed` row like `request_expired`, since the replay set already bounds reuse and a request valid for years is a signed blank cheque; in the
+the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`, at most 86,400 seconds, with `sign` capping at 86,340 so a signer's clock one minute ahead of the journal's is not refused at the maximum: at step 4, beside the expiry check, the journal refuses an envelope whose `expires_at` is more than a day past `requested_at` as `invalid: request_expiry_unbounded`, a `signed` row like `request_expired`, since the replay set already bounds reuse and a request valid for years is a signed blank cheque; in the
 corpus, a `sign_as` step takes `expires_in_seconds` against the runner's peeked clock, as a
 `sign` step does, so the behavioural digest is stable), what a client library would do, so tests and the corpus can produce signed
 requests without one.
@@ -260,10 +268,11 @@ sees the stranding before, not after, the last revoke.
   not `rejected` names a principal live at its sequence (a `transport` one as a `transport`
   add, a `signed` one as a `signed` add), except an `invalid: revoked_principal` row, whose
   principal must have a `revoke` before it; a `rejected` row names the session's transport
-  principal, live; every non-null `context.approval.approver` (check 1 passed; a verified
-  `approval_not_applicable` presentation has none, since check 1 did not run, and its `verified`
-  flag is computed against the registry at the presenting sequence as check 1 would) is live
-  at its sequence; every change event's `by` is a live *transport* principal at its sequence, except the first
+  principal, live; every non-null `context.approval.approver` (check 1 passed) is live at its sequence, and so
+  is the approver named by every `approval_presentation` whose `verified` is true (a verified
+  `approval_not_applicable` presentation has a null context approver, since check 1 did not
+  run, but its `verified` flag was computed against the registry at the presenting sequence as
+  check 1 would, and the invariant checks it there); every change event's `by` is a live *transport* principal at its sequence, except the first
   event of the trace when it is the bootstrap `add` of a transport principal by itself.
   `no_evidence` for a document without change events (a lifted v1, an earlier v2).
 - The v2 capacity bound (`journal.md`, *Segmentation*; `mcp-runtime.md`) counts registry
@@ -277,9 +286,9 @@ failure envelope, which no trace carries; a trace therefore cannot say *which* r
 contained a call. Schema 7 changes the `invalid` outbound body: `error.type` **is the
 admission cause code** (the closed vocabulary `admission.py` already defines, plus the seven
 above), `error.message` the path alone (`$` for the whole value), the code having moved to the type. This is a body-shape change the schema-7 bump
-licenses (`journal.md`, *Tables*, `events`), the derived `tool_result.error.type` carries it,
-the corpus's `invalid_causes` counts it, and the trace invariant's `revoked_principal`
-exemption reads it. The vocabulary is listed once, in `journal.md`'s admission section, and
+licenses (`journal.md`, *Tables*, `events`), the derived `tool_result.error.type` carries it and the resolution's `error_type` equals it;
+the corpus's `invalid_causes` and the trace invariant's `revoked_principal` exemption read the
+resolution's field. The vocabulary is listed once, in `journal.md`'s admission section, and
 the v2 model refuses an `invalid` result whose `error.type` is outside it.
 
 ## CLI and corpus

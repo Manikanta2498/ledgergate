@@ -157,10 +157,9 @@ class TestCleanRunViability:
                 "pytest",
                 "-q",
                 "-x",
-                "-p",
-                "no:cacheprovider",
-                "-m",
-                "not slow",
+                *cfg[
+                    "pytest_add_cli_args"
+                ],  # the same selection mutmut uses, `-m not slow` included
                 *cfg["pytest_add_cli_args_test_selection"],
             ],
             cwd=copy,

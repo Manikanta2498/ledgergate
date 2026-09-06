@@ -332,6 +332,8 @@ def report_command(args: argparse.Namespace) -> int:
         docs = [load_result(p.read_text(encoding="utf-8")) for p in args.results]
     except (OSError, ResultError) as exc:
         return fail(f"cannot read result: {type(exc).__name__}: {exc}")
+    if (args.baseline is not None or args.require is not None) and not args.conformance:
+        return fail("--baseline and --require belong to --conformance")
     if args.conformance:
         from ledgergate.report import conformance
 

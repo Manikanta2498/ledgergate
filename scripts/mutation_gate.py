@@ -10,7 +10,8 @@ positional renumbering, and compares the unkilled set with ``.mutation-baseline.
             except a `timeout` entry, which warns) or matches no current mutant (vanished);
             warn on a bucket change.
   baseline  write the baseline from this run, preserving `timeout` entries that killed this
-            run and every `equivalent` entry whose key still exists; print what it preserved.
+            run and every `equivalent` entry whose key still exists and is unkilled; print what
+            it preserved and dropped.
   count     print the baseline's total (the number the README states).
 
 Run after ``mutmut run``; never runs mutmut itself.
@@ -159,7 +160,7 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     for key in preserved:
         print(f"preserved timeout entry that killed this run: {key}")
     for key in dropped:
-        print(f"dropped equivalent whose key vanished (re-justify against the new diff): {key}")
+        print(f"dropped equivalent (its key vanished or it is now killed): {key}")
     return 0
 
 

@@ -42,7 +42,9 @@ jobs:
           else
             [[ "${GITHUB_REF}" == "refs/heads/main" ]] || { echo "dispatch only from main"; exit 1; }
           fi
-          grep -Eq "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || { echo "CHANGELOG.md has no dated section for $version"; exit 1; }
+          date="$(grep -Eo "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md | tail -c 11 || true)"
+          [[ -n "$date" ]] || { echo "CHANGELOG.md has no dated section for $version"; exit 1; }
+          [[ "$date" < "$(date -u +%F)" || "$date" == "$(date -u +%F)" ]] || { echo "CHANGELOG date $date is after today"; exit 1; }
 
   gates:
     name: gates
@@ -83,7 +85,7 @@ jobs:
         id: attest-sdist
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: dist/ledgergate-${{ needs.refuse.outputs.version }}.tar.gz
 
       - name: Build the corpus and schema tarball (Apache-2.0, outside the wheel and sdist)
         run: |

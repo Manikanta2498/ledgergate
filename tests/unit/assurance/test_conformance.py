@@ -114,3 +114,10 @@ class TestCli:
         )  # preconditions
         assert main(["report", "--conformance", str(out), str(out)]) == 2
         assert main(["report", "--conformance", str(tmp_path / "missing.json")]) == 2
+
+
+def test_require_and_baseline_need_conformance(tmp_path: Path) -> None:
+    out = tmp_path / "r.json"
+    assert main(["run", "--corpus", str(CORPUS), "--only", "read-balance", "--out", str(out)]) == 0
+    assert main(["report", str(out), "--require", "L2"]) == 2
+    assert main(["report", str(out), "--baseline", str(out)]) == 2

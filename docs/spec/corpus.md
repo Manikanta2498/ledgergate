@@ -232,7 +232,7 @@ DIR` writes the produced traces out for inspection.
 ```json
 {
   "schema_version": "1",
-  "ledgergate_version": "0.1.0.dev0",
+  "ledgergate_version": "<the package version, ledgergate.__version__>",
   "corpus_digest": "<sha256 of JCS([{path, sha256}, ...]) over every scenario and expectation file, path corpus-relative POSIX, sorted by path, .license sidecars excluded>",
   "summary": {"scenarios": 12, "pass": 11, "fail": 1, "error": 0, "skipped": 0,
               "by_kind": {"correct": {"scenarios": 6, "pass": 6, "fail": 0, "error": 0, "skipped": 0},

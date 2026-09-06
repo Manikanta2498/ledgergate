@@ -50,7 +50,7 @@ class TestRatchet:
         base = json.loads(gate_mod.BASELINE.read_text())
         assert set(base["unkilled"]) == {"m.f:a", "m.g:c", "m.h:d"}
         assert gate_mod.gate(run1) == 0
-        # a new unkilled mutant fails; a baselined mutant now killed is stale and fails
+        # a new unkilled mutant fails; a baselined mutant killed this run is stale and warns
         assert (
             gate_mod.gate(
                 _current(
@@ -63,7 +63,18 @@ class TestRatchet:
             == 1
         )
         out = capsys.readouterr().out
-        assert "new unkilled mutant m.f:b" in out and "stale entry m.f:a: now killed" in out
+        assert "new unkilled mutant m.f:b" in out and "warning: stale entry m.f:a" in out
+        assert (
+            gate_mod.gate(
+                _current(
+                    ("m.f:a", "killed"),
+                    ("m.f:b", "killed"),
+                    ("m.g:c", "no tests"),
+                    ("m.h:d", "timeout"),
+                )
+            )
+            == 0
+        )
         # a vanished key fails in every bucket
         assert gate_mod.gate(_current(("m.f:a", "survived"), ("m.h:d", "timeout"))) == 1
         assert "vanished" in capsys.readouterr().out
@@ -80,9 +91,7 @@ class TestRatchet:
             == 0
         )
         out = capsys.readouterr().out
-        assert (
-            "warning: timeout entry m.h:d killed this run" in out and "bucket changed m.g:c" in out
-        )
+        assert "warning: stale entry m.h:d" in out and "bucket changed m.g:c" in out
 
     def test_baseline_regeneration_preserves_killed_timeouts_and_drops_vanished_equivalents(
         self, in_tmp: Path, capsys: pytest.CaptureFixture[str]

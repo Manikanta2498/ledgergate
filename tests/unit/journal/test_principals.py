@@ -949,3 +949,104 @@ class TestFirstImplementationReview:
         i = last.index(sig[-1])
         v["auth"]["signature"] = sig[:-1] + last[i ^ 1]
         assert j.handle(v).error_type == "authentication_malformed"
+
+
+class TestSecondImplementationReview:
+    def test_a_stripped_attribution_and_a_disagreeing_context_are_forgeries(
+        self, j: Journal
+    ) -> None:
+        j.handle(signed(j, post("k1")))
+        doc = json.loads(dump_v2(derive_trace(j.path)))
+        stripped = json.loads(json.dumps(doc))
+        for e in stripped["events"]:
+            if e["type"] == "invocation_resolution":
+                e.pop("principal"), e.pop("authentication"), e.pop("error_type", None)
+        card = verify(load_any(json.dumps(stripped)))
+        assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"
+        disagree = json.loads(json.dumps(doc))
+        for e in disagree["events"]:
+            if e["type"] == "policy_decision":
+                e["context"]["principal"] = "local"
+        card = verify(load_any(json.dumps(disagree)))
+        assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"
+
+    def test_cli_refusals(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        j = Journal.create(
+            str(tmp_path / "r.journal"), CHART, clock=SteppingClock(EPOCH), ids=SequentialIds()
+        )
+        j.close()
+        pub = tmp_path / "k.pub"
+        pub.write_text(verification_key_text(AGENT))
+        assert (
+            main(
+                [
+                    "journal",
+                    "principal",
+                    "add",
+                    str(tmp_path / "r.journal"),
+                    "ops",
+                    "--kind",
+                    "transport",
+                    "--verification-key-file",
+                    str(pub),
+                ]
+            )
+            == 2
+        )
+        assert "takes no key" in capsys.readouterr().err
+        seed = tmp_path / "s.seed"
+        assert main(["keygen", "--seed-file", str(seed)]) == 0
+        capsys.readouterr()
+        req = tmp_path / "req.json"
+        req.write_text(json.dumps(post("k1")))
+        assert (
+            main(
+                [
+                    "sign",
+                    str(req),
+                    "--seed-file",
+                    str(seed),
+                    "--journal-id",
+                    "0" * 32,
+                    "--principal",
+                    "bad\nname",
+                ]
+            )
+            == 2
+        )
+        req.write_text('{"tool": "post", "call_id": "c", "arguments": {"x": 1e400}}')
+        assert (
+            main(
+                [
+                    "sign",
+                    str(req),
+                    "--seed-file",
+                    str(seed),
+                    "--journal-id",
+                    "0" * 32,
+                    "--principal",
+                    "agent",
+                ]
+            )
+            == 2
+        )
+        chart = tmp_path / "chart.json"
+        chart.write_text(json.dumps([{"account_id": "cash", "kind": "asset", "currency": "USD"}]))
+        assert (
+            main(
+                [
+                    "serve",
+                    "--journal",
+                    str(tmp_path / "x.journal"),
+                    "--create",
+                    "--chart",
+                    str(chart),
+                    "--approver",
+                    f"cfo={pub}",
+                    "--approver",
+                    f"cfo={pub}",
+                ]
+            )
+            == 2
+        )
+        assert "twice" in capsys.readouterr().err

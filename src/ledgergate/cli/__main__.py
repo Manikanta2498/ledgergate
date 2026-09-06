@@ -301,12 +301,17 @@ def keygen_command(args: argparse.Namespace) -> int:
 
 
 def sign_command(args: argparse.Namespace) -> int:
-    from datetime import UTC, datetime, timedelta
-
-    from ledgergate.journal.auth import SIGN_CAP_SECONDS, sign_request
+    from ledgergate.journal.auth import SIGN_CAP_SECONDS
+    from ledgergate.ledger import InvalidIdentifierError
+    from ledgergate.ledger.identifiers import require_identifier
 
     if not 0 < args.expires_in <= SIGN_CAP_SECONDS:
         print(f"--expires-in must be within 1..{SIGN_CAP_SECONDS}", file=sys.stderr)
+        return 2
+    try:
+        require_identifier(args.principal, "--principal")
+    except InvalidIdentifierError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
     try:
         private = _read_seed(args.seed_file)
@@ -317,15 +322,27 @@ def sign_command(args: argparse.Namespace) -> int:
     if not isinstance(request, dict) or "auth" in request:
         print("the request must be a JSON object without an auth member", file=sys.stderr)
         return 2
-    envelope = sign_request(
+    try:
+        envelope = _sign(request, private, args)
+    except ValueError as exc:  # JcsError, CodecError: the request is not canonicalisable
+        print(f"the request is not canonicalisable: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    print(json.dumps(envelope, sort_keys=True))
+    return 0
+
+
+def _sign(request: dict[str, Any], private: Any, args: argparse.Namespace) -> dict[str, Any]:
+    from datetime import UTC, datetime, timedelta
+
+    from ledgergate.journal.auth import sign_request
+
+    return sign_request(
         request,
         private=private,
         journal_id=args.journal_id,
         principal=args.principal,
         expires_at=datetime.now(UTC) + timedelta(seconds=args.expires_in),
     )
-    print(json.dumps(envelope, sort_keys=True))
-    return 0
 
 
 def journal_id_command(args: argparse.Namespace) -> int:
@@ -389,7 +406,14 @@ def registry_command(args: argparse.Namespace) -> int:
             if kind == "signed" and key_text is None:
                 print("a signed principal needs --verification-key-file", file=sys.stderr)
                 return 2
-            journal.add_principal(args.name, kind, key_text if kind == "signed" else None)
+            if kind == "transport" and key_text is not None:
+                print(
+                    "a transport principal takes no key; drop --verification-key-file or"
+                    " use --kind signed",
+                    file=sys.stderr,
+                )
+                return 2
+            journal.add_principal(args.name, kind, key_text)
         elif args.registry == "principal":
             journal.revoke_principal(args.name)
         elif args.action == "add":
@@ -714,6 +738,8 @@ def serve_command(args: argparse.Namespace) -> int:
         name, sep, keyfile = spec.partition("=")
         if not sep or "=" in name:
             return fail(f"--approver expects NAME=KEYFILE, got {spec!r}")
+        if name in approvers:
+            return fail(f"--approver names {name!r} twice")
         try:
             approvers[name] = Path(keyfile).read_text(encoding="utf-8").strip()
         except OSError as exc:

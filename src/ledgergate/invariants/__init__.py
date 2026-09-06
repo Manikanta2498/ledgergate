@@ -890,6 +890,31 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                         " one revoke",
                     )
                 )
+    # a schema-7 document attributes every resolution; a stripped one is forged, and the policy
+    # saw the principal the resolution names
+    by_intent = {e.intent_id: e for e in t.events if isinstance(e, InvocationResolution)}
+    for e in t.events:
+        if isinstance(e, InvocationResolution) and e.authentication is None:
+            out.append(
+                Finding(
+                    "attributions_are_registered",
+                    "error",
+                    f"{e.intent_id}: a resolution without attribution in a registry-bearing trace",
+                    e.intent_id,
+                )
+            )
+        elif isinstance(e, PolicyDecision):
+            r = by_intent.get(e.intent_id)
+            if r is not None and r.principal is not None and e.context.principal != r.principal:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: the policy saw {e.context.principal}, the resolution"
+                        f" names {r.principal}",
+                        e.intent_id,
+                    )
+                )
     for pos, e in enumerate(t.events):
         if isinstance(e, PrincipalChange | ApproverChange):
             first = pos == 0  # the bootstrap is the first event of the document

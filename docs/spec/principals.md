@@ -127,8 +127,9 @@ The admission input (`journal.md`, *Admission input and Request*) gains one opti
 The signature is over `canonical_bytes` (JCS) of a document *constructed* from the request:
 the step-4 value's `tool`, `call_id`, `arguments`, `key` and `approval` (an absent member is
 signed as `null`, since step 4 omits absent members and the signer and the journal must agree
-on one form), plus `journal_id` and the envelope's `principal` and `expires_at` (RFC 3339 with
-an offset, normalised as artefact timestamps are), the signature itself excluded:
+on one form), plus `journal_id` and the envelope's `principal` and `expires_at` (the signature covers the
+`expires_at` *text as sent*; the stored `auth_expires_at` is that instant normalised to UTC),
+the signature itself excluded:
 
 ```json
 {"journal_id": "<the journal's>", "call_id": "<the call's, as serve derives it>",

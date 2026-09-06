@@ -46,10 +46,10 @@ The corpus makes no claim about *how* the agent is driven. Two ways produce a tr
    runner never imports a model SDK, which is what "framework-agnostic" means here.
 
 A trace is scored only if it is *from this scenario's setup*: its `chart`, `policy_set_version` and `policy_config_digest` must equal what the setup derives to, every currency the scenario *lists* must be present in the trace's `currencies` with the same exponent (a subset test, since the definition folds the build's bundled table in as well and a journal emitted by an earlier build must not mismatch after a bundled addition), and its
-first `len(before)` invocations (their `tool_call` events) must carry the call ids `setup-1` ... `setup-n`, and their resolutions the setup's attempted digests (a fingerprint for a write step, a request digest for a read, which the runner recomputes by running the setup itself). A trace from another setup is `error: setup mismatch`, never scored, so a green result cannot be bought with an honest trace of an easier ledger (authenticity is another matter; see *What this document does not claim*). The approval
-verification key is not bound (the trace cannot carry it); a forged artefact fails check 1
+first `len(before)` invocations (their `tool_call` events) must carry the call ids `setup-1` ... `setup-n`, and their resolutions the setup's attempted digests (a fingerprint for a write step, a request digest for a read, which the runner recomputes by running the setup itself). A trace from another setup is `error: setup mismatch`, never scored, so a green result cannot be bought with an honest trace of an easier ledger (authenticity is another matter; see *What this document does not claim*). The approver
+registry's keys are not bound (the trace cannot carry them); a forged artefact fails check 1
 against any key, and a live scenario that needs a *valid* approval can only be scored when
-the journal was created by `--emit-setup`, which installs the corpus key.
+the journal was created by `--emit-setup`, which seeds the corpus approvers.
 
 ## Files
 

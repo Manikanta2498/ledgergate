@@ -184,7 +184,7 @@ that violates any rule above cannot exist in the journal, so rebuild needs no re
 
 Issued out of band by the operator via `ledgergate approve` (delivered in M3 with the
 validation and consumption code; M4 is only the transport that presents artefacts), signed
-with a key whose verification counterpart is in `definition`. Binds to exactly one pending operation in exactly one journal, by the
+with a key whose verification counterpart is registered under the artefact's `approver` in the approver registry (schema 7, [principals](principals.md); the definition's single key before). Binds to exactly one pending operation in exactly one journal, by the
 definition's `journal_id` and the operation's `fingerprint` and tokenized `key`; the artefact also
 carries subject, amount and currency as display fields for the approver, copied from the
 command at issuance and recorded for audit but not compared. Each is nullable, since not
@@ -379,7 +379,7 @@ anything that references it, an operation before the invocation that references 
    process cannot miss it and the core is never asked to re-raise a recorded rejection. The entry-chain head is checked against the rebuilt projection
    as an integrity test; it is not the cursor, because lifecycle commands leave it
    unchanged.
-3. **Admit.** Tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
+3. **Admit.** Schema 7 first ([principals](principals.md)): the session principal's liveness against `principal_events` (a revoked one is `invalid: revoked_principal`, failure-envelope shape, `authentication` = `transport`), then a present `auth` member's clockless checks (shape, live signed principal, signature). Then tokenize every caller identifier ([identifiers-and-redaction](identifiers-and-redaction.md)),
    redact free text, decode the command. On failure (unknown tool, malformed arguments,
    identifier invalid after tokenization, a command document the codec cannot decode, a
    command the core's own constructors reject such as an unbalanced draft or a zero
@@ -516,7 +516,7 @@ is null only for an outcome no policy evaluated, which does not occur: every `ne
 and accepts serialization; a deferred transaction that upgrades to write after taking its
 snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable state.
 
-1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3, including a signed request's clockless checks; an invalid read writes
+1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3, including the session's liveness and a signed request's clockless checks; an invalid read writes
 `invocations` (`invalid`), the failure-envelope inbound event, `invocation_responses`
 (`invalid`, no outcome), the outbound event; commits; returns). 4. `invocations` (`read`), at the read's single clock reading, where (schema 7) a signed request's expiry and replay checks run first and record `invalid` on failure exactly as write step 4 does.
 5. Inbound `events`; then, if an approval was presented, an `approvals` row with check result

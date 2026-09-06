@@ -270,7 +270,9 @@ the v2 model refuses an `invalid` result whose `error.type` is outside it.
   pre-checks the registry and reports a typo as a refusal, exit `2`; the trigger behind it is
   the guarantee, as check 4's `UNIQUE` is, so an operator error is never reported as
   corruption); `journal pending` lists each pending operation's admitted approvers and which
-  are live; `create`
+  are live (a read-only listing that rebuilds the set from the definition's
+  `policy_configuration`, as `verify` already does; `serve`'s refusal to rebuild is about
+  *writing* under a set the operator did not name); `create`
   gains `--approver NAME=KEYFILE` (replacing `--approval-key`); `approve`'s `--signing-key`
   becomes `--seed-file`, and its existing `--approver` is checked against the registry; `initialize` returns `journal_id` in `_meta`.
 - Corpus grammar: `setup.approvers: [{name, seed}]` (published test seeds) replaces

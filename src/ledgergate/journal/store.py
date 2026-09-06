@@ -299,6 +299,7 @@ class Journal:
     _cursor: int = field(init=False, default=0)
     _pending_projection: tuple[Ledger, int] | None = field(init=False, default=None, repr=False)
     _seed_approvers: dict[str, str] = field(init=False, default_factory=dict, repr=False)
+    _registry_only: bool = field(init=False, default=False, repr=False)
 
     def __setattr__(self, name: str, value: Any) -> None:
         # The components a definition binds (policy, admitter, principal, effects) are
@@ -335,10 +336,11 @@ class Journal:
             "SELECT (SELECT COUNT(*) FROM principal_events)"
             " + (SELECT COUNT(*) FROM approver_events)"
         ).fetchone()
-        if EVENTS_PER_INVOCATION * invocations + messages + registry_rows + cost > MAX_TRACE_EVENTS:
+        total = EVENTS_PER_INVOCATION * invocations + messages + registry_rows
+        if total + cost > MAX_TRACE_EVENTS:
             raise CapacityError(
-                f"journal at capacity: {invocations} invocations and {messages} messages derive"
-                f" up to {EVENTS_PER_INVOCATION * invocations + messages} events against a bound"
+                f"journal at capacity: {invocations} invocations, {messages} messages and"
+                f" {registry_rows} registry events derive up to {total} events against a bound"
                 f" of {MAX_TRACE_EVENTS}; start a new journal"
             )
 
@@ -347,6 +349,8 @@ class Journal:
         ones the definition recorded; ``open`` checked once, and this makes the check hold
         for every call rather than for the first."""
         d = self._definition
+        if self._registry_only:
+            return  # neither the policy nor the admitter runs; nothing of them is bound
         if (
             self.policy.version != d.policy_set_version
             or self.policy.configuration_digest() != d.policy_config
@@ -523,10 +527,16 @@ class Journal:
         admitter: Admitter | None = None,
         policy: PolicySet | None = None,
         principal: str = LOCAL_PRINCIPAL,
+        registry_only: bool = False,
     ) -> Journal:
+        """``registry_only`` opens for registry changes alone (docs/spec/principals.md): a
+        registry transaction runs neither the policy nor the admitter, so neither is bound;
+        the schema, codec and the operator's liveness still are, and ``handle`` and
+        ``record_message`` refuse such a journal."""
         self = cls(
             path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet(), principal
         )
+        self._registry_only = registry_only
         try:
             probe(path)  # read-only: a foreign file is refused before any pragma touches it
             row = _read_definition_row(path)  # also read-only; refuses another schema version
@@ -538,26 +548,27 @@ class Journal:
             raise ConfigurationError(
                 f"journal is codec {row[1]!r}; this process is codec {CODEC_VERSION!r}"
             )
-        if row[2] != self.policy.version:
-            raise ConfigurationError(
-                f"journal was defined with policy set {row[2]!r};"
-                f" this process runs {self.policy.version!r}"
-            )
-        if row[10] != self.policy.configuration_digest():
-            raise ConfigurationError(
-                f"policy set {self.policy.version!r} has different rules from the ones this"
-                " journal was defined with; a rule change is a new journal"
-            )
-        if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
-            raise ConfigurationError(
-                f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
-                f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
-            )
-        if not hmac.compare_digest(row[9], self.admitter.key_check()):
-            raise ConfigurationError(
-                "this admitter's key does not reproduce the journal's token check;"
-                " a different key under the same label would fork the identifier space"
-            )
+        if not registry_only:
+            if row[2] != self.policy.version:
+                raise ConfigurationError(
+                    f"journal was defined with policy set {row[2]!r};"
+                    f" this process runs {self.policy.version!r}"
+                )
+            if row[10] != self.policy.configuration_digest():
+                raise ConfigurationError(
+                    f"policy set {self.policy.version!r} has different rules from the ones this"
+                    " journal was defined with; a rule change is a new journal"
+                )
+            if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
+                raise ConfigurationError(
+                    f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
+                    f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
+                )
+            if not hmac.compare_digest(row[9], self.admitter.key_check()):
+                raise ConfigurationError(
+                    "this admitter's key does not reproduce the journal's token check;"
+                    " a different key under the same label would fork the identifier space"
+                )
         try:
             self._conn = connect(path, create=False)
         except sqlite3.Error as exc:
@@ -628,6 +639,8 @@ class Journal:
             require_ijson(value)
         except IJsonError as exc:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
+        if self._registry_only:
+            raise ConfigurationError("journal opened for registry changes only; reopen to handle")
         with self._txn():
             self._check_binding()
             self._check_capacity(EVENTS_PER_INVOCATION)
@@ -696,6 +709,8 @@ class Journal:
             raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}")
         if len(content) > MAX_MESSAGE_CHARS:
             raise ValueError(f"message content exceeds {MAX_MESSAGE_CHARS} characters")
+        if self._registry_only:
+            raise ConfigurationError("journal opened for registry changes only; reopen to record")
         with self._txn():
             self._check_binding()
             self._check_capacity(1)

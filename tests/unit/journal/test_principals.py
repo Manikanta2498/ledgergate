@@ -753,3 +753,199 @@ class TestCli:
         assert out["result"]["structuredContent"]["ok"] is True, out
         assert main(["verify", str(journal)]) == 0
         assert "attributions_are_registered" in capsys.readouterr().out
+
+
+class TestFirstImplementationReview:
+    def test_registry_cli_works_on_a_policy_bound_tokenizing_journal(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import subprocess
+        import sys
+
+        chart = tmp_path / "chart.json"
+        chart.write_text(
+            json.dumps(
+                [
+                    {"account_id": "cash", "kind": "asset", "currency": "USD"},
+                    {"account_id": "revenue", "kind": "revenue", "currency": "USD"},
+                ]
+            )
+        )
+        policy = tmp_path / "policy.json"
+        policy.write_text(
+            json.dumps(
+                {
+                    "set": "ledgergate.journal.policy.ThresholdPolicySet",
+                    "version": "p1",
+                    "deny_above": [],
+                    "approve_above": [
+                        {"kind": "open_transaction", "currency": "USD", "amount": "5000"}
+                    ],
+                    "window_caps": [],
+                    "gated_reads": [],
+                }
+            )
+        )
+        token_key = tmp_path / "token.key"
+        token_key.write_bytes(bytes(range(32)))
+        (tmp_path / "cfo.pub").write_text(verification_key_text(CFO))
+        (tmp_path / "agent.pub").write_text(verification_key_text(AGENT))
+        journal = tmp_path / "bound.journal"
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "ledgergate.cli",
+                "serve",
+                "--journal",
+                str(journal),
+                "--create",
+                "--chart",
+                str(chart),
+                "--policy",
+                str(policy),
+                "--token-key-file",
+                str(token_key),
+                "--approver",
+                f"cfo={tmp_path / 'cfo.pub'}",
+            ],
+            input=b"",
+            capture_output=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        # the registry commands need neither the policy nor the token key: a registry
+        # transaction runs neither, and the operator's liveness is what binds
+        assert (
+            main(
+                [
+                    "journal",
+                    "principal",
+                    "add",
+                    str(journal),
+                    "agent",
+                    "--verification-key-file",
+                    str(tmp_path / "agent.pub"),
+                ]
+            )
+            == 0
+        )
+        assert (
+            main(
+                [
+                    "journal",
+                    "approver",
+                    "add",
+                    str(journal),
+                    "controller",
+                    "--verification-key-file",
+                    str(tmp_path / "agent.pub"),
+                ]
+            )
+            == 0
+        )
+        assert main(["journal", "approver", "revoke", str(journal), "controller"]) == 0
+        assert main(["journal", "approver", "list", str(journal)]) == 0
+        out = capsys.readouterr().out
+        assert out.count('"name": "controller"') == 2  # add, revoke
+        # but such a journal cannot handle or record in registry-only mode
+        from ledgergate.mcp.effects import RandomIds, SystemClock
+
+        ro = Journal.open(str(journal), clock=SystemClock(), ids=RandomIds(), registry_only=True)
+        try:
+            with pytest.raises(ConfigurationError, match="registry changes only"):
+                ro.handle(post("k1"))
+            with pytest.raises(ConfigurationError, match="registry changes only"):
+                ro.record_message("user", "x")
+        finally:
+            ro.close()
+
+    def test_journal_pending_shows_admitted_approvers_and_stranding(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        policy = ThresholdPolicySet(
+            version="v1",
+            approve_above=[Threshold("open_transaction", "USD", 5_000, ("cfo",))],
+        )
+        j = Journal.create(
+            str(tmp_path / "g.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=policy,
+            approvers={
+                "cfo": verification_key_text(CFO),
+                "controller": verification_key_text(CONTROLLER),
+            },
+        )
+        try:
+            j.handle(
+                {
+                    "tool": "open_transaction",
+                    "call_id": "c1",
+                    "key": "k1",
+                    "arguments": {
+                        "transaction_id": "t",
+                        "amount": {"amount": 6000, "currency": "USD"},
+                    },
+                }
+            )
+            assert main(["journal", "pending", j.path]) == 0
+            row = json.loads(capsys.readouterr().out.strip())
+            assert row["admitted_approvers"] == {"cfo": True} and row["stranded"] is False
+            j.revoke_approver("cfo")
+            assert main(["journal", "pending", j.path]) == 0
+            row = json.loads(capsys.readouterr().out.strip())
+            assert row["admitted_approvers"] == {"cfo": False} and row["stranded"] is True
+        finally:
+            j.close()
+
+    def test_a_forged_registry_log_is_not_a_second_answer(self, j: Journal) -> None:
+        j.handle(signed(j, post("k1")))
+        doc = json.loads(dump_v2(derive_trace(j.path)))
+        # a second `add` for agent, as transport, appended before the signed call
+        forged = json.loads(json.dumps(doc))
+        idx = next(i for i, e in enumerate(forged["events"]) if e["type"] == "tool_call")
+        extra = {
+            **next(
+                e
+                for e in forged["events"]
+                if e["type"] == "principal_change" and e["name"] == "agent"
+            )
+        }
+        extra["kind"] = "transport"
+        forged["events"].insert(idx, extra)
+        for i, e in enumerate(forged["events"], start=1):
+            e["seq"] = i
+        card = verify(load_any(json.dumps(forged)))
+        findings = {r.name: r.status for r in card.results}
+        assert findings["attributions_are_registered"] == "fail"
+        # a message before the bootstrap: the exemption is the document's first event only
+        shifted = json.loads(json.dumps(doc))
+        first = shifted["events"][0]
+        shifted["events"].insert(
+            0, {"type": "message", "seq": 1, "at": first["at"], "role": "user", "content": "hi"}
+        )
+        for i, e in enumerate(shifted["events"], start=1):
+            e["seq"] = i
+        card = verify(load_any(json.dumps(shifted)))
+        assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"
+
+    @pytest.mark.parametrize(
+        "stamp", ["2026-01-01 00:01:00+00:00", "20260101T000100+0000", "2026-01-01T00:01:00"]
+    )
+    def test_expires_at_grammar_is_the_extended_rfc3339_form_with_an_offset(
+        self, j: Journal, stamp: str
+    ) -> None:
+        v = signed(j, post("k1"))
+        v["auth"]["expires_at"] = stamp
+        assert j.handle(v).error_type == "authentication_malformed"
+
+    def test_signature_spelling_is_canonical(self, j: Journal) -> None:
+        v = signed(j, post("k1"))
+        sig = v["auth"]["signature"]
+        # flip a padding bit in the last character: decodes to the same bytes, not canonical
+        last = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        i = last.index(sig[-1])
+        v["auth"]["signature"] = sig[:-1] + last[i ^ 1]
+        assert j.handle(v).error_type == "authentication_malformed"

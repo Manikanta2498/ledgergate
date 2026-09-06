@@ -66,7 +66,10 @@ non-empty requires at least one approver seeded, and every name in any line's `a
 NAME`, and `ledgergate journal approver add|revoke ...`. **Registry mutation is the process
 owner's alone**: these are CLI commands run by a live `transport` principal (`--principal`,
 default `local`, refused if not live), never a tool `serve` exposes and never something a
-`signed` principal can do, so an agent cannot register itself as an approver or a colleague as
+`signed` principal can do; they open the journal *registry-only* (schema, codec and the
+operator's liveness are checked; the policy set and the admitter are not bound, since a registry
+transaction runs neither, and such a handle refuses `handle` and `record_message`), so an
+operator needs no policy or token key to manage names, so an agent cannot register itself as an approver or a colleague as
 a principal. A registry event is a *standalone row in its own transaction*, allocator row
 included, with no `invocations` row (like a `message`, which is why it costs 1 in the
 capacity formula), and its trace event has no invocation anchor; `by` is the CLI's transport
@@ -140,8 +143,11 @@ and `expires_at` is covered. A client learns `journal_id` from `initialize`'s
 
 **Envelope fields.** As for an artefact (`identifiers-and-redaction.md`, *Approval artefact
 fields*), every field is bounded before anything is stored: `principal` an identifier (at most
-256 characters, one line), `expires_at` RFC 3339 with an offset (at most 64 characters),
-`signature` exactly 86 base64url characters; an envelope outside these is
+256 characters, one line), `expires_at` RFC 3339 in the extended form with an offset
+(`YYYY-MM-DDThh:mm:ss[.f]Z|±hh:mm`, at most 64 characters; a fixed grammar, not what a parser
+tolerates, since the signature covers the text), `signature` exactly 86 base64url characters in
+canonical spelling (a non-canonical padding bit is `authentication_malformed`, so one signature
+has one spelling); an envelope outside these is
 `authentication_malformed`, the predicate that cause names. The three `auth_*` columns are
 stored only on a `signed` row, that is only after the signature verified, since until then
 they are the presenter's words (the same rule the presentation row applies); a read's
@@ -150,9 +156,10 @@ they are the presenter's words (the same rule the presentation row applies); a r
 reads by two principals always have). `identifiers-and-redaction.md`
 gains this paragraph.
 
-**Where each check runs.** Admission is clockless and reads nothing outside its scope; the
-journal hands it, under the lock at step 3, the live `signed` principals and the `journal_id` as part of the
-`AdmissionScope` (as it already hands the currency registry), so it does what needs no clock:
+**Where each check runs.** The envelope checks are clockless and run in the journal at step 3,
+under the lock, immediately before the admitter decodes the command (the journal reads the live
+`signed` principals and its `journal_id` there; the admitter itself never sees `auth`, which is
+stripped from the value it receives), so they do what needs no clock:
 `auth` present but not this shape → `invalid: authentication_malformed`; `principal` not a
 live `signed` principal at the current head → `invalid: unknown_principal` (a `transport`
 name or a revoked name is unknown *as a signer*); signature does not verify over the
@@ -190,8 +197,8 @@ another before `local` can go; stated, since operators will try it); rotation un
 name makes "who signed this" a question about the clock, and the clock is the signer's).
 `ledgergate sign --seed-file FILE --journal-id ID --expires-in SECONDS REQUEST.json` produces
 the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`, at most 86,400 seconds, with `sign` capping at 86,340 so a signer's clock one minute ahead of the journal's is not refused at the maximum: at step 4, beside the expiry check, the journal refuses an envelope whose `expires_at` is more than a day past `requested_at` as `invalid: request_expiry_unbounded`, a `signed` row like `request_expired`, since the replay set already bounds reuse and a request valid for years is a signed blank cheque; in the
-corpus, a `sign_as` step takes `expires_in_seconds` against the runner's peeked clock, as a
-`sign` step does, so the behavioural digest is stable), what a client library would do, so tests and the corpus can produce signed
+corpus, a `sign_as` step is signed for a fixed 300 seconds from the runner's peeked clock, so
+the behavioural digest is stable), what a client library would do, so tests and the corpus can produce signed
 requests without one.
 
 ## Approvers
@@ -274,7 +281,10 @@ sees the stranding before, not after, the last revoke.
   run, but its `verified` flag was computed against the registry at the presenting sequence as
   check 1 would, and the invariant checks it there); every change event's `by` is a live *transport* principal at its sequence, except the first
   event of the trace when it is the bootstrap `add` of a transport principal by itself.
-  `no_evidence` for a document without change events (a lifted v1, an earlier v2).
+  The walk also requires each name's log to be monotone (one `add`, at most one `revoke` after
+  it, nothing after a `revoke`), since a trace whose log is not could give liveness two answers;
+  `by` is judged live *before* the change event. `no_evidence` for a document without change
+  events (a lifted v1, an earlier v2).
 - The v2 capacity bound (`journal.md`, *Segmentation*; `mcp-runtime.md`) counts registry
   events alongside invocations and null-invocation events; the formula is amended.
 
@@ -313,9 +323,10 @@ the v2 model refuses an `invalid` result whose `error.type` is outside it.
   scenario signs a registered name with a key the registry does not hold.
   Three new scenarios: a signed request applied (`correct/`), a request signed with a key not
   registered for its principal, and an approval by a registered approver the line does not
-  admit (`red-team/`), each expecting the containing mechanism through two expectation keys the corpus grammar
-  gains for it, `invalid_causes` and `approval_verdicts` (`corpus.md`), so `bad_signature: 1`
-  and `approval_wrong_approver: 1` are what the expectations say, not merely `invalid: 1`.
+  admit (`red-team/`), each expecting the containing mechanism through three expectation keys the corpus grammar
+  gains for it, `invalid_causes`, `approval_verdicts` and `attributions` (`corpus.md`), so
+  `bad_signature: 1`, `approval_wrong_approver: 1` and `signed: 1` are what the expectations
+  say, not merely `invalid: 1` or `applied: 1`.
 
 ## Amendments to earlier documents (made in this change; the remainder at implementation)
 

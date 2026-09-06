@@ -132,15 +132,20 @@ def sign_request(
     return {"principal": principal, "expires_at": stamp, "signature": signature}
 
 
+_RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})")
+
+
 def _parse_expires_at(text: Any) -> datetime:
+    """RFC 3339 with an offset (`Z` or `+hh:mm`), the extended form only: the signature covers
+    the text, so the grammar is fixed rather than whatever a parser tolerates."""
     if not isinstance(text, str) or len(text) > MAX_EXPIRES_AT_CHARS:
+        raise AuthError("authentication_malformed")
+    if not _RFC3339.fullmatch(text):
         raise AuthError("authentication_malformed")
     try:
         at = datetime.fromisoformat(text)
     except ValueError as exc:
         raise AuthError("authentication_malformed") from exc
-    if at.tzinfo is None:
-        raise AuthError("authentication_malformed")
     return at.astimezone(UTC)
 
 
@@ -164,8 +169,8 @@ def verify_envelope(
         require_identifier(principal, "principal")
     except InvalidIdentifierError as exc:
         raise AuthError("authentication_malformed") from exc
-    if not _SIGNATURE.fullmatch(signature):
-        raise AuthError("authentication_malformed")
+    if not _SIGNATURE.fullmatch(signature) or _b64(_unb64(signature)) != signature:
+        raise AuthError("authentication_malformed")  # canonical base64url only: one spelling
     expires_at = _parse_expires_at(envelope["expires_at"])
     public = signers.get(principal)
     if public is None:

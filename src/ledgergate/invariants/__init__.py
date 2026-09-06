@@ -875,10 +875,24 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
     add by itself excepted."""
     out: list[Finding] = []
     principals, approvers = _liveness(t)
-    changes = [e for e in t.events if isinstance(e, PrincipalChange | ApproverChange)]
+    # the log is monotone per name (one add, at most one revoke after it, nothing after a
+    # revoke), as the journal's UNIQUE and trigger make it; a trace that is not is forged
+    for table, log in (("principal", principals), ("approver", approvers)):
+        for name, events in log.items():
+            actions = [ev[1] for ev in events]
+            ok = actions in (["add"], ["add", "revoke"])
+            if not ok:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{table} {name}: registry log {actions} is not one add then at most"
+                        " one revoke",
+                    )
+                )
     for pos, e in enumerate(t.events):
         if isinstance(e, PrincipalChange | ApproverChange):
-            first = changes[0] is e
+            first = pos == 0  # the bootstrap is the first event of the document
             bootstrap = (
                 first
                 and isinstance(e, PrincipalChange)
@@ -886,7 +900,9 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                 and e.kind == "transport"
                 and e.by == e.name
             )
-            if not bootstrap and _live_at(principals[e.by], pos) != "transport":
+            # `by` was live *before* this event (an add cannot attribute itself, except the
+            # bootstrap, which is why that exemption exists at all)
+            if not bootstrap and _live_at(principals[e.by], pos - 1) != "transport":
                 out.append(
                     Finding(
                         "attributions_are_registered",
@@ -929,13 +945,13 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                     )
                 )
         elif isinstance(e, PolicyDecision) and e.context.approval is not None:
-            name = e.context.approval.approver
-            if name is not None and _live_at(approvers[name], pos) is None:
+            approver_name = e.context.approval.approver
+            if approver_name is not None and _live_at(approvers[approver_name], pos) is None:
                 out.append(
                     Finding(
                         "attributions_are_registered",
                         "error",
-                        f"{e.intent_id}: approver {name} is not live at the decision",
+                        f"{e.intent_id}: approver {approver_name} is not live at the decision",
                         e.intent_id,
                     )
                 )

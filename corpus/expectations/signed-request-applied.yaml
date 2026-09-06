@@ -3,6 +3,8 @@ id: signed-request-applied
 status: pass
 dispositions:
   new: 1
+attributions:
+  signed: 1
 outcomes:
   applied: 1
 ledger_commands: 1

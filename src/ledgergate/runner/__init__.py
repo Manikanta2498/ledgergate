@@ -192,6 +192,7 @@ class Expectations(_Strict):
     invocations: int | None = None
     invalid_causes: dict[str, int] | None = None
     approval_verdicts: dict[str, int] | None = None
+    attributions: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -410,6 +411,10 @@ def _validate_expectations(ex: Expectations, path: Path) -> None:
         bad = sorted(set(ex.approval_verdicts) - set(get_args(Verdict)))
         if bad:
             raise CorpusError(f"{path}: approval_verdicts names unknown verdicts {bad}")
+    if ex.attributions is not None:
+        bad = sorted(set(ex.attributions) - {"transport", "signed", "rejected"})
+        if bad:
+            raise CorpusError(f"{path}: attributions names unknown kinds {bad}")
 
 
 def _policy(doc: dict[str, Any] | None, path: Path) -> Any:
@@ -796,6 +801,13 @@ def score(
                 v = row.decision.context.approval.verdict
                 actual[v] = actual.get(v, 0) + 1
         add("approval_verdicts", dict(ex.approval_verdicts), actual)
+    if ex.attributions is not None:
+        actual = dict.fromkeys(ex.attributions, 0)
+        for row in agent_rows:
+            a = row.resolution.authentication
+            if a is not None:
+                actual[a] = actual.get(a, 0) + 1
+        add("attributions", dict(ex.attributions), actual)
     return out
 
 

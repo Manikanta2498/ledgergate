@@ -194,6 +194,42 @@ def _read_only(path: str) -> sqlite3.Connection:
     return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
 
 
+def _live_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    assert table in ("principal_events", "approver_events")
+    return {
+        str(name)
+        for (name,) in conn.execute(
+            f"SELECT a.name FROM {table} a WHERE a.action = 'add'"  # noqa: S608 - fixed name
+            f" AND NOT EXISTS (SELECT 1 FROM {table} r WHERE r.name = a.name"
+            " AND r.action = 'revoke')"
+        )
+    }
+
+
+def _admitted_approvers(conn: sqlite3.Connection) -> Any:
+    """For `journal pending` (principals.md): the approvers a pending command's line admits,
+    from the definition's declarative configuration, read-only; None for any approver;
+    "unknown" for a set whose rules are code."""
+    from ledgergate.journal import ThresholdPolicySet
+
+    (text,) = conn.execute("SELECT policy_configuration FROM definition").fetchone()
+    if text is None:
+        return lambda _doc: "unknown"
+    config = json.loads(text)
+    if config.get("set") != "ledgergate.journal.policy.ThresholdPolicySet":
+        return lambda _doc: None
+    policy = ThresholdPolicySet.from_configuration(config)
+
+    def admitted(doc: dict[str, Any]) -> Any:
+        money = doc.get("amount") or doc.get("money")
+        if not isinstance(money, dict):
+            return None
+        out = policy.approvers_for(doc.get("kind"), money.get("currency"), str(money.get("amount")))
+        return None if out is None else set(out)
+
+    return admitted
+
+
 def journal_pending(args: argparse.Namespace) -> int:
     try:
         conn = _read_only(args.path)
@@ -201,13 +237,19 @@ def journal_pending(args: argparse.Namespace) -> int:
         print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
         return 2
     try:
+        admitted_for = _admitted_approvers(conn)
+        live = _live_names(conn, "approver_events")
         for key, fingerprint, command, _journal_id in _pending_rows(conn):
-            print(
-                json.dumps(
-                    {"key": key, "fingerprint": fingerprint, "command": json.loads(command)},
-                    sort_keys=True,
-                )
-            )
+            doc = json.loads(command)
+            admitted = admitted_for(doc)
+            row: dict[str, Any] = {"key": key, "fingerprint": fingerprint, "command": doc}
+            if admitted == "unknown":
+                row["admitted_approvers"] = "unknown (set is code)"
+            else:
+                names = sorted(live) if admitted is None else sorted(admitted)
+                row["admitted_approvers"] = {n: (n in live) for n in names}
+                row["stranded"] = not any(n in live for n in names)
+            print(json.dumps(row, sort_keys=True))
     except sqlite3.Error as exc:
         print(f"cannot read journal at {args.path}: {exc}", file=sys.stderr)
         return 2
@@ -332,7 +374,11 @@ def registry_command(args: argparse.Namespace) -> int:
             return 2
     try:
         journal = Journal.open(
-            args.path, clock=SystemClock(), ids=RandomIds(), principal=args.principal
+            args.path,
+            clock=SystemClock(),
+            ids=RandomIds(),
+            principal=args.principal,
+            registry_only=True,  # a registry transaction runs neither policy nor admitter
         )
     except (JournalError, ConfigurationError) as exc:
         print(f"cannot open journal: {exc}", file=sys.stderr)

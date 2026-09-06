@@ -108,8 +108,9 @@ invocation transaction and every registry transaction holds the registry rule (a
   runs at step 3 immediately after the signature verifies, before admission, so a second
   presentation is always `invalid: replayed_call` (never admission's answer again) and is the
   one signed row that writes no spend. The stated exception: a verified envelope whose
-  `call_id` is not an identifier is refused as `invalid_identifier` and spends nothing, since
-  such a request can never be admitted under any projection. So a verified request the journal
+  `call_id` is not an identifier string (absent, not a string, or outside the grammar) spends
+  nothing, whatever cause admission names, since such a request can never be admitted under
+  any projection. So a verified request the journal
   refused is not a bearer instrument: a signed `reverse` of an entry that did not exist yet,
   captured and re-presented after the entry appears, is `replayed_call`, not applied, since the
   signer's intent was about the ledger *then*. A rejected envelope spends nothing, so a third

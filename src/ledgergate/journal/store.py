@@ -693,8 +693,9 @@ class Journal:
     def _clock_checks(
         self, attribution: Attribution, request: Request, now: datetime, value: Any
     ) -> Response | None:
-        """Step 4's checks at the single reading: expiry, the expiry bound and replay, for a
-        signed request; ``None`` when the request may proceed."""
+        """Step 4's checks at the single reading: expiry and the expiry bound of a signed
+        request (the replay check is clockless and ran at step 3); ``None`` when the request
+        may proceed."""
         if attribution.authentication != "signed":
             return None
         assert attribution.auth_expires_at is not None

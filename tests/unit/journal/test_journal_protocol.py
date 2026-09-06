@@ -69,6 +69,8 @@ class TestGlobalSequenceAndAppendOnly:  # family 12
             _seed_approval_rows(raw)
         if table == "approver_events":
             _seed_approver_row(raw)
+        if table == "signed_calls":
+            _seed_signed_call_row(raw)
         assert count(raw, table), f"{table} must have a row for the trigger to fire"
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             raw.execute(f"DELETE FROM {table}")
@@ -1284,4 +1286,14 @@ def _seed_approver_row(raw: sqlite3.Connection) -> None:
         "INSERT INTO approver_events VALUES (?,?,?,?,?,?)",
         (seq, "cfo", "add", "A" * 43, "local", "2026-01-01T00:00:00+00:00"),
     )
+    raw.execute("COMMIT")
+
+
+def _seed_signed_call_row(raw: sqlite3.Connection) -> None:
+    """One hand-written spent pair against the first invocation, so the append-only triggers
+    on the schema-7 replay table are exercised too."""
+    raw.execute("BEGIN")
+    (inv,) = raw.execute("SELECT MIN(journal_sequence) FROM invocations").fetchone()
+    seq = raw.execute("INSERT INTO journal (kind) VALUES ('signed_calls')").lastrowid
+    raw.execute("INSERT INTO signed_calls VALUES (?,?,?,?)", (seq, "agent", "c1", inv))
     raw.execute("COMMIT")

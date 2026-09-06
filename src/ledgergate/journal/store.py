@@ -690,17 +690,36 @@ class Journal:
             return None
         assert attribution.auth_expires_at is not None
         cause = expiry_cause(attribution.auth_expires_at, now)
-        if cause is None:
-            replayed = self._conn.execute(
-                "SELECT 1 FROM invocations WHERE principal = ? AND call_id = ?"
-                " AND authentication = 'signed' AND disposition <> 'invalid'",
-                (attribution.principal, request.call_id),
-            ).fetchone()
-            if replayed is not None:
-                cause = "replayed_call"
+        if cause is None and self._signed_call_spent(attribution.principal, request.call_id):
+            cause = "replayed_call"
         if cause is None:
             return None
         return self._invalid(value, AdmissionError(cause, "auth"), attribution, now)
+
+    def _signed_call_spent(self, principal: str, call_id: str) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM signed_calls WHERE principal = ? AND call_id = ?",
+                (principal, call_id),
+            ).fetchone()
+            is not None
+        )
+
+    def _spend_signed_call(
+        self, attribution: Attribution, call_id: str | None, inv_seq: int
+    ) -> None:
+        """Every verified envelope is spent on its first presentation (principals.md): the pair
+        enters `signed_calls`, whose UNIQUE is the replay guarantee. A `replayed_call` refusal
+        writes nothing here, since the pair is already there."""
+        if attribution.authentication != "signed" or call_id is None:
+            return
+        if self._signed_call_spent(attribution.principal, call_id):
+            return
+        seq = self._alloc("signed_calls")
+        self._conn.execute(
+            "INSERT INTO signed_calls VALUES (?,?,?,?)",
+            (seq, attribution.principal, call_id, inv_seq),
+        )
 
     def record_message(self, role: str, content: str) -> int:
         """A standalone message event: its own transaction, no invocation. ``role`` is one
@@ -779,6 +798,7 @@ class Journal:
                 request.call_id,
             ),
         )
+        self._spend_signed_call(attribution, request.call_id, inv_seq)
         self._inbound(inv_seq, request)  # step 5
 
         # An artefact presented where none was expected is kept, not dropped.
@@ -968,6 +988,7 @@ class Journal:
                 request.call_id,
             ),
         )
+        self._spend_signed_call(attribution, request.call_id, inv_seq)
         self._inbound(inv_seq, request)
         presentation: int | None = None
         if request.approval is not None:
@@ -1072,6 +1093,7 @@ class Journal:
                 safe_call_id,
             ),
         )
+        self._spend_signed_call(attribution, safe_call_id, inv_seq)
         envelope = {
             "call_id": safe_call_id,
             "tool": tool if isinstance(tool, str) and tool in TOOLS else None,

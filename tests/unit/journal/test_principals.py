@@ -286,9 +286,7 @@ class TestSignedRequests:
         r = j.handle(signed(j, post("k1", call_id="c3"), seconds=MAX_EXPIRY_SECONDS))
         assert r.ok
 
-    def test_replay_is_refused_per_principal_and_call_id_and_refusals_do_not_enter_the_set(
-        self, j: Journal
-    ) -> None:
+    def test_every_verified_envelope_is_spent_on_first_presentation(self, j: Journal) -> None:
         v = signed(j, post("k1"))
         assert j.handle(v).ok
         again = j.handle(v)  # the same bytes, twice
@@ -296,44 +294,45 @@ class TestSignedRequests:
         # a legitimate retry: new call id, same idempotency key -> replay of the operation
         retry = j.handle(signed(j, post("k1", call_id="c2")))
         assert (retry.disposition, retry.response) == ("replay", "replayed")
-        # a rejected envelope for call id c5 does not block the principal's later c5
+        # a rejected envelope for call id c5 spends nothing: the signer's later c5 is admitted
         bad = signed(j, post("k3", call_id="c5"))
         bad["auth"]["signature"] = "A" * 86
         assert j.handle(bad).error_type == "bad_signature"
         assert j.handle(signed(j, post("k3", call_id="c5"))).ok
-        # an expired one for c6 does not either
+        # a verified envelope the journal refused is spent too: expired, then re-presented
+        # with a fresh window under the same call id -> replayed (not a bearer instrument)
         assert (
             j.handle(signed(j, post("k4", call_id="c6"), seconds=0)).error_type == "request_expired"
         )
-        assert j.handle(signed(j, post("k4", call_id="c6"))).ok
-        # the UNIQUE is the guarantee: a raw duplicate row is refused by the database
+        assert j.handle(signed(j, post("k4", call_id="c6"))).error_type == "replayed_call"
+        # the UNIQUE is the guarantee: a raw duplicate pair is refused by the database
         conn = sqlite3.connect(j.path)
         try:
             (seq,) = conn.execute("SELECT MAX(journal_sequence) + 1 FROM journal").fetchone()
             conn.execute(
-                "INSERT INTO journal (journal_sequence, kind) VALUES (?, 'invocations')", (seq,)
+                "INSERT INTO journal (journal_sequence, kind) VALUES (?, 'signed_calls')", (seq,)
             )
             with pytest.raises(sqlite3.IntegrityError):
-                conn.execute(
-                    "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        seq,
-                        None,
-                        EPOCH.isoformat(),
-                        "agent",
-                        "signed",
-                        "agent",
-                        EPOCH.isoformat(),
-                        "A" * 86,
-                        "read",
-                        None,
-                        None,
-                        "0" * 64,
-                        "c1",
-                    ),
-                )
+                conn.execute("INSERT INTO signed_calls VALUES (?,?,?,?)", (seq, "agent", "c1", 2))
         finally:
             conn.close()
+
+    def test_a_refused_signed_request_is_not_a_bearer_instrument(self, j: Journal) -> None:
+        # a signed reverse of an entry that does not exist yet: unknown_entry, signed row
+        reverse = {
+            "tool": "reverse",
+            "call_id": "r1",
+            "key": "rv",
+            "arguments": {"entry_id": "e-000001"},
+        }
+        v = signed(j, reverse)
+        assert j.handle(v).error_type == "unknown_entry"
+        assert table(j.path, "invocations")[-1][4] == "signed"
+        # the projection moves: the entry now exists
+        assert j.handle(post("k1")).ok
+        # the captured bytes, re-presented by anyone: spent, not honoured against the new ledger
+        assert j.handle(v).error_type == "replayed_call"
+        assert table(j.path, "outcomes")[-1][3] == "applied"  # only the post
 
     def test_a_signed_read_and_a_revoked_signer(self, j: Journal) -> None:
         r = j.handle(

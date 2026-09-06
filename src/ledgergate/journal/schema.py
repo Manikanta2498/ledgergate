@@ -39,6 +39,7 @@ FACT_TABLES = (
     "reads",
     "principal_events",
     "approver_events",
+    "signed_calls",
 )
 
 _DDL = """
@@ -99,11 +100,17 @@ CREATE TABLE IF NOT EXISTS invocations (
     CHECK (authentication <> 'rejected' OR disposition = 'invalid')
 );
 
--- schema 7: the replay guarantee. A signed message presented twice is refused; the refusal
--- row is `invalid` and so outside the index, which is why the predicate excludes it.
-CREATE UNIQUE INDEX IF NOT EXISTS invocations_signed_call
-    ON invocations(principal, call_id)
-    WHERE authentication = 'signed' AND disposition <> 'invalid';
+-- schema 7: the replay guarantee. Every verified envelope's (principal, call_id) is spent on
+-- its first presentation, whatever the journal then answered; a second presentation is
+-- refused as replayed_call and writes no row here, so the UNIQUE is the constraint and the
+-- SELECT that produces the recorded refusal is the optimisation.
+CREATE TABLE IF NOT EXISTS signed_calls (
+    journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),
+    principal TEXT NOT NULL,
+    call_id TEXT NOT NULL,
+    invocation INTEGER NOT NULL REFERENCES invocations(journal_sequence),
+    UNIQUE (principal, call_id)
+);
 
 CREATE TABLE IF NOT EXISTS approvals (
     journal_sequence INTEGER PRIMARY KEY REFERENCES journal(journal_sequence),

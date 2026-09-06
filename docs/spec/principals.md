@@ -100,13 +100,15 @@ invocation transaction and every registry transaction holds the registry rule (a
   fails (`request_expired`, `replayed_call`, or a command that does not decode) is an
   `invalid` row with `principal` = the envelope's and `authentication` = `signed`, since the
   signer is known and pretending otherwise would be a then-versus-now error. The **replay set**
-  is the `(principal, call_id)` pairs of verified signed invocations whose disposition is not
-  `invalid`. `invalid` rows are excluded because the `replayed_call` refusal row itself would
-  collide with a full-width `UNIQUE`; the consequence is stated: a verified request the journal
-  refused at step 3 or 4 can be re-presented by anyone holding the bytes until `expires_at`,
-  and each presentation is admitted anew and gets admission's answer at *that* time (the same
-  answer, admission being deterministic over the projection). A rejected envelope never enters
-  the set either, so a third party cannot block a principal's later call id.
+  is every verified envelope's `(principal, call_id)`, *spent on its first presentation whatever
+  the journal then answered* (applied, replayed, denied, refused at admission, expired), recorded
+  in a `signed_calls` table whose `UNIQUE (principal, call_id)` is the guarantee; a second
+  presentation is `invalid: replayed_call` and writes nothing there (the `SELECT` that produces
+  the recorded refusal is, as for check 4, the optimisation). So a verified request the journal
+  refused is not a bearer instrument: a signed `reverse` of an entry that did not exist yet,
+  captured and re-presented after the entry appears, is `replayed_call`, not applied, since the
+  signer's intent was about the ledger *then*. A rejected envelope spends nothing, so a third
+  party cannot block a principal's later call id.
 - Order of checks on one request: the session's `revoked_principal` check first (a revoked
   operator's session delivers nothing, envelope or not), then the envelope's clockless checks,
   then admission of the command, then, at the single reading, expiry, the expiry bound and
@@ -173,10 +175,7 @@ checks that need the clock run at the protocol's **single reading**: in the writ
 step 4 and in the read protocol at its own reading (`journal.md`), `expires_at <=
 requested_at` → `invalid: request_expired`, `expires_at > requested_at + 86,400 s` →
 `invalid: request_expiry_unbounded`, and `(principal, call_id)` in the replay set →
-`invalid: replayed_call` (enforced by a partial `UNIQUE` index on `invocations (principal, call_id) WHERE
-authentication = 'signed' AND disposition <> 'invalid'`, so the `SELECT` that produces the
-recorded refusal is, as for check 4, merely the optimisation and the constraint is the
-guarantee); such a row is written in the step-3 failure-envelope shape (an
+`invalid: replayed_call` (the `signed_calls` `UNIQUE`, above, is the guarantee); such a row is written in the step-3 failure-envelope shape (an
 `invalid` invocation with a null `request_digest`, the redacted raw payload including `auth`
 as an untyped blob, and its keyed `input_digest`), the one shape `invalid` has (a replayed message is refused; a legitimate retry is a *new* call with the *same idempotency key*, which the write protocol answers as it always has). The one-reading rule is untouched.
 
@@ -275,8 +274,8 @@ sees the stranding before, not after, the last revoke.
   the line; `decision_recomputes` does exactly that for `ThresholdPolicySet` contexts (a runtime
   rule is still never recomputed as a *policy* decision; this is recomputing the input it
   keyed on).
-- Two event types, `principal_change` and `approver_change` (`name`, `action`, `kind`, `by`,
-  `at`), at their `journal_sequence` position, so a verifier computes liveness at any sequence.
+- Two event types, `principal_change` and `approver_change` (`name`, `action`, `by`, `at`;
+  `kind` on `principal_change` only), at their `journal_sequence` position, so a verifier computes liveness at any sequence.
 - One invariant, `attributions_are_registered`: every resolution whose `authentication` is
   not `rejected` names a principal live at its sequence (a `transport` one as a `transport`
   add, a `signed` one as a `signed` add), except an `invalid: revoked_principal` row, whose

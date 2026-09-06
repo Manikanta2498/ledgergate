@@ -29,7 +29,7 @@ command is admissible, records the decision and its effects durably, and maintai
 books. It does **not** move money on external rails. Calling a payment provider has its
 own failure modes (dual writes, provider idempotency, partial settlement, reconciliation),
 and claiming SQLite idempotency covers them would be exactly the false guarantee this
-project exists to catch. External execution, if built, is M8, with an explicit outbox and
+project exists to catch. External execution, if built, is M8c, with an explicit outbox and
 reconciliation. Until then the tools operate on LedgerGate's ledger and nothing else.
 
 ## Decisions

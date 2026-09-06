@@ -67,7 +67,7 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   the verdict.
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.
-- `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error; schema 7: `error.type` is the admission cause code from `journal.md`'s closed vocabulary, refused by the model outside it, so a verifier and the corpus can name the refusal). No
+- `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error; schema 7: `error.type` is the admission cause code from `journal.md`'s closed vocabulary; the model requires it for a resolution that carries `authentication` (present in every schema-7 derivation, the marker a document has no other way to show) and accepts exactly `AdmissionError` for one that does not, so earlier documents load and a schema-7 one cannot mislabel a refusal). No
   intent, no operation, no decision. Applies identically to write and read tools. The
   `tool_call`'s `arguments` is the empty object: the input was not admitted, the envelope's
   redacted payload stays in the journal, and nothing of it is carried into a trace.
@@ -104,7 +104,7 @@ carries the inputs, not a summary of them:
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
-Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal) and `invocation_resolution.authentication` (`transport`, `signed`, `rejected`); `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `kind` for principals, `by`, `at`), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
+Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal), `invocation_resolution.authentication` (`transport`, `signed`, `rejected`) and, on an `invalid` resolution, `invocation_resolution.error_type`, equal to the paired `tool_result.error.type` (the model requires the equality), so the invariant and the corpus key on the resolution; `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `kind` for principals, `by`, `at`), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
 
 A consumer with the policy set at `policy_set_version` can recompute `decision` from
 `context` and compare. A consumer without it can verify only that the recorded evidence is

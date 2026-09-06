@@ -1,4 +1,4 @@
-.PHONY: help install hooks check fmt lint types imports determinism licenses test cov audit secrets clean
+.PHONY: help install hooks check fmt lint types imports determinism licenses test cov audit secrets mutation mutation-baseline clean
 
 help:
 	@echo "install      install the project and dev dependencies"
@@ -14,6 +14,8 @@ help:
 	@echo "cov          pytest with coverage gates"
 	@echo "audit        dependency vulnerability scan"
 	@echo "secrets      gitleaks scan of the working tree"
+	@echo "mutation     mutmut over the core and the registry, then the ratchet against .mutation-baseline.json (minutes)"
+	@echo "mutation-baseline  fresh mutation run, then rewrite the baseline (docs/spec/assurance.md)"
 
 install:
 	uv sync --all-groups
@@ -57,6 +59,16 @@ audit:
 secrets:
 	uv run pre-commit run gitleaks --all-files
 
+mutation:
+	rm -rf mutants
+	uv run mutmut run
+	uv run python scripts/mutation_gate.py gate
+
+mutation-baseline:
+	rm -rf mutants
+	uv run mutmut run
+	uv run python scripts/mutation_gate.py baseline
+
 clean:
-	rm -rf .pytest_cache .mypy_cache .ruff_cache .hypothesis htmlcov .coverage coverage.xml
+	rm -rf .pytest_cache .mypy_cache .ruff_cache .hypothesis htmlcov .coverage coverage.xml mutants
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

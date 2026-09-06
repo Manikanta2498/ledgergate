@@ -1,16 +1,23 @@
 # LedgerGate
 
+[![CI](https://github.com/Manikanta2498/ledgergate/actions/workflows/ci.yml/badge.svg)](https://github.com/Manikanta2498/ledgergate/actions/workflows/ci.yml)
+[![Mutation gate](https://github.com/Manikanta2498/ledgergate/actions/workflows/mutation.yml/badge.svg)](https://github.com/Manikanta2498/ledgergate/actions/workflows/mutation.yml)
+[![CodeQL](https://github.com/Manikanta2498/ledgergate/actions/workflows/codeql.yml/badge.svg)](https://github.com/Manikanta2498/ledgergate/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Manikanta2498/ledgergate/badge)](https://scorecard.dev/viewer/?uri=github.com/Manikanta2498/ledgergate)
+
 **A correctness-enforcing ledger runtime for autonomous agents that move money, plus the
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
 
-> **Status: pre-alpha, milestones M0 to M6 complete.** The deterministic ledger core (M1),
+> **Status: pre-alpha, milestones M0 to M7 complete.** The deterministic ledger core (M1),
 > the trace schema that makes it framework-agnostic (M2a), the durable journal (M2b) and
 > the tokenizing, redacting admitter (M2c), the policy and approval layer, trace v2 with
 > journal derivation, the invariant registry behind `ledgergate verify` (M3), and the stdio MCP runtime
 > `ledgergate serve` (M4), and the OpenTelemetry GenAI observational adapter behind
-> `ledgergate record` (M5), and the scenario and red-team corpus with `ledgergate run` and
-> `report` (M6) are implemented and tested. An agent run can be recorded, validated against the published
+> `ledgergate record` (M5), the scenario and red-team corpus with `ledgergate run` and
+> `report` (M6), and the assurance layer (M7: conformance levels, a ratcheting mutation gate,
+> CodeQL, Scorecard) are implemented and tested; the provenance-attested release pipeline is
+> implemented and *unrehearsed* until its first TestPyPI dispatch has run. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
 > the answer it got the first time. See [Roadmap](#roadmap).
 
@@ -238,10 +245,16 @@ the runtime *contained* the misbehaviour: an over-cap refund `denied`, a missing
 `invalid`, a forged or expired or reused approval `runtime.approval_rejected`, a lifecycle
 jump `rejected`. `ledgergate report` renders md, JUnit and SARIF, and `--drift` compares two
 results by behavioural digest; a regression or a vanished trace fails the gate.
+`report --conformance` reduces a result to a level: **L1 operational** (every scenario
+scored, every correct one passed), **L2 contained** (and every red-team one passed), **L3
+stable** (L2 in two results with every behavioural digest unchanged). A level is a rendering
+of the evidence, never new evidence, and L2 does not mean safe: it means the corpus's
+misbehaviours were contained ([docs/spec/assurance.md](docs/spec/assurance.md)).
 
 ```text
 $ ledgergate run --corpus corpus --out result.json && ledgergate report result.json
 # LedgerGate corpus result
+**Conformance: L2 (22 scenarios, 13 red-team; no baseline)**
 **22 pass, 0 fail, 0 error, 0 skipped** of 22.
 ```
 
@@ -442,6 +455,8 @@ These are enforced by CI gates, not by convention:
 | No accidental network in tests | `pytest --disable-socket` by default |
 | The license boundary is unambiguous per file | `scripts/check_licenses.py` requires a matching `SPDX-License-Identifier`, inline or in a `.license` sidecar, on every source and package-data file under `src/ledgergate/`, `corpus/` and `schema/` |
 | Secrets stay out of the tree and the history | `gitleaks` on staged changes in the pre-commit hook, then on the full working tree *and* the full git history in CI |
+| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows, and a killed one must leave the baseline in the same change. Current baseline: **610 unkilled mutants** of 1,697 distinct mutations (all `survived`; none `no tests`). The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
+| A release is what the repository built (workflow unrehearsed until the first TestPyPI dispatch) | tag-driven workflow: the CI gates run whole, then `uv build`, a SLSA provenance attestation per artefact, trusted publishing to PyPI (no token exists), a GitHub release with the Apache-2.0 corpus tarball and every provenance bundle beside it. Verify: `gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml` |
 | Money is never a float | `Money` rejects a `float` amount at construction, and `scripts/check_determinism.py` fails on any float literal, `float()` call or `float` annotation in `src/ledgergate/ledger/` |
 
 ## Roadmap
@@ -457,12 +472,45 @@ These are enforced by CI gates, not by convention:
 | **M4** | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log; designed in [docs/spec/mcp-runtime.md](docs/spec/mcp-runtime.md) | **done** |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
-| M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
+| M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | **done**, release pipeline unrehearsed: nothing is tagged until it has run against TestPyPI |
 | M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
 
 The reasoning behind this order, and what was deliberately left out, is in
 [ADR-0002](docs/adr/0002-runtime-surface-and-plan.md). The normative protocols the
 milestones are built to are in [`docs/spec/`](docs/spec/).
+
+## Install
+
+Nothing is on PyPI yet: the release workflow exists and is rehearsed against TestPyPI before
+the first tag. When `0.1.0a1` ships, a release is three artefacts, each with a SLSA
+provenance bundle beside it as a release asset (`<artefact>.intoto.jsonl`):
+
+| Artefact | License | Contents |
+| :-- | :-- | :-- |
+| `ledgergate-<v>-py3-none-any.whl`, `ledgergate-<v>.tar.gz` (on PyPI and the release) | BUSL-1.1 | the runtime, `src/ledgergate` only |
+| `ledgergate-corpus-<v>.tar.gz` (release asset) | Apache-2.0 | `corpus/` and `schema/`, which are deliberately not in the wheel or sdist |
+
+```bash
+pip install ledgergate==<v>
+# provenance, through GitHub's attestation API:
+gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate \
+  --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml
+# the same check from the bundle beside the artefact, without the attestation API
+# (fully offline only with a trust root fetched earlier: gh attestation trusted-root > root.json,
+#  then --custom-trusted-root root.json):
+gh attestation verify ledgergate-<v>-py3-none-any.whl --bundle ledgergate-<v>-py3-none-any.whl.intoto.jsonl \
+  --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml
+```
+
+The Scorecard badge above is the live score, not a claim. Checks known to be flagged, and not
+worked around, are at least: `Branch-Protection` and `Code-Review` (a single-maintainer
+pre-alpha has no required reviews and no reviewed merges), `Dependency-Update-Tool` (no
+auto-bumping; `uv.lock` pins and `pip-audit` audits), `CII-Best-Practices`, `Signed-Releases`
+until the first release exists with its bundles beside it, and `Pinned-Dependencies` for the
+release smoke job's `pip install` of the artefact under test. CodeQL runs on every pull
+request; whether an alert fails the check is a repository setting, not something the
+workflow file can claim, and trusted publishing likewise depends on the publisher being
+registered on the index.
 
 ## Development
 
@@ -474,7 +522,9 @@ make fmt                      # format and autofix
 ```
 
 Individual gates: `make lint`, `make types`, `make imports`, `make determinism`,
-`make licenses`, `make test`, `make cov`, `make audit`, `make secrets`.
+`make licenses`, `make test`, `make cov`, `make audit`, `make secrets`. `make mutation` runs
+the mutation ratchet (minutes; nightly in CI, not per pull request, a stated limit) and
+`make mutation-baseline` regenerates the baseline after killing mutants.
 
 `make check` runs the local equivalents of the CI gates. Two differences are deliberate:
 the pre-commit hooks are a fast subset that catches problems before a commit exists, and

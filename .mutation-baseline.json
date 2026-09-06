@@ -1,0 +1,3056 @@
+{
+  "_": "docs/spec/assurance.md, the mutation gate; regenerate with `make mutation-baseline`",
+  "unkilled": {
+    "ledgergate.invariants.x__context_of:097aee09d1f33ee8": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_2"
+    },
+    "ledgergate.invariants.x__context_of:17168952b41c68c8": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_27"
+    },
+    "ledgergate.invariants.x__context_of:19ec7082e333852c": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_6"
+    },
+    "ledgergate.invariants.x__context_of:2e6c279f5248d263": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_3"
+    },
+    "ledgergate.invariants.x__context_of:4e4147e889aeb693": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_26"
+    },
+    "ledgergate.invariants.x__context_of:9b28e51648c2b864": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_7"
+    },
+    "ledgergate.invariants.x__context_of:ab5f10b9903828b4": {
+      "function": "ledgergate.invariants.x__context_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__context_of__mutmut_4"
+    },
+    "ledgergate.invariants.x__has_disposition:6cc387c0fd2c0372": {
+      "function": "ledgergate.invariants.x__has_disposition",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__has_disposition__mutmut_2"
+    },
+    "ledgergate.invariants.x__has_disposition:a16a424579536058": {
+      "function": "ledgergate.invariants.x__has_disposition",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__has_disposition__mutmut_1"
+    },
+    "ledgergate.invariants.x__has_disposition:b90d9548f3d551c8": {
+      "function": "ledgergate.invariants.x__has_disposition",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__has_disposition__mutmut_3"
+    },
+    "ledgergate.invariants.x__has_non_allow_decision:3c2b7d3b135db67f": {
+      "function": "ledgergate.invariants.x__has_non_allow_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__has_non_allow_decision__mutmut_2"
+    },
+    "ledgergate.invariants.x__has_non_allow_decision:3cfe6caaf147a3bb": {
+      "function": "ledgergate.invariants.x__has_non_allow_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__has_non_allow_decision__mutmut_4"
+    },
+    "ledgergate.invariants.x__has_non_allow_decision:4d313d6b9be0776a": {
+      "function": "ledgergate.invariants.x__has_non_allow_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__has_non_allow_decision__mutmut_3"
+    },
+    "ledgergate.invariants.x__owner_of:3c7e4a7e4ab54376": {
+      "function": "ledgergate.invariants.x__owner_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__owner_of__mutmut_7"
+    },
+    "ledgergate.invariants.x__owner_of:6ddb7158329923a4": {
+      "function": "ledgergate.invariants.x__owner_of",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__owner_of__mutmut_6"
+    },
+    "ledgergate.invariants.x__pair_owners:d96ec5890d481ff9": {
+      "function": "ledgergate.invariants.x__pair_owners",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__pair_owners__mutmut_2"
+    },
+    "ledgergate.invariants.x__tool_results:4c2f010770f469d3": {
+      "function": "ledgergate.invariants.x__tool_results",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__tool_results__mutmut_26"
+    },
+    "ledgergate.invariants.x__tool_results:bf56909afde540d4": {
+      "function": "ledgergate.invariants.x__tool_results",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__tool_results__mutmut_28"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:176bf2f4b6e09738": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_21"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:1a3996dd21dc6b9f": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_16"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:1c5be8728fd380bd": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_50"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:30920539bcc1262d": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_9"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:325140e592b4a02f": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_12"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:92861d235f30c258": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_51"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:a047ab84b8164766": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_64"
+    },
+    "ledgergate.invariants.x__witnessed_aggregates:f37c97b4e8e9acc2": {
+      "function": "ledgergate.invariants.x__witnessed_aggregates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_22"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:07094660a5df2e4f": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_37"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:09e116af52d677ae": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_18"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:0d169022a7ec0f3c": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_49"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:0ed12e935c0eaef4": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_40"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:2464a7cae6b6cf19": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_41"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:2db772cc58eee3ff": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_36"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:30c686f861b5cf5f": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_35"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:4ce7d0110dbca681": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_44"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:51f536b4113c3f2d": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_19"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:5afae819273d1a44": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_6"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:5b6398430fe0b9cf": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_32"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:5f5bafaa77dc1983": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_47"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:6722fb9a4650381f": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_30"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:67325e3ebd9f6f68": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_28"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:684bf80f149a9e86": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_27"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:7197d366af598a4b": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_26"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:7acf3b38605a8ba3": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_31"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:7b048b3107df6335": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_43"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:7da6726d44fa3c4e": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_48"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:802ed765329bdf23": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_38"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:8535354847bb5df9": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_34"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:878401e124bd726a": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_46"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:a7cc9b399a4f54a2": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_12"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:a935f282423d967a": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_42"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:b1f82c0dd7bd4a4b": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_29"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:b237918a0e7f2227": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_45"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:b2e2121b627954cd": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_14"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:ccaec5706a17d8a3": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_33"
+    },
+    "ledgergate.invariants.x_books_balance_and_chain_verifies:ff395cf0fa4ca361": {
+      "function": "ledgergate.invariants.x_books_balance_and_chain_verifies",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_books_balance_and_chain_verifies__mutmut_39"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:0440cba1aa739aa1": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_77"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:04d82cfda91fc5a0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_137"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:083fd53ad746beb5": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_198"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:0aad9ee627b916d5": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_22"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:0bf6042b8240df69": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_140"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:0e1a35d34123bbff": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_105"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:11e2641d198558eb": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_264"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:12e6744698befdde": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_131"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:1324a80c4570bff2": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_104"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:134fbcb506b75521": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_223"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:135ee1135f1495e4": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_20"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:158614181cbebd4b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_24"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:1684ee4800ff45fc": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_216"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:1da0d06cb8ef5524": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_224"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:21056cf55bacceb2": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_181"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:2229c8a5bb86a764": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_222"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:238406273d7b809a": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_279"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:23baad3120864b4f": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_141"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:253297022dbcb99b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_263"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:2aa7dbf6b0c459d8": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_252"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:2aa93016fdadebd5": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_244"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:2cbc72f8f8aa78c1": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_185"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:2e82fe08bbdeb465": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_201"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:32f8d85278ba4ec2": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_207"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:3ad553442b79e62f": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_230"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:3be226af2779264b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_195"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:3e8ad0f71dd10207": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_175"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:3ea650193f8fa638": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_99"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:4434112d3c4d7721": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_255"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:45aa3f403c52d994": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_265"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:470ffa210fd70403": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_17"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:47d5f0b878621497": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_21"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:4eeb5355324d3378": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_98"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:4f1a7433ee84cda0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_276"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:5303a9de780818ed": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_206"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:5344060b4fdfc4cc": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_132"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:53a545433b8fd2a1": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_30"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:547f237526005590": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_250"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:55ede7b837b8ced0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_107"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:57106d47c796d363": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_174"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:5d63f9de3a42ea81": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_180"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:5ec87cd41e027180": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_28"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:6378a6c943bd8794": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_277"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:6478cc1b79f09905": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_245"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:648bc6ba4b470e27": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_260"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:67cb0b200522d36d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_12"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:68256572f95c6824": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_13"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:6ce039a7a58109a8": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_11"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:6f16b6f687b68a07": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_270"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:7170f8425604e477": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_278"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:71c8bf33d15f1994": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_80"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:73f6bc47337fc435": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_68"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:75b7e5072e7f8bce": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_81"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:77abf309e99a147d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_23"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:7ac0752bf6cc21e4": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_251"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:82b3cf6dbd39a972": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_19"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:832e7b2fa11c12d6": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_268"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:853ba1a069087811": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_29"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:86621cd5a0013dde": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_26"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:88d21eb68bbfeb70": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_247"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:88f60c5673997a24": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_272"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:8b5d4d5abb07c047": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_96"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:8ba880b211eff9bc": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_74"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:8cad1744112f279d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_179"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:90e64b94edf7476d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_71"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:91e5f8c2e2a379e8": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_253"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9268113f8b52e9d0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_225"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:93441e10c74de830": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_100"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:986f2ee266d78263": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_248"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:98bcd92d5a75e433": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_172"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9b13b6af9cbd4336": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_27"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9bfc5717a61307e9": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_273"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9d3acb6c67bfca5b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_88"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9d8adaecb7b6c7c8": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_184"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9eec1a5bd3a29526": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_103"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9f28f0fd4d2421bc": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_194"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a058898ecceb0bde": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_97"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a475e7af231a5e31": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_143"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a5e91cea75bf5558": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_92"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a70b33c83e90bba9": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_76"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a712d6e2ec2e206f": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_196"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a72b743233bc8c61": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_254"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a8107ddb2f0b631d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_218"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a8225a124267ba79": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_192"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ac3d2ebef533d22b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_101"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ad83958332c6e8c7": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_133"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ae60a9c5dd690f2f": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_269"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:bb2dbef5f8f0d332": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_275"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:bb656ae98a31cc25": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_256"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:bcc7cde35975c09d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_203"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:be50eae86d09163c": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_18"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:c411adfb9806f833": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_200"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:c8173d192af30f37": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_266"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:c85cc152eb1bf0ed": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_204"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ccedbc16e3bcc5e1": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_106"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:cf04499cb5a36de0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_178"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:cf801c96c7101744": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_271"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:d0a7540f7f77959f": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_219"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:d6138b7c6b1f5d7b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_95"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:d6fd2ec42e7dcb12": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_25"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:d9a79a940e905414": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_142"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:db6f82160984d310": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_202"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:df28db2340ef567c": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_94"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:e3da54738362da0a": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_205"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:e83f5914ccc576f7": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_199"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ea60aa293e517495": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_257"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ed5f46645234fffd": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_191"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:ee7c9b4869b6679d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_102"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f030bb71858c6d0b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_249"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f227dab580eb8005": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_274"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f565eb3aea8fe6ca": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_70"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f5afec33f6fcb1de": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_124"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f5bf34f487e8ed65": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_189"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f6e3ad27f2b409bd": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_127"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:fc3943018d3fca9b": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_197"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:fe84dfe8874c07d2": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_75"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:fea38b51498df52d": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_229"
+    },
+    "ledgergate.invariants.x_context_matches_decision:339a6b8ab13e86ac": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_72"
+    },
+    "ledgergate.invariants.x_context_matches_decision:39a6be9d16969734": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_65"
+    },
+    "ledgergate.invariants.x_context_matches_decision:4960d125bc3f6b53": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_14"
+    },
+    "ledgergate.invariants.x_context_matches_decision:56110f30e36bdb6d": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_36"
+    },
+    "ledgergate.invariants.x_context_matches_decision:567efd2a85c560d5": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_10"
+    },
+    "ledgergate.invariants.x_context_matches_decision:5fd8623e43b129ba": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_8"
+    },
+    "ledgergate.invariants.x_context_matches_decision:63dda4b487c81d57": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_75"
+    },
+    "ledgergate.invariants.x_context_matches_decision:7aca8dfed5f5b6c5": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_77"
+    },
+    "ledgergate.invariants.x_context_matches_decision:87aba533b9052c17": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_71"
+    },
+    "ledgergate.invariants.x_context_matches_decision:8e553951c853d324": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_79"
+    },
+    "ledgergate.invariants.x_context_matches_decision:93592b3302b4c09b": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_31"
+    },
+    "ledgergate.invariants.x_context_matches_decision:96a2635b3f5b1be8": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_33"
+    },
+    "ledgergate.invariants.x_context_matches_decision:9b340055daeb5c17": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_39"
+    },
+    "ledgergate.invariants.x_context_matches_decision:9c4810cff6da702e": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_16"
+    },
+    "ledgergate.invariants.x_context_matches_decision:9da8d94424781ffa": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_29"
+    },
+    "ledgergate.invariants.x_context_matches_decision:a2ca906a5afead55": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_38"
+    },
+    "ledgergate.invariants.x_context_matches_decision:a8627079ab772584": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_78"
+    },
+    "ledgergate.invariants.x_context_matches_decision:ad882f110599e4b1": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_32"
+    },
+    "ledgergate.invariants.x_context_matches_decision:af249183ded06ec6": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_67"
+    },
+    "ledgergate.invariants.x_context_matches_decision:b61c1e4bc58db87d": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_17"
+    },
+    "ledgergate.invariants.x_context_matches_decision:baec95772e63d4aa": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_37"
+    },
+    "ledgergate.invariants.x_context_matches_decision:c5c224c37707bc85": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_11"
+    },
+    "ledgergate.invariants.x_context_matches_decision:cdff7fa8f305ee0b": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_73"
+    },
+    "ledgergate.invariants.x_context_matches_decision:d38643d68a8fff32": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_63"
+    },
+    "ledgergate.invariants.x_context_matches_decision:d67ebbece8d67186": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_64"
+    },
+    "ledgergate.invariants.x_context_matches_decision:da9e980cd2ab52a2": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_35"
+    },
+    "ledgergate.invariants.x_context_matches_decision:db7ff5a7b9cab034": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_66"
+    },
+    "ledgergate.invariants.x_context_matches_decision:e2a70c7bdd045f8e": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_15"
+    },
+    "ledgergate.invariants.x_decision_recomputes:0737d232255fd1c7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_153"
+    },
+    "ledgergate.invariants.x_decision_recomputes:12cfc738fc867619": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_167"
+    },
+    "ledgergate.invariants.x_decision_recomputes:157dbcbfa7e7cec7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_115"
+    },
+    "ledgergate.invariants.x_decision_recomputes:163550a71f096a68": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_62"
+    },
+    "ledgergate.invariants.x_decision_recomputes:176a7de0f9ada8aa": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_90"
+    },
+    "ledgergate.invariants.x_decision_recomputes:17811640f14239dc": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_70"
+    },
+    "ledgergate.invariants.x_decision_recomputes:1a5910320d732de7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_139"
+    },
+    "ledgergate.invariants.x_decision_recomputes:1a60c1132b4e489e": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_61"
+    },
+    "ledgergate.invariants.x_decision_recomputes:1a8ab428eb261c56": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_17"
+    },
+    "ledgergate.invariants.x_decision_recomputes:1d0c2d53236241cd": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_60"
+    },
+    "ledgergate.invariants.x_decision_recomputes:1d787649cb0e3184": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_172"
+    },
+    "ledgergate.invariants.x_decision_recomputes:209072ffe02d8f7b": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_19"
+    },
+    "ledgergate.invariants.x_decision_recomputes:2218bb7198eb9d38": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_140"
+    },
+    "ledgergate.invariants.x_decision_recomputes:25d8c3469b99ec49": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_55"
+    },
+    "ledgergate.invariants.x_decision_recomputes:25fa5b07fff0bc00": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_44"
+    },
+    "ledgergate.invariants.x_decision_recomputes:2a9e5456ca0542fc": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_118"
+    },
+    "ledgergate.invariants.x_decision_recomputes:3092eca4bd18a2c5": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_120"
+    },
+    "ledgergate.invariants.x_decision_recomputes:31dcdf3b1ab2262a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_48"
+    },
+    "ledgergate.invariants.x_decision_recomputes:36260bccaa3210c9": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_15"
+    },
+    "ledgergate.invariants.x_decision_recomputes:36e0eb0de7c67e57": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_38"
+    },
+    "ledgergate.invariants.x_decision_recomputes:3a7902aff8992726": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_173"
+    },
+    "ledgergate.invariants.x_decision_recomputes:418f7b9c92a49740": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_99"
+    },
+    "ledgergate.invariants.x_decision_recomputes:426c09c8ad0f89be": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_156"
+    },
+    "ledgergate.invariants.x_decision_recomputes:485a5f7d67a7d6a9": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_68"
+    },
+    "ledgergate.invariants.x_decision_recomputes:4ab8cf04337d1003": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_135"
+    },
+    "ledgergate.invariants.x_decision_recomputes:5069a6b9a20c4ced": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_16"
+    },
+    "ledgergate.invariants.x_decision_recomputes:5175e8f70513ddbc": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_117"
+    },
+    "ledgergate.invariants.x_decision_recomputes:53facff327e5f589": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_9"
+    },
+    "ledgergate.invariants.x_decision_recomputes:55513208302c7b4e": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_18"
+    },
+    "ledgergate.invariants.x_decision_recomputes:560178b5a7ccb0b9": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_72"
+    },
+    "ledgergate.invariants.x_decision_recomputes:57989c90e23521f7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_75"
+    },
+    "ledgergate.invariants.x_decision_recomputes:58391d475f9446c7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_73"
+    },
+    "ledgergate.invariants.x_decision_recomputes:615bdc7c74e5fba7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_100"
+    },
+    "ledgergate.invariants.x_decision_recomputes:64218955ed12ae27": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_112"
+    },
+    "ledgergate.invariants.x_decision_recomputes:677e1b05bf74cbc8": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_170"
+    },
+    "ledgergate.invariants.x_decision_recomputes:6c307621de4c2287": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_160"
+    },
+    "ledgergate.invariants.x_decision_recomputes:722ee974a16dd13e": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_166"
+    },
+    "ledgergate.invariants.x_decision_recomputes:727a09d27ca54b70": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_52"
+    },
+    "ledgergate.invariants.x_decision_recomputes:72989ea51cb4d1b5": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_152"
+    },
+    "ledgergate.invariants.x_decision_recomputes:76f2cea16ccf436c": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_67"
+    },
+    "ledgergate.invariants.x_decision_recomputes:7d26265402edc51a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_42"
+    },
+    "ledgergate.invariants.x_decision_recomputes:81f7db3933730129": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_113"
+    },
+    "ledgergate.invariants.x_decision_recomputes:8880706466d4cf21": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_63"
+    },
+    "ledgergate.invariants.x_decision_recomputes:89de2b4725a1701d": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_54"
+    },
+    "ledgergate.invariants.x_decision_recomputes:8c7df3081274c0a5": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_108"
+    },
+    "ledgergate.invariants.x_decision_recomputes:8effd9d61fd9653a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_161"
+    },
+    "ledgergate.invariants.x_decision_recomputes:8fbd9c33dd7cb5b7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_21"
+    },
+    "ledgergate.invariants.x_decision_recomputes:902491a672c7090a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_164"
+    },
+    "ledgergate.invariants.x_decision_recomputes:929de58e1f266b9c": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_98"
+    },
+    "ledgergate.invariants.x_decision_recomputes:92da9def3bd81e52": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_101"
+    },
+    "ledgergate.invariants.x_decision_recomputes:977aed5056604e02": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_66"
+    },
+    "ledgergate.invariants.x_decision_recomputes:97d1500636998d30": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_116"
+    },
+    "ledgergate.invariants.x_decision_recomputes:9b0c17617846b88a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_69"
+    },
+    "ledgergate.invariants.x_decision_recomputes:9c38c2d12ab0d1b2": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_71"
+    },
+    "ledgergate.invariants.x_decision_recomputes:9eb48790056fa4f2": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_119"
+    },
+    "ledgergate.invariants.x_decision_recomputes:a5bff3d8d54b18ab": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_53"
+    },
+    "ledgergate.invariants.x_decision_recomputes:a9e1424e75ae79ec": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_45"
+    },
+    "ledgergate.invariants.x_decision_recomputes:a9eef83f1580c0a8": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_10"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ac14397d68906a40": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_91"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ac35a447ddfae20f": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_149"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ae6410c24174dff3": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_43"
+    },
+    "ledgergate.invariants.x_decision_recomputes:aebfa11e3bf3e859": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_171"
+    },
+    "ledgergate.invariants.x_decision_recomputes:b362f4c938926d72": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_74"
+    },
+    "ledgergate.invariants.x_decision_recomputes:b7596198b8c060d7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_57"
+    },
+    "ledgergate.invariants.x_decision_recomputes:bce6050c75cd7e87": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_20"
+    },
+    "ledgergate.invariants.x_decision_recomputes:bea59c1ada6cf129": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_36"
+    },
+    "ledgergate.invariants.x_decision_recomputes:c1796bc994bbee9f": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_141"
+    },
+    "ledgergate.invariants.x_decision_recomputes:c2bb6f9111359d40": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_31"
+    },
+    "ledgergate.invariants.x_decision_recomputes:c465cdbae90f7efa": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_51"
+    },
+    "ledgergate.invariants.x_decision_recomputes:c634af7bcf53a6aa": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_154"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ca0559d1c64036d7": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_97"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ce5e4083d34d1d6d": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_132"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ce809098566e1499": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_159"
+    },
+    "ledgergate.invariants.x_decision_recomputes:cf51e397ee8d3afe": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_46"
+    },
+    "ledgergate.invariants.x_decision_recomputes:d0af56ae1c37b769": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_111"
+    },
+    "ledgergate.invariants.x_decision_recomputes:d421126a5a1514fd": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_56"
+    },
+    "ledgergate.invariants.x_decision_recomputes:d81a3b3cfd039b34": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_158"
+    },
+    "ledgergate.invariants.x_decision_recomputes:e21492cf31b2dbef": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_35"
+    },
+    "ledgergate.invariants.x_decision_recomputes:e3b46a5b5893b2da": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_157"
+    },
+    "ledgergate.invariants.x_decision_recomputes:e45a4fe3abc92866": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_80"
+    },
+    "ledgergate.invariants.x_decision_recomputes:ea502adcb6d77e12": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_155"
+    },
+    "ledgergate.invariants.x_decision_recomputes:f6a67864e1dcbcaf": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_58"
+    },
+    "ledgergate.invariants.x_decision_recomputes:f7d45bc1eb1a368a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_114"
+    },
+    "ledgergate.invariants.x_decision_recomputes:feb03ddfb12758ad": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_93"
+    },
+    "ledgergate.invariants.x_decision_recomputes:fef259b2ce91e6da": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_59"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:04119d21bc23caa9": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_47"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:05f7d1a77cb61b63": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_33"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:1887e988323e66fc": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_50"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:2c995ad9ce1569b1": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_22"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:30a4317e8a7cc853": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_45"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:4342677a65ae792d": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_24"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:53028c030b357071": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_20"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:66270e8eb8c10991": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_13"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:7091dfcc38a64f6c": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_23"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:77bbda4d81aeabc8": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_15"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:b555b3f2ede41a31": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_17"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:bb1d4ca3cbf40dd2": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_12"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:bc403204a35194b4": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_37"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:befae8ad06b14b5d": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_14"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:c4b4b93647cfceb1": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_48"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:d4c382a657fa14f2": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_40"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:edd25d260728f124": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_44"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:eed88a654d8c13a5": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_21"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:f4939b4a8750552a": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_16"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:f65b8a18eeaf1851": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_46"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:fb6f0fe808de083c": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_38"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:010d4a666820739e": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_5"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:074d5d246f26def1": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_12"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:150a627a6d4caf9f": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_10"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:1d049c31ae47928f": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_6"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:43bc32b28f57abce": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_20"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:7b6fe54d6156c0b6": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_13"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:b843f71c355b88ff": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_18"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:be35d560a835947a": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_11"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:d3de7edfeff81527": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_14"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:d7244ef6425480c6": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_3"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:db0efc0aa63bbc3a": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_8"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:e11c1cb74fa51990": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_17"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:e16569da3587403f": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_9"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:e3899cf7da710224": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_7"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:eb103e969e7e2b9b": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_4"
+    },
+    "ledgergate.invariants.x_every_write_was_decided:ef6e39ec28db756f": {
+      "function": "ledgergate.invariants.x_every_write_was_decided",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_every_write_was_decided__mutmut_19"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:018523e0e626aa1d": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_23"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:12e87747f19de09d": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_14"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:2175df41574b5e84": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_22"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:333452e3bcb0bd40": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_20"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:3db13cfedd71448e": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_5"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:4a26d08cee1d427c": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_12"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:613cbc92e4671b78": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_8"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:6e34e758f3cd142c": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_13"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:82022bbf87e88872": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_18"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:bae4d67563415400": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_3"
+    },
+    "ledgergate.invariants.x_ledger_pairs_replay:de97e25ab4015a80": {
+      "function": "ledgergate.invariants.x_ledger_pairs_replay",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_19"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:097d9b654fdcc545": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_17"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:17cc7637ea686bfc": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_10"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:23584fa720ea9756": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_16"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:313bb6b2f293f41d": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_3"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:3325b650d0c82b93": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_7"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:4720653af203bea6": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_5"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:49e8a82815bfab55": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_14"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:4ea47e17c4ca5e64": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_4"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:53b46ca7d1e7250c": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_12"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:a8e98a6e8de8424f": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_9"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:ba45eb9d40c98af8": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_18"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:cc61c45d5afd63b0": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_11"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:e39d828dfa749353": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_13"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:f587d51a30b76508": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_6"
+    },
+    "ledgergate.invariants.x_legacy_carries_no_policy_evidence:fcb95a61b68d9e19": {
+      "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_8"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:2434705a0cbaf9be": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_27"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:2a8bed0148f673a0": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_37"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:2b059854f15f22cf": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_4"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:2b6a0d121fc48a89": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_43"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:371fc557c76fa0f1": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_25"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:3ec3c9fa94eb84c7": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_24"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:3ffad78800df20c8": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_18"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:5a021ae1947a1663": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_36"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:60f3e32d92d33777": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_30"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:906925ba20409bdf": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_21"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:9478c5e5dc79ed97": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_40"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:96590c4431e66870": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_31"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:9b8f43bbdf72e6f1": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_41"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:9b9a82aaaa19dc35": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_20"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:cdc8a970763789af": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_42"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:d4337f08da2ff96e": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_26"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:f74a955e450ce9da": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_34"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:0d71ab9e9febf830": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_21"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:1b9091973ac7e6dd": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_15"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:5c90714b443098bb": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_20"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:7b2d298f48f7ed12": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_22"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:9d09ee63d4335e58": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_19"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:dbc329f538c5ac7d": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_16"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:e729a55e4d8be557": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_13"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:0f0a51a9be958065": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_22"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:3ef15933d8d00424": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_27"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:46330426e1703223": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_8"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:4da30ab533c8afad": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_20"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:520402f825717751": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_11"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:654edcba3e2ea6fe": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_26"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:6f035883154dae88": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_16"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:7b987536e443c298": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_23"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:82ffd9ce8406e5c7": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_9"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:8e282d49b89e2999": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_24"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:913876ec3a602000": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_17"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:934198bb0372bec4": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_12"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:a1e4d714dbffaa03": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_21"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:a3668c0eccf3b301": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_19"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:c1e6da961ab24c67": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_10"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:c8a249e90f7db6a2": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_25"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:d43addc4e34d692d": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_18"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:efe7ce72ea711fe7": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_15"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:0043a172d18778e3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_144"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:0149aee6cce26cb6": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_124"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:01879c83a22710b7": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_116"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:04ac6dc3a371ae36": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_61"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:0579c27415040812": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_100"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:071217843f9371c3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_142"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:07a1df08a51ac890": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_67"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:0a364640cb1aa62c": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_188"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:0f58e7ee412619fb": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_125"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:1309862c464101b3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_70"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:1418662ab9565589": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_51"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:14ff5e9d0d9169cd": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_167"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:1587f898e840edcc": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_99"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:19a1139a2a4b3d0f": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_135"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:1acd8a48b1b28450": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_19"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:1e5837450e765dfa": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_79"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:29bc10ff52f5733f": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_53"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:2fdf3d62b3771cc6": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_9"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:306e913a4d73a7f6": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_11"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:31bcf468d530156f": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_115"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:3322ba73e5a2e307": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_5"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:337d776a8736ea31": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_94"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:343acf1f66f634c2": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_89"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:34f2e5ffd37bb49d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_200"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:371bd5005c1a31cc": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_37"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:389428986e1721b5": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_145"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:39354678c72de4da": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_21"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:47134ae162ae9fa3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_76"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:48bf98c6f07fe161": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_20"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:499d2691474f4e67": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_36"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:4dc93850372b4a0d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_203"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5202168da81fef45": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_112"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5446e7edb9caf895": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_134"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5696db12f6209656": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_90"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5b1684ed9d496066": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_52"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5b4f23bb47cc07f5": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_132"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5e266579fac5be5e": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_148"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:62af3eeb9a22eda8": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_118"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:62af87715f337425": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_133"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:62d44d5632adff88": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_69"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:63d4f9b40507a46a": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_46"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:645ccffab7237e87": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_34"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:64c1061fbccc5445": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_92"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:6579b62598a540e7": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_151"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:66281729f5fd28b5": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_74"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:6a087e3a14a6cbfb": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_189"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:6c25e8e7b4fc822c": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_165"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:6cace26dd0543699": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_159"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:6d99cdd03a373ff0": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_87"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:74fafe6012283e6d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_202"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:763fb0cdfe15159d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_207"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:76de2c6d74efd1d0": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_190"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:76e14b1dfbb21a74": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_199"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:77f7e89d5f639ed0": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_73"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:797fd7e1f92808aa": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_54"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:7d5cff709d9e2f28": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_204"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:80537b47d01f8941": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_106"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:847c6192bbb607e0": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_10"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:84f5a1186c0aa198": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_95"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:901c5d3982420e78": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_43"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:904635bc3961bf51": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_206"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:931a12a7e6d21ee6": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_149"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:93ebca85ab55836b": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_127"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:9c34e5f4505798b3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_196"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:9fec7394aff6d6f5": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_7"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:a0898f6c151e4bdb": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_177"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:a13187ead4948ac0": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_35"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:a4b02679e0d402f1": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_27"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:a53750a2e6a4e007": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_157"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:ab2bcb4e46aef90d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_109"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b10b94604f19a32d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_49"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b2c6d65f38670631": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_22"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b4e62580f4061213": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_44"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b87bc7149ffe323e": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_75"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b91c1f03414e6037": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_164"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b939429de8ae7a06": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_33"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:ba26d2fc2b46526c": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_111"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:bb88696e0e7d5b42": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_98"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:bc57495799ea0597": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_198"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:bd8b70fc06a82580": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_163"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:be2f73fcbb8758b3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_4"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:c471ebee76bd5fc4": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_162"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:cb7c9dcc4abc0390": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_131"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:d1c4b0aee3d6a230": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_6"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:dbe0fa97642e63bf": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_80"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:de58d8649ba2b161": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_205"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:dfd9c071df009d1f": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_29"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e0f227d7e5414736": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_158"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e10f7d717f6b1d95": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_86"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e269e2265af6ad9a": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_169"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e2756dd68db21a35": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_8"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e28f40d97b73e193": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_195"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e40412b078c5a542": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_93"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e53ee9df04d53a90": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_161"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:ecc8e1ca0536d374": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_48"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:edcc65b9fd4f6480": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_150"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:ee46254767bf5140": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_178"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f084b5b5c62a0d0b": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_191"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f0933704e663d3fb": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_117"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f3a0923602359e35": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_88"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f5b891119874386c": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_97"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f7d23ce9876630ec": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_160"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f8bfe6381489c27f": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_166"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f925c0964b95ce83": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_50"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f9d71492192c7c13": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_168"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:fbc48ee44e9c3585": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_91"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:fe0a7c2372467349": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_47"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:fe26c905f4191ea1": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_96"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:fe2bd935ce68afbc": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_201"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:fe393cba95b0d2fe": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_26"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:ff969998b901eba4": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_197"
+    },
+    "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__:6da3492a322c7797": {
+      "function": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init____mutmut_4"
+    },
+    "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__:fc2e401711a8d801": {
+      "function": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init____mutmut_11"
+    },
+    "ledgergate.ledger.effects.xǁFixedClockǁ__init__:328ff703fc9d3a62": {
+      "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁFixedClockǁ__init____mutmut_5"
+    },
+    "ledgergate.ledger.effects.xǁFixedClockǁ__init__:94f9168f24b3d8c5": {
+      "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁFixedClockǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.effects.xǁFixedClockǁ__init__:b60944798e2d68b2": {
+      "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁFixedClockǁ__init____mutmut_4"
+    },
+    "ledgergate.ledger.effects.xǁStaticRatesǁ__init__:554a755bbb41071b": {
+      "function": "ledgergate.ledger.effects.xǁStaticRatesǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁStaticRatesǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.effects.xǁSteppingClockǁ__init__:2837469043a74b9d": {
+      "function": "ledgergate.ledger.effects.xǁSteppingClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁSteppingClockǁ__init____mutmut_9"
+    },
+    "ledgergate.ledger.effects.xǁSteppingClockǁ__init__:c85eaa3a59c8216e": {
+      "function": "ledgergate.ledger.effects.xǁSteppingClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁSteppingClockǁ__init____mutmut_4"
+    },
+    "ledgergate.ledger.effects.xǁSteppingClockǁ__init__:ccbb7441e5c4de1b": {
+      "function": "ledgergate.ledger.effects.xǁSteppingClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁSteppingClockǁ__init____mutmut_5"
+    },
+    "ledgergate.ledger.effects.xǁSteppingClockǁ__init__:df949a8b4c509ece": {
+      "function": "ledgergate.ledger.effects.xǁSteppingClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁSteppingClockǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.effects.xǁSteppingClockǁ__init__:f382f1043e604ac3": {
+      "function": "ledgergate.ledger.effects.xǁSteppingClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁSteppingClockǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.entries.x_fingerprint:b499b46cccfa3186": {
+      "function": "ledgergate.ledger.entries.x_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.entries.x_fingerprint__mutmut_15"
+    },
+    "ledgergate.ledger.errors.xǁAccountCurrencyMismatchErrorǁ__init__:b75c80bfd5279348": {
+      "function": "ledgergate.ledger.errors.xǁAccountCurrencyMismatchErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁAccountCurrencyMismatchErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁAlreadyReversedErrorǁ__init__:ceda40a98e37267e": {
+      "function": "ledgergate.ledger.errors.xǁAlreadyReversedErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁAlreadyReversedErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁChainIntegrityErrorǁ__init__:4e63f1963ceddad5": {
+      "function": "ledgergate.ledger.errors.xǁChainIntegrityErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁChainIntegrityErrorǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.errors.xǁChainIntegrityErrorǁ__init__:ed19bb0cccee8f09": {
+      "function": "ledgergate.ledger.errors.xǁChainIntegrityErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁChainIntegrityErrorǁ__init____mutmut_4"
+    },
+    "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__:0477a9fd4e1066e1": {
+      "function": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init____mutmut_5"
+    },
+    "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__:5619795af2bf9b52": {
+      "function": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init____mutmut_6"
+    },
+    "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__:9ef6883ce7468eac": {
+      "function": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__:d3921cc1cdd6b410": {
+      "function": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁConflictingCurrencyErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁCurrencyMismatchErrorǁ__init__:43025f512cab1d94": {
+      "function": "ledgergate.ledger.errors.xǁCurrencyMismatchErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁCurrencyMismatchErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁDuplicateAccountErrorǁ__init__:4dc0033e4155ed14": {
+      "function": "ledgergate.ledger.errors.xǁDuplicateAccountErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁDuplicateAccountErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁDuplicateAccountErrorǁ__init__:efe1820003d8fa87": {
+      "function": "ledgergate.ledger.errors.xǁDuplicateAccountErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁDuplicateAccountErrorǁ__init____mutmut_1"
+    },
+    "ledgergate.ledger.errors.xǁDuplicateEntryIdErrorǁ__init__:88d8defef43e959b": {
+      "function": "ledgergate.ledger.errors.xǁDuplicateEntryIdErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁDuplicateEntryIdErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁDuplicateTransactionErrorǁ__init__:5df751c12a0a3c3a": {
+      "function": "ledgergate.ledger.errors.xǁDuplicateTransactionErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁDuplicateTransactionErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁDuplicateTransactionErrorǁ__init__:e401ac0d7936c4c0": {
+      "function": "ledgergate.ledger.errors.xǁDuplicateTransactionErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁDuplicateTransactionErrorǁ__init____mutmut_1"
+    },
+    "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init__:c5e2d4443ad62ce8": {
+      "function": "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init____mutmut_1"
+    },
+    "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init__:d1976dd7116d438d": {
+      "function": "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init__:e3f225709114f2bd": {
+      "function": "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁEmptyEntryErrorǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.errors.xǁEntryAmountMismatchErrorǁ__init__:28e4af3a74ecc45e": {
+      "function": "ledgergate.ledger.errors.xǁEntryAmountMismatchErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁEntryAmountMismatchErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁEntryNotAllowedErrorǁ__init__:4939760a49d2b9ef": {
+      "function": "ledgergate.ledger.errors.xǁEntryNotAllowedErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁEntryNotAllowedErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁEntryRequiredErrorǁ__init__:665a4f215f7e90b9": {
+      "function": "ledgergate.ledger.errors.xǁEntryRequiredErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁEntryRequiredErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁIdempotencyConflictErrorǁ__init__:2cc0a15bee1cfe79": {
+      "function": "ledgergate.ledger.errors.xǁIdempotencyConflictErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁIdempotencyConflictErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁInsufficientFundsErrorǁ__init__:d174d3caf2bd0676": {
+      "function": "ledgergate.ledger.errors.xǁInsufficientFundsErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁInsufficientFundsErrorǁ__init____mutmut_3"
+    },
+    "ledgergate.ledger.errors.xǁInvalidIdentifierErrorǁ__init__:f01e5c7a5ff996ab": {
+      "function": "ledgergate.ledger.errors.xǁInvalidIdentifierErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁInvalidIdentifierErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁMissingRateErrorǁ__init__:4ca7309a4ab17d5c": {
+      "function": "ledgergate.ledger.errors.xǁMissingRateErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁMissingRateErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁRefundExceedsSettledErrorǁ__init__:697acb81c8589ebb": {
+      "function": "ledgergate.ledger.errors.xǁRefundExceedsSettledErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁRefundExceedsSettledErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁUnbalancedEntryErrorǁ__init__:b55e885ef2603a9a": {
+      "function": "ledgergate.ledger.errors.xǁUnbalancedEntryErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁUnbalancedEntryErrorǁ__init____mutmut_5"
+    },
+    "ledgergate.ledger.errors.xǁUnknownAccountErrorǁ__init__:4cce54d5344fc001": {
+      "function": "ledgergate.ledger.errors.xǁUnknownAccountErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁUnknownAccountErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁUnknownEntryErrorǁ__init__:4145d6117085ada6": {
+      "function": "ledgergate.ledger.errors.xǁUnknownEntryErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁUnknownEntryErrorǁ__init____mutmut_2"
+    },
+    "ledgergate.ledger.errors.xǁUnknownEntryErrorǁ__init__:fa4681cc11d30b7e": {
+      "function": "ledgergate.ledger.errors.xǁUnknownEntryErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁUnknownEntryErrorǁ__init____mutmut_1"
+    },
+    "ledgergate.ledger.errors.xǁUnknownTransactionErrorǁ__init__:5aa4ec1c73291063": {
+      "function": "ledgergate.ledger.errors.xǁUnknownTransactionErrorǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.errors.xǁUnknownTransactionErrorǁ__init____mutmut_1"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:8deb7223dfd117aa": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_18"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:95d821c12cea3a2c": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_3"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:9c67cb387d676391": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_25"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:b1424f1e9916956a": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_34"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:c45c9741ffb8d3ca": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_29"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:d9c5339440235db4": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_30"
+    },
+    "ledgergate.ledger.fx.x_conversion_entry:e59f162263679477": {
+      "function": "ledgergate.ledger.fx.x_conversion_entry",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.fx.x_conversion_entry__mutmut_8"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:0b0172e333b4bee2": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_23"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:254de6c891da195e": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_10"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:26a65ca33a116919": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_40"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:3b4ddd69c2e73076": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_2"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:4518b45a23497f58": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_14"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:5b8431136a3283ff": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_32"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:5d03e3b6e1580730": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_22"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:63f69d8de874798f": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_39"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:703089410faa0e10": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_41"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:7509ad0b449ca177": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_33"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:8389805ca3fcee58": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_3"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:87a84316da9c87c0": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_19"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:9ef9b38ded825ee2": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_42"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:bddacb0b8afddd74": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_13"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:c204cbeb39d7680f": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_8"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:cff16bef92d2e66a": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_9"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:dae41abfa5cbdc6e": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_38"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:e9d3081fa438fcab": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_37"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:eecf56a8f220f8f4": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_28"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:f696b02c01bb82c5": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_4"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:fb7e674dbdb2ce8c": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_18"
+    },
+    "ledgergate.ledger.identifiers.x_require_identifier:fc88da777e119993": {
+      "function": "ledgergate.ledger.identifiers.x_require_identifier",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.identifiers.x_require_identifier__mutmut_27"
+    },
+    "ledgergate.ledger.money.x_currency:e6d6cd23fece1efe": {
+      "function": "ledgergate.ledger.money.x_currency",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_currency__mutmut_1"
+    },
+    "ledgergate.ledger.money.x_round_fraction:172fef077b1350c8": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_44"
+    },
+    "ledgergate.ledger.money.x_round_fraction:22b9a63ab2653351": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_38"
+    },
+    "ledgergate.ledger.money.x_round_fraction:2dc744de667c180c": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_24"
+    },
+    "ledgergate.ledger.money.x_round_fraction:3253aef363482110": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_43"
+    },
+    "ledgergate.ledger.money.x_round_fraction:4452ca015832a0bd": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_32"
+    },
+    "ledgergate.ledger.money.x_round_fraction:469a3fe3c9d3eeb6": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_23"
+    },
+    "ledgergate.ledger.money.x_round_fraction:5db62f5d61ce631c": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_29"
+    },
+    "ledgergate.ledger.money.x_round_fraction:9eff1c630120f4d7": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_37"
+    },
+    "ledgergate.ledger.money.x_round_fraction:d0540ea4671adcae": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_33"
+    },
+    "ledgergate.ledger.money.x_round_fraction:e6487d8d19b4b113": {
+      "function": "ledgergate.ledger.money.x_round_fraction",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.money.x_round_fraction__mutmut_30"
+    },
+    "ledgergate.ledger.state.x__canonical_time:443404e911597830": {
+      "function": "ledgergate.ledger.state.x__canonical_time",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x__canonical_time__mutmut_5"
+    },
+    "ledgergate.ledger.state.x__canonical_time:47365c7c1da81777": {
+      "function": "ledgergate.ledger.state.x__canonical_time",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x__canonical_time__mutmut_1"
+    },
+    "ledgergate.ledger.state.x__canonical_time:cbe5ee24ac54a50a": {
+      "function": "ledgergate.ledger.state.x__canonical_time",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x__canonical_time__mutmut_6"
+    },
+    "ledgergate.ledger.state.x__require_entry_moving:47a2ecf3aae060c7": {
+      "function": "ledgergate.ledger.state.x__require_entry_moving",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x__require_entry_moving__mutmut_2"
+    },
+    "ledgergate.ledger.state.x__require_entry_moving:787fa1a9c6375c6f": {
+      "function": "ledgergate.ledger.state.x__require_entry_moving",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x__require_entry_moving__mutmut_9"
+    },
+    "ledgergate.ledger.state.x__require_entry_moving:a431a2cea7207e2d": {
+      "function": "ledgergate.ledger.state.x__require_entry_moving",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x__require_entry_moving__mutmut_3"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:09858b64555795f0": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_44"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:152b471aea7d291e": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_49"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:2a905934dcbf05cb": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_55"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:306c227350e1efe0": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_58"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:3e9d622e8955b4a6": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_62"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:3ec548812936b807": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_56"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:409b91715afe43f5": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_60"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:49a94ced7aaaaa88": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_59"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:4d98d7d29d1e8320": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_43"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:4f8a3ba28c58c6a5": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_64"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:5babdb5ff9dce081": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_66"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:6144e52c076fc0b9": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_57"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:63a3126f2ddf133a": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_42"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:90e6b07422f48b69": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_45"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:b0f138903a040fac": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_46"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:c841320d57e928ee": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_63"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:e16d1b56b828176a": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_65"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:e508859e6e15b4b9": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_41"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:e5b1507369d89149": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_48"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:f435ce8ea02ad100": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_61"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:ffd702be8d34b535": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_47"
+    }
+  },
+  "equivalent": {}
+}

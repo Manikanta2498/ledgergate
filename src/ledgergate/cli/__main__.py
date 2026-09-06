@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--format", choices=["md", "junit", "sarif", "json"], default="md")
     report.add_argument("--drift", action="store_true", help="compare baseline and candidate")
     report.add_argument("--allow-newly-skipped", action="store_true")
+    report.add_argument(
+        "--conformance", action="store_true", help="print the conformance level of a result"
+    )
+    report.add_argument("--baseline", type=Path, help="with --conformance: the earlier result")
+    report.add_argument("--require", choices=["L1", "L2", "L3"], help="exit 1 below this level")
     report.add_argument("--out", type=Path)
     report.set_defaults(handler=report_command)
 
@@ -327,6 +332,29 @@ def report_command(args: argparse.Namespace) -> int:
         docs = [load_result(p.read_text(encoding="utf-8")) for p in args.results]
     except (OSError, ResultError) as exc:
         return fail(f"cannot read result: {type(exc).__name__}: {exc}")
+    if (args.baseline is not None or args.require is not None) and not args.conformance:
+        return fail("--baseline and --require belong to --conformance")
+    if args.conformance:
+        from ledgergate.report import conformance
+
+        if len(docs) != 1:
+            return fail("--conformance takes one candidate result (and --baseline for L3)")
+        baseline = None
+        if args.baseline is not None:
+            try:
+                baseline = load_result(args.baseline.read_text(encoding="utf-8"))
+            except (OSError, ResultError) as exc:
+                return fail(f"cannot read baseline: {type(exc).__name__}: {exc}")
+        if args.require == "L3" and baseline is None:
+            return fail("--require L3 needs --baseline")
+        try:
+            level = conformance(docs[0], baseline)
+        except ResultError as exc:
+            return fail(str(exc))
+        written = _emit(level.line + "\n", args.out, "report")
+        if written or args.require is None:
+            return written
+        return 0 if level.at_least(args.require) else 1
     if args.drift:
         if len(docs) != 2:
             return fail("--drift needs a baseline and a candidate")

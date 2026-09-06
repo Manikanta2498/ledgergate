@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ledgergate"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 description = "Financial correctness and release-control runtime for autonomous money-moving agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,10 +50,22 @@ dev = [
   "pip-audit>=2.10",
   "pre-commit>=4.0",
   "types-jsonschema>=4.23",
+  "mutmut>=3.6,<4",
+  "packaging>=24",
 ]
+
+[tool.hatch.version]
+# One source of the version: __version__ (docs/spec/assurance.md, Releases). --version, the
+# MCP serverInfo, result.json and the wheel metadata all read it.
+path = "src/ledgergate/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ledgergate"]
+
+[tool.hatch.build.targets.sdist]
+# The sdist is the runtime, BUSL-1.1, like the wheel. corpus/ and schema/ are Apache-2.0 and
+# published separately (ADR-0001); tests and workflows are not the product.
+only-include = ["src/ledgergate", "LICENSE", "LICENSES/BUSL-1.1.txt", "README.md", "pyproject.toml"]
 
 # ---------------------------------------------------------------- ruff
 
@@ -204,3 +216,14 @@ name = "Adapters never leak into invariants"
 type = "forbidden"
 source_modules = ["ledgergate.invariants"]
 forbidden_modules = ["ledgergate.adapters", "ledgergate.runner"]
+
+# ---------------------------------------------------------------- mutmut
+# docs/spec/assurance.md, *The mutation gate*: the core and the registry are gated; nothing
+# else is mutated. Tests run from a copy under mutants/, so the data the unit tests read
+# relative to the working directory is copied too (tests/, pyproject.toml, uv.lock already are).
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = ["src/ledgergate/ledger/*", "src/ledgergate/invariants/*"]
+also_copy = ["schema/", "corpus/", "scripts/", "README.md", ".mutation-baseline.json"]
+pytest_add_cli_args_test_selection = ["tests/unit"]
+pytest_add_cli_args = ["-p", "no:cacheprovider", "-W", "ignore::pytest.PytestCacheWarning", "-m", "not slow"]

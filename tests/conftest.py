@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
+from hypothesis import HealthCheck
+from hypothesis import settings as hypothesis_settings
 
 from ledgergate.ledger import (
     EPOCH,
@@ -15,6 +19,26 @@ from ledgergate.ledger import (
     Ledger,
     SequentialIds,
 )
+
+# docs/spec/assurance.md, *The mutation gate*: Hypothesis's built-in `ci` profile (derandomize,
+# no example database, no deadline) is what Hypothesis loads under CI; mutmut runs the tests
+# with MUTANT_UNDER_TEST in the environment (empty for the clean run), and a survivor must be
+# reproducible, so the same profile is loaded then too. Presence, not truthiness.
+# mutmut calls each test from its own collector as well as from pytest, which Hypothesis's
+# `differing_executors` health check (rightly, in general) refuses; under mutmut the profile is
+# `ci` plus that one suppression, and nothing else differs.
+hypothesis_settings.register_profile(
+    "mutation",
+    parent=hypothesis_settings.get_profile("ci"),
+    suppress_health_check=[
+        *hypothesis_settings.get_profile("ci").suppress_health_check,
+        HealthCheck.differing_executors,
+    ],
+)
+if "MUTANT_UNDER_TEST" in os.environ:
+    hypothesis_settings.load_profile("mutation")
+elif os.environ.get("CI"):
+    hypothesis_settings.load_profile("ci")
 
 
 @pytest.fixture

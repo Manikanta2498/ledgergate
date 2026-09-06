@@ -54,7 +54,7 @@ definition is the bootstrap: `create` writes the definition and, in the same tra
 first event, `add` of the transport principal named by `--principal` (default `local`), with
 `by` equal to itself, the single stated exemption from "`by` is live at its sequence": the act
 of creating the journal is the operator's own attribution. `create --approver NAME=KEYFILE`
-(repeatable) appends approver adds in the *same create transaction* (a crash leaves either a
+(repeatable; split at the first `=`, so a name may not contain one, refused at the CLI) appends approver adds in the *same create transaction* (a crash leaves either a
 complete journal with its seeds or no journal), and the existing `create`-time rule "a
 policy that can require approval needs someone who can approve" now reads: `approve_above`
 non-empty requires at least one approver seeded, and every name in any line's `approvers`
@@ -99,7 +99,8 @@ invocation transaction and every registry transaction holds the registry rule (a
   one, so nothing a third party can send blocks a principal's own later call id.
 - Order of checks on one request: the session's `revoked_principal` check first (a revoked
   operator's session delivers nothing, envelope or not), then the envelope's clockless checks,
-  then admission of the command, then, at the single reading, expiry and replay.
+  then admission of the command, then, at the single reading, expiry, the expiry bound and
+  replay.
 
 `PolicyContext.principal` is the authenticated principal, so a policy line can name it.
 
@@ -130,6 +131,17 @@ and `expires_at` is covered. A client learns `journal_id` from `initialize`'s
 `result._meta.ledgergate.journal_id` (added; `_meta` is where MCP puts such things) or from
 `ledgergate journal id PATH`.
 
+**Envelope fields.** As for an artefact (`identifiers-and-redaction.md`, *Approval artefact
+fields*), every field is bounded before anything is stored: `principal` an identifier (at most
+256 characters, one line), `expires_at` RFC 3339 with an offset (at most 64 characters),
+`signature` exactly 86 base64url characters; an envelope outside these is
+`authentication_malformed`, the predicate that cause names. The three `auth_*` columns are
+stored only on a `signed` row, that is only after the signature verified, since until then
+they are the presenter's words (the same rule the presentation row applies); a read's
+`request_digest` excludes `auth` as it excludes the artefact, so a signed read has the same
+digest as its unsigned twin and "the same read" keeps its meaning. `identifiers-and-redaction.md`
+gains this paragraph.
+
 **Where each check runs.** Admission is clockless and reads nothing outside its scope; the
 journal hands it, under the lock at step 3, the live `signed` principals and the `journal_id` as part of the
 `AdmissionScope` (as it already hands the currency registry), so it does what needs no clock:
@@ -140,7 +152,8 @@ recomputed bytes → `invalid: bad_signature`. Admission runs on the pre-tokeniz
 (`admission.py` already sees the raw request), which is the value the client signed. The two
 checks that need the clock run at the protocol's **single reading**: in the write protocol at
 step 4 and in the read protocol at its own reading (`journal.md`), `expires_at <=
-requested_at` → `invalid: request_expired`, and `(principal, call_id)` in the replay set →
+requested_at` → `invalid: request_expired`, `expires_at > requested_at + 86,400 s` →
+`invalid: request_expiry_unbounded`, and `(principal, call_id)` in the replay set →
 `invalid: replayed_call` (enforced by a partial `UNIQUE` index on `invocations (principal, call_id) WHERE
 authentication = 'signed' AND disposition <> 'invalid'`, so the `SELECT` that produces the
 recorded refusal is, as for check 4, merely the optimisation and the constraint is the
@@ -161,12 +174,13 @@ Ed25519, as approvals already are. `ledgergate keygen --seed-file FILE` writes a
 0600) and prints the verification key; a seed never enters a journal. Compromise is handled by
 `revoke` and a new name (a principal cannot revoke itself: the `BEFORE INSERT` trigger requires `by` to have a `transport` `add`
 and no `revoke` in `principal_events` (a subselect, for `approver_events` too) and, on a
-`revoke`, `by <> name`, the bootstrap row exempt
-because the table is then empty; so a journal whose only transport principal is `local` adds
+`revoke`, `by <> name`, the bootstrap row, when the table is empty, required instead to be `action = 'add'`,
+`kind = 'transport'`, `by = name`, so the trigger and not the CLI guarantees the shape the
+trace invariant expects; so a journal whose only transport principal is `local` adds
 another before `local` can go; stated, since operators will try it); rotation under one name is not offered (two keys over time under one
 name makes "who signed this" a question about the clock, and the clock is the signer's).
 `ledgergate sign --seed-file FILE --journal-id ID --expires-in SECONDS REQUEST.json` produces
-the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`, at most 86,400 seconds: the journal refuses an envelope whose `expires_at` is more than a day past `requested_at` as `authentication_malformed`, since the replay set already bounds reuse and a request valid for years is a signed blank cheque; in the
+the envelope for a request value (`expires_at` = the signer's clock plus `--expires-in`, at most 86,400 seconds: at step 4, beside the expiry check, the journal refuses an envelope whose `expires_at` is more than a day past `requested_at` as `invalid: request_expiry_unbounded`, a `signed` row like `request_expired`, since the replay set already bounds reuse and a request valid for years is a signed blank cheque; in the
 corpus, a `sign_as` step takes `expires_in_seconds` against the runner's peeked clock, as a
 `sign` step does, so the behavioural digest is stable), what a client library would do, so tests and the corpus can produce signed
 requests without one.
@@ -193,7 +207,9 @@ protocol gains one **pure** method, `approvers_for(command_kind, currency, amoun
 frozenset[str] | None`: the names admitted by the first `approve_above` line matching those
 three fields by `evaluate`'s own predicate (kind and currency equal, amount above the line;
 any `None` input, a command without an amount, yields `None`), or `None` when no line matches or the matching line has no `approvers` (the
-null set always returns `None`). It is deliberately *not* a prediction of `evaluate`: it
+null set always returns `None`; the protocol gives the method a default of `None`, so an
+existing custom set needs no change and a raise from one that overrides it is the usual
+configuration fault). It is deliberately *not* a prediction of `evaluate`: it
 reads nothing but the `approve_above` lines, needs no context, no subject, no aggregates, so
 it runs before any `PolicyContext` exists and the failed-verdict rule ("on a failed verdict
 nothing of the set ran") keeps its meaning, since only this one line-lookup ran and the
@@ -251,12 +267,12 @@ sees the stranding before, not after, the last revoke.
   events alongside invocations and null-invocation events; the formula is amended.
 
 `invalid` causes gain `authentication_malformed`, `unknown_principal`, `bad_signature`,
-`request_expired`, `replayed_call`, `revoked_principal`. **Where the cause is carried.** Today
+`request_expired`, `request_expiry_unbounded`, `replayed_call`, `revoked_principal`. **Where the cause is carried.** Today
 an `invalid` call's `tool_result.error.type` is the fixed string `AdmissionError` and the
 admission code (`unknown_tool`, `missing_key`, ...) lives only in the journal's inbound
 failure envelope, which no trace carries; a trace therefore cannot say *which* refusal
 contained a call. Schema 7 changes the `invalid` outbound body: `error.type` **is the
-admission cause code** (the closed vocabulary `admission.py` already defines, plus the six
+admission cause code** (the closed vocabulary `admission.py` already defines, plus the seven
 above), `error.message` the path alone (`$` for the whole value), the code having moved to the type. This is a body-shape change the schema-7 bump
 licenses (`journal.md`, *Tables*, `events`), the derived `tool_result.error.type` carries it,
 the corpus's `invalid_causes` counts it, and the trace invariant's `revoked_principal`
@@ -271,7 +287,8 @@ the v2 model refuses an `invalid` result whose `error.type` is outside it.
   the guarantee, as check 4's `UNIQUE` is, so an operator error is never reported as
   corruption); `journal pending` lists each pending operation's admitted approvers and which
   are live (a read-only listing that rebuilds the set from the definition's
-  `policy_configuration`, as `verify` already does; `serve`'s refusal to rebuild is about
+  `policy_configuration`, as `verify` already does, and prints `admitted approvers: unknown
+  (set is code)` for a custom set that has none; `serve`'s refusal to rebuild is about
   *writing* under a set the operator did not name); `create`
   gains `--approver NAME=KEYFILE` (replacing `--approval-key`); `approve`'s `--signing-key`
   becomes `--seed-file`, and its existing `--approver` is checked against the registry; `initialize` returns `journal_id` in `_meta`.
@@ -300,7 +317,9 @@ the v2 model refuses an `invalid` result whose `error.type` is outside it.
   single-principal statements become "one *transport* principal per session; any number of
   signed ones"; `initialize` carries `journal_id` in `result._meta.ledgergate` (read from the
   definition at start, no journal transaction); `--approval-key` becomes `--approver`.
-- `trace-v2.md` (made): the additive fields, the two events, the invariant, the verdict.
+- `trace-v2.md` (made): the additive fields, the two events, the invariant, the verdict, the
+  `committed_response_matches_journal` rule for an `invalid` result's type.
+- `identifiers-and-redaction.md` (made): *Auth envelope fields*.
 - `corpus.md` (made): `setup.approvals` becomes `setup.approvers`; `setup.principals`,
   `sign_as`, `sign.approver`.
 - ADR-0002 §3 body: authentication and approver identity are M8a; the network listener M8b;

@@ -104,7 +104,7 @@ carries the inputs, not a summary of them:
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
-Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal), `invocation_resolution.authentication` (`transport`, `signed`, `rejected`) and, on an `invalid` resolution, `invocation_resolution.error_type`, equal to the paired `tool_result.error.type` (the model requires the equality), so the invariant and the corpus key on the resolution; `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `kind` for principals, `by`, `at`), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
+Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal), `invocation_resolution.authentication` (`transport`, `signed`, `rejected`) and `invocation_resolution.error_type`, required iff `authentication` is present and the disposition is `invalid`, forbidden otherwise, and equal to the paired `tool_result.error.type` (the model requires all three), so the invariant and the corpus key on the resolution; `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `kind` for principals, `by`, `at`), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
 
 A consumer with the policy set at `policy_set_version` can recompute `decision` from
 `context` and compare. A consumer without it can verify only that the recorded evidence is
@@ -208,7 +208,8 @@ caller was served in the `tool_result`, so the served value is bound to the row 
 of that value with the replayed books is not checked). A further row checks that the *committed response*
 (the outbound event the journal committed; not proof of delivery, see journal.md
 `invocation_responses`) is what the journal did, per the decision-to-outcome tables: success iff a
-read was not denied or the ledger applied, otherwise the error type of the path taken and,
+read was not denied or the ledger applied, otherwise the error type of the path taken (for `invalid`, `invocation_resolution.error_type`
+when the resolution carries `authentication`, else exactly `AdmissionError`) and,
 on a decided path, the decision's rule and reason as the message; an applied write's served
 head, sequence and entry equal to the ledger result's and a rejected write's served error
 equal to the ledger result's; and a replay told exactly what the producing invocation

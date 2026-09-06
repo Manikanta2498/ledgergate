@@ -141,4 +141,14 @@ the signature verified**; `approval_id`, `approver`, `key`, `subject`, `amount` 
 rather than the presenter's. Check 4 needs `approval_id` only after checks 1 to 3 passed,
 so nothing the protocol needs is lost.
 
+**Auth envelope fields (schema 7, [principals](principals.md)).** A signed request's `auth`
+envelope is bounded at admission the same way: `principal` an identifier (at most 256
+characters, one line), `expires_at` RFC 3339 with an offset (at most 64 characters),
+`signature` exactly 86 base64url characters; outside these it is `authentication_malformed`
+and never reaches a typed column. The `auth_*` columns are stored only on a `signed` row, that
+is only after the signature verified under the registered key, since until then the fields are
+the presenter's words; a rejected envelope survives only inside the redacted `invalid`
+envelope blob, under the keyed `input_digest`. A read's `request_digest` excludes `auth` as it
+excludes the artefact, so a signed read and its unsigned twin have one digest.
+
 v2's intent and policy fields are designed under the same four classes in M3.

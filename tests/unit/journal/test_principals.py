@@ -18,6 +18,7 @@ from ledgergate.derive import trace as derive_trace
 from ledgergate.invariants import check as verify
 from ledgergate.journal import (
     ConfigurationError,
+    IntegrityError,
     Journal,
     ThresholdPolicySet,
     generate_signing_key,
@@ -1225,3 +1226,52 @@ class TestSixthImplementationReview:
                 e["principal"] = "agent"  # has a revoke before the row, but was never transport
         card = verify(load_any(json.dumps(forged)))
         assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"
+
+
+class TestEighthImplementationReview:
+    def test_a_second_presentation_is_always_replayed_call_even_when_admission_would_fail_again(
+        self, j: Journal
+    ) -> None:
+        reverse = {
+            "tool": "reverse",
+            "call_id": "r1",
+            "key": "rv",
+            "arguments": {"entry_id": "e-9"},
+        }
+        v = signed(j, reverse)
+        assert j.handle(v).error_type == "unknown_entry"
+        assert j.handle(v).error_type == "replayed_call"  # not unknown_entry twice
+        conn = sqlite3.connect(j.path)
+        try:
+            (n,) = conn.execute("SELECT COUNT(*) FROM signed_calls").fetchone()
+        finally:
+            conn.close()
+        assert n == 1  # the replayed_call row spent nothing: the pair was already there
+
+    def test_the_spend_is_an_unconditional_insert_the_unique_backs(
+        self, j: Journal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # if the step-3 check were skipped, the constraint, not the SELECT, would stop a replay
+        v = signed(j, post("k1"))
+        assert j.handle(v).ok
+        monkeypatch.setattr(Journal, "_signed_call_spent", lambda self, p, c: False)
+        with pytest.raises(IntegrityError):
+            j.handle(v)
+        # and the failed transaction left nothing behind
+        assert table(j.path, "invocations")[-1][12] is not None
+        assert len([r for r in table(j.path, "invocations") if r[8] != "invalid"]) == 1
+
+    def test_a_non_identifier_call_id_on_a_verified_envelope_spends_nothing(
+        self, j: Journal
+    ) -> None:
+        v = signed(j, {**post("k1"), "call_id": "two\nlines"})
+        r = j.handle(v)
+        assert (r.error_type, table(j.path, "invocations")[-1][4]) == (
+            "invalid_identifier",
+            "signed",
+        )
+        conn = sqlite3.connect(j.path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM signed_calls").fetchone() == (0,)
+        finally:
+            conn.close()

@@ -102,17 +102,22 @@ invocation transaction and every registry transaction holds the registry rule (a
   signer is known and pretending otherwise would be a then-versus-now error. The **replay set**
   is every verified envelope's `(principal, call_id)`, *spent on its first presentation whatever
   the journal then answered* (applied, replayed, denied, refused at admission, expired), recorded
-  in a `signed_calls` table whose `UNIQUE (principal, call_id)` is the guarantee; a second
-  presentation is `invalid: replayed_call` and writes nothing there (the `SELECT` that produces
-  the recorded refusal is, as for check 4, the optimisation). So a verified request the journal
+  in a `signed_calls` table whose `UNIQUE (principal, call_id)` is the guarantee: the spend is
+  an unconditional `INSERT` in the invocation's transaction, so a path that forgot the check
+  would trip the constraint rather than apply the request. The check itself is clockless and
+  runs at step 3 immediately after the signature verifies, before admission, so a second
+  presentation is always `invalid: replayed_call` (never admission's answer again) and is the
+  one signed row that writes no spend. The stated exception: a verified envelope whose
+  `call_id` is not an identifier is refused as `invalid_identifier` and spends nothing, since
+  such a request can never be admitted under any projection. So a verified request the journal
   refused is not a bearer instrument: a signed `reverse` of an entry that did not exist yet,
   captured and re-presented after the entry appears, is `replayed_call`, not applied, since the
   signer's intent was about the ledger *then*. A rejected envelope spends nothing, so a third
   party cannot block a principal's later call id.
 - Order of checks on one request: the session's `revoked_principal` check first (a revoked
   operator's session delivers nothing, envelope or not), then the envelope's clockless checks,
-  then admission of the command, then, at the single reading, expiry, the expiry bound and
-  replay.
+  then the replay check (clockless), then admission of the command, then, at the single
+  reading, expiry and the expiry bound.
 
 `PolicyContext.principal` is the authenticated principal, so a policy line can name it.
 
@@ -170,12 +175,13 @@ stripped from the value it receives), so they do what needs no clock:
 live `signed` principal at the current head → `invalid: unknown_principal` (a `transport`
 name or a revoked name is unknown *as a signer*); signature does not verify over the
 recomputed bytes → `invalid: bad_signature`. Admission runs on the pre-tokenization value
-(`admission.py` already sees the raw request), which is the value the client signed. The two
-checks that need the clock run at the protocol's **single reading**: in the write protocol at
-step 4 and in the read protocol at its own reading (`journal.md`), `expires_at <=
-requested_at` → `invalid: request_expired`, `expires_at > requested_at + 86,400 s` →
-`invalid: request_expiry_unbounded`, and `(principal, call_id)` in the replay set →
-`invalid: replayed_call` (the `signed_calls` `UNIQUE`, above, is the guarantee); such a row is written in the step-3 failure-envelope shape (an
+(`admission.py` already sees the raw request), which is the value the client signed. Still
+clockless, immediately after the signature verifies: `(principal, call_id)` already spent →
+`invalid: replayed_call` (the `signed_calls` `UNIQUE`, above, is the guarantee). The two checks
+that need the clock run at the protocol's **single reading**: in the write protocol at step 4
+and in the read protocol at its own reading (`journal.md`), `expires_at <= requested_at` →
+`invalid: request_expired` and `expires_at > requested_at + 86,400 s` →
+`invalid: request_expiry_unbounded`; such a row is written in the step-3 failure-envelope shape (an
 `invalid` invocation with a null `request_digest`, the redacted raw payload including `auth`
 as an untyped blob, and its keyed `input_digest`), the one shape `invalid` has (a replayed message is refused; a legitimate retry is a *new* call with the *same idempotency key*, which the write protocol answers as it always has). The one-reading rule is untouched.
 

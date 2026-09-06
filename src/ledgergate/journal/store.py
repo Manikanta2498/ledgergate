@@ -667,6 +667,15 @@ class Journal:
                         Attribution.rejected(self.principal),
                     )
                 attribution = Attribution(principal, "signed", principal, expires_at, signature)
+                # the replay check is clockless: a spent (principal, call_id) is refused here,
+                # before admission, so a second presentation is always `replayed_call`
+                call_id = admitted.get("call_id")
+                if isinstance(call_id, str) and _is_identifier(call_id):
+                    token = self.admitter.tokenize_identifier(call_id)
+                    if self._signed_call_spent(principal, token):
+                        return self._invalid(
+                            value, AdmissionError("replayed_call", "auth"), attribution
+                        )
             scope = AdmissionScope(
                 self._definition.registry,
                 self._definition.chart,
@@ -690,8 +699,6 @@ class Journal:
             return None
         assert attribution.auth_expires_at is not None
         cause = expiry_cause(attribution.auth_expires_at, now)
-        if cause is None and self._signed_call_spent(attribution.principal, request.call_id):
-            cause = "replayed_call"
         if cause is None:
             return None
         return self._invalid(value, AdmissionError(cause, "auth"), attribution, now)
@@ -706,14 +713,13 @@ class Journal:
         )
 
     def _spend_signed_call(
-        self, attribution: Attribution, call_id: str | None, inv_seq: int
+        self, attribution: Attribution, call_id: str | None, inv_seq: int, cause: str | None
     ) -> None:
-        """Every verified envelope is spent on its first presentation (principals.md): the pair
-        enters `signed_calls`, whose UNIQUE is the replay guarantee. A `replayed_call` refusal
-        writes nothing here, since the pair is already there."""
-        if attribution.authentication != "signed" or call_id is None:
-            return
-        if self._signed_call_spent(attribution.principal, call_id):
+        """Every verified envelope with an identifier call id is spent on its first
+        presentation (principals.md): the pair enters `signed_calls` unconditionally, so the
+        UNIQUE is the guarantee and the step-3 SELECT the optimisation. A `replayed_call`
+        refusal is the one row that writes nothing here: the pair is already there."""
+        if attribution.authentication != "signed" or call_id is None or cause == "replayed_call":
             return
         seq = self._alloc("signed_calls")
         self._conn.execute(
@@ -798,7 +804,7 @@ class Journal:
                 request.call_id,
             ),
         )
-        self._spend_signed_call(attribution, request.call_id, inv_seq)
+        self._spend_signed_call(attribution, request.call_id, inv_seq, None)
         self._inbound(inv_seq, request)  # step 5
 
         # An artefact presented where none was expected is kept, not dropped.
@@ -988,7 +994,7 @@ class Journal:
                 request.call_id,
             ),
         )
-        self._spend_signed_call(attribution, request.call_id, inv_seq)
+        self._spend_signed_call(attribution, request.call_id, inv_seq, None)
         self._inbound(inv_seq, request)
         presentation: int | None = None
         if request.approval is not None:
@@ -1093,7 +1099,7 @@ class Journal:
                 safe_call_id,
             ),
         )
-        self._spend_signed_call(attribution, safe_call_id, inv_seq)
+        self._spend_signed_call(attribution, safe_call_id, inv_seq, exc.code)
         envelope = {
             "call_id": safe_call_id,
             "tool": tool if isinstance(tool, str) and tool in TOOLS else None,

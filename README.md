@@ -238,7 +238,7 @@ append-only logs in the journal itself, seeded at `create` (the operator's trans
 principal by itself; `--approver NAME=KEYFILE`), so "who was `treasury-agent` at sequence
 *n*" has one answer. A request may carry an Ed25519 `auth` envelope over its own canonical
 content, the journal id and the call id; the journal verifies it before decoding the command,
-attributes the invocation to the signer, and refuses a replayed message by a `UNIQUE` index.
+attributes the invocation to the signer, and refuses a replayed message, the `UNIQUE` on the spent pairs being the guarantee.
 An approval artefact now verifies only under the key registered for the approver it names, and
 a policy line may say `approvers: [cfo]`: the controller's valid artefact is
 `approval_wrong_approver`, decided before anything is consumed. Every invocation row and derived trace

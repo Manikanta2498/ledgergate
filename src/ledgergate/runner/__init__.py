@@ -14,7 +14,7 @@ from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -40,6 +40,7 @@ from ledgergate.journal import (
     verification_key_text,
 )
 from ledgergate.journal.approvals import _unb64 as unb64
+from ledgergate.journal.auth import sign_request
 from ledgergate.ledger import (
     CURRENCIES,
     ChartOfAccounts,
@@ -71,6 +72,8 @@ from ledgergate.trace.v2 import (
     InvocationResolution,
     PolicyDecision,
     TraceV2,
+    Verdict,
+    is_admission_cause,
 )
 
 Kind = Literal["correct", "red-team"]
@@ -104,13 +107,16 @@ class SignSpec(_Strict):
 
 
 class Step(_Strict):
-    """The journal's request shape: a step outside it is a corpus fault at validation, by the
-    model's types rather than by a list of checks."""
+    """The journal's request shape plus the runner's directives (`sign_as`, `sign_as_seed`,
+    resolved and stripped before `Journal.handle`): a step outside it is a corpus fault at
+    validation, by the model's types rather than by a list of checks."""
 
     tool: str
     arguments: dict[str, Any] | None = None
     key: str | None = None
     approval: Any = None
+    sign_as: str | None = None
+    sign_as_seed: str | None = None
 
     def request(self, call_id: str) -> dict[str, Any]:
         value: dict[str, Any] = {"tool": self.tool, "call_id": call_id}
@@ -121,9 +127,11 @@ class Step(_Strict):
         return value
 
 
-class Approvals(_Strict):
-    signing_key: str
-    approver: str = "approver"
+class Seed(_Strict):
+    """A registered name with its published test seed (docs/spec/principals.md)."""
+
+    name: str
+    seed: str
 
 
 class Setup(_Strict):
@@ -131,8 +139,19 @@ class Setup(_Strict):
     chart: tuple[AccountDoc, ...]
     currencies: tuple[CurrencyDoc, ...] = ()
     policy: dict[str, Any] | None = None
-    approvals: Approvals | None = None
+    approvers: tuple[Seed, ...] = ()
+    principals: tuple[Seed, ...] = ()
     before: tuple[Step, ...] = ()
+
+    def approver_seed(self, name: str | None) -> Seed | None:
+        if not self.approvers:
+            return None
+        if name is None:
+            return self.approvers[0]
+        return next((s for s in self.approvers if s.name == name), None)
+
+    def principal_seed(self, name: str) -> Seed | None:
+        return next((s for s in self.principals if s.name == name), None)
 
 
 class Attachment(_Strict):
@@ -171,6 +190,9 @@ class Expectations(_Strict):
     balances: dict[str, str] | None = None
     ledger_commands: int | None = None
     invocations: int | None = None
+    invalid_causes: dict[str, int] | None = None
+    approval_verdicts: dict[str, int] | None = None
+    attributions: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -308,18 +330,26 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
             )
         except IJsonError as exc:
             raise CorpusError(f"{path}: step {name}: not I-JSON: {exc}") from exc
-    if getattr(policy, "approve_above", ()) and sc.setup.approvals is None:
-        raise CorpusError(f"{path}: policy can require approval but setup has no approvals key")
+    if getattr(policy, "approve_above", ()) and not sc.setup.approvers:
+        raise CorpusError(f"{path}: policy can require approval but setup seeds no approver")
+    for line in getattr(policy, "approve_above", ()):
+        for name in getattr(line, "approvers", None) or ():
+            if sc.setup.approver_seed(name) is None:
+                raise CorpusError(f"{path}: policy names approver {name!r}, not in setup.approvers")
     capped = {c.kind for c in getattr(policy, "window_caps", ())}
     if capped and any(s.tool in capped for s in sc.setup.before) and not sc.scripted_only:
         raise CorpusError(f"{path}: window_caps and a capped write in before require scripted_only")
     if sc.scripted_only and sc.agent.script is None:
         raise CorpusError(f"{path}: scripted_only without agent.script can never be scored")
-    if sc.setup.approvals is not None:
+    for seed in (*sc.setup.approvers, *sc.setup.principals):
         try:
-            signing_key_from_bytes(unb64(sc.setup.approvals.signing_key))
+            require_identifier(seed.name, "name")
+            signing_key_from_bytes(unb64(seed.seed))
         except Exception as exc:
-            raise CorpusError(f"{path}: approvals.signing_key is not an Ed25519 seed") from exc
+            raise CorpusError(f"{path}: seed for {seed.name!r} is not an Ed25519 seed") from exc
+    names_seen = [s.name for s in (*sc.setup.approvers, *sc.setup.principals)]
+    if len(set(names_seen)) != len(names_seen):
+        raise CorpusError(f"{path}: a name appears twice among approvers and principals")
     steps = list(sc.setup.before) + list(sc.agent.script or ())
     names = [f"setup-{i + 1}" for i in range(len(sc.setup.before))] + [
         f"agent-{i + 1}" for i in range(len(sc.agent.script or ()))
@@ -328,10 +358,16 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
         args_ = step.arguments or {}
         if "entry_ref" in args_ and step.tool != "reverse":
             raise CorpusError(f"{path}: step {names[n]}: entry_ref is only for reverse")
+        if step.sign_as is not None and sc.setup.principal_seed(step.sign_as) is None:
+            raise CorpusError(f"{path}: step {names[n]} sign_as names no setup principal")
+        if step.sign_as_seed is not None and step.sign_as is None:
+            raise CorpusError(f"{path}: step {names[n]} sign_as_seed without sign_as")
         if isinstance(step.approval, dict) and "sign" in step.approval:
-            if sc.setup.approvals is None:
-                raise CorpusError(f"{path}: step {names[n]} signs but setup has no approvals")
+            if not sc.setup.approvers:
+                raise CorpusError(f"{path}: step {names[n]} signs but setup seeds no approver")
             spec = _validate(SignSpec, step.approval["sign"], path)
+            if sc.setup.approver_seed(spec.approver) is None:
+                raise CorpusError(f"{path}: step {names[n]} signs as an unseeded approver")
             if spec.key is None and step.key is None:
                 raise CorpusError(f"{path}: step {names[n]} signs for no key")
             if spec.fingerprint is None:
@@ -367,6 +403,18 @@ def _validate_expectations(ex: Expectations, path: Path) -> None:
             bad = sorted(set(values) - set(allowed))
             if bad:
                 raise CorpusError(f"{path}: {key} names unknown kinds {bad}")
+    if ex.invalid_causes is not None:
+        bad = sorted(k for k in ex.invalid_causes if not is_admission_cause(k))
+        if bad:
+            raise CorpusError(f"{path}: invalid_causes names unknown causes {bad}")
+    if ex.approval_verdicts is not None:
+        bad = sorted(set(ex.approval_verdicts) - set(get_args(Verdict)))
+        if bad:
+            raise CorpusError(f"{path}: approval_verdicts names unknown verdicts {bad}")
+    if ex.attributions is not None:
+        bad = sorted(set(ex.attributions) - {"transport", "signed", "rejected"})
+        if bad:
+            raise CorpusError(f"{path}: attributions names unknown kinds {bad}")
 
 
 def _policy(doc: dict[str, Any] | None, path: Path) -> Any:
@@ -405,9 +453,10 @@ def _setup_journal(sc: Scenario, path: str) -> tuple[Journal, PeekClock]:
     registry = dict(CURRENCIES)
     registry.update((c.code, c.to_currency()) for c in sc.setup.currencies)
     chart = ChartOfAccounts(a.to_account(registry) for a in sc.setup.chart)
-    key = "none"
-    if sc.setup.approvals is not None:
-        key = verification_key_text(signing_key_from_bytes(unb64(sc.setup.approvals.signing_key)))
+    approvers = {
+        s.name: verification_key_text(signing_key_from_bytes(unb64(s.seed)))
+        for s in sc.setup.approvers
+    }
     journal = Journal.create(
         path,
         chart,
@@ -416,8 +465,14 @@ def _setup_journal(sc: Scenario, path: str) -> tuple[Journal, PeekClock]:
         currencies={c.code: c.to_currency() for c in sc.setup.currencies} or None,
         admitter=IdentityAdmitter(),
         policy=_policy(sc.setup.policy, Path(sc.id)),
-        approval_key=key,
+        approvers=approvers,
     )
+    # signed principals: registry transactions by the runner's transport principal, before
+    # `before`, so they precede setup-1 in the trace (corpus.md)
+    for s in sc.setup.principals:
+        journal.add_principal(
+            s.name, "signed", verification_key_text(signing_key_from_bytes(unb64(s.seed)))
+        )
     return journal, clock
 
 
@@ -443,6 +498,17 @@ def _apply(
             value["arguments"] = args
         if step.approval is not None:
             value["approval"] = _artefact(journal, clock, sc, step, value, signed)
+        if step.sign_as is not None:
+            seed = sc.setup.principal_seed(step.sign_as)
+            assert seed is not None
+            private = signing_key_from_bytes(unb64(step.sign_as_seed or seed.seed))
+            value["auth"] = sign_request(
+                value,
+                private=private,
+                journal_id=journal.definition.journal_id,
+                principal=step.sign_as,
+                expires_at=clock.next + timedelta(seconds=300),
+            )
         response = journal.handle(value)
         if response.ok and response.result is not None and "entry_id" in response.result:
             entries[call_id] = response.result["entry_id"]
@@ -458,9 +524,10 @@ def _artefact(
 ) -> Any:
     if not (isinstance(step.approval, dict) and "sign" in step.approval):
         return step.approval  # a literal artefact, passed as given (a forgery, usually)
-    assert sc.setup.approvals is not None
     spec = SignSpec.model_validate(step.approval["sign"])
-    private = signing_key_from_bytes(unb64(sc.setup.approvals.signing_key))
+    seed = sc.setup.approver_seed(spec.approver)
+    assert seed is not None  # validation refused an unseeded approver
+    private = signing_key_from_bytes(unb64(seed.seed))
     key = spec.key or step.key or ""  # a signed step without a key was refused at validation
     fingerprint = spec.fingerprint
     if fingerprint is None:
@@ -474,7 +541,7 @@ def _artefact(
         private,
         journal_id=spec.journal_id or journal.definition.journal_id,
         approval_id=spec.approval_id,
-        approver=spec.approver or sc.setup.approvals.approver,
+        approver=seed.name,
         fingerprint=fingerprint,
         key=key,
         issued_at=issued_at,
@@ -720,6 +787,27 @@ def score(
         )
     if ex.invocations is not None:
         add("invocations", ex.invocations, len(agent_rows))
+    if ex.invalid_causes is not None:
+        actual = dict.fromkeys(ex.invalid_causes, 0)
+        for row in agent_rows:
+            cause = row.resolution.error_type
+            if row.resolution.disposition == "invalid" and cause is not None:
+                actual[cause] = actual.get(cause, 0) + 1
+        add("invalid_causes", dict(ex.invalid_causes), actual)
+    if ex.approval_verdicts is not None:
+        actual = dict.fromkeys(ex.approval_verdicts, 0)
+        for row in agent_rows:
+            if row.decision is not None and row.decision.context.approval is not None:
+                v = row.decision.context.approval.verdict
+                actual[v] = actual.get(v, 0) + 1
+        add("approval_verdicts", dict(ex.approval_verdicts), actual)
+    if ex.attributions is not None:
+        actual = dict.fromkeys(ex.attributions, 0)
+        for row in agent_rows:
+            a = row.resolution.authentication
+            if a is not None:
+                actual[a] = actual.get(a, 0) + 1
+        add("attributions", dict(ex.attributions), actual)
     return out
 
 

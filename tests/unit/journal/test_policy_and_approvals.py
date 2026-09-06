@@ -52,7 +52,7 @@ def gated(tmp_path: Path) -> Iterator[Journal]:
         clock=SteppingClock(EPOCH),
         ids=SequentialIds(),
         policy=POLICY,
-        approval_key=verification_key_text(SIGNER),
+        approvers={"cfo": verification_key_text(SIGNER)},
     )
     yield j
     j.close()
@@ -241,6 +241,9 @@ class TestThresholdPolicySet:
 
 class TestApprovalProtocol:
     def test_two_step_approval_applies_once_and_consumes(self, gated: Journal) -> None:
+        # schema 7: the key check 1 verifies against is the registry's, seeded at create
+        (seeded,) = table(gated.path, "approver_events")
+        assert seeded[1:5] == ("cfo", "add", verification_key_text(SIGNER), "local")
         pending(gated, "k1")
         (out,) = table(gated.path, "outcomes")
         assert out[3] == "awaiting_approval"
@@ -261,7 +264,11 @@ class TestApprovalProtocol:
             and decisions[1][10] == cons[0]
         )
         ctx = json.loads(decisions[1][3])
-        assert ctx["approval"] == {"presentation": pres[0], "verdict": "approval_valid"}
+        assert ctx["approval"] == {
+            "presentation": pres[0],
+            "verdict": "approval_valid",
+            "approver": "cfo",  # schema 7: the authenticated approver, check 1 having passed
+        }
         assert (
             ctx["subject"] == "t-big"
             and ctx["amount"] == "6000"
@@ -398,7 +405,7 @@ class TestApprovalProtocol:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=CapAfterApproval(version=strict.version, approve_above=strict.approve_above),
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         pending(j, "k1")
         r = present(j, "k1", artefact(j, "k1"))
@@ -439,6 +446,7 @@ class TestApprovalProtocol:
         assert json.loads(dec[3])["approval"] == {
             "presentation": pres[0],
             "verdict": "approval_not_applicable",
+            "approver": None,  # check 1 did not run, so no name is authenticated
         }
 
     def test_approval_under_a_tokenizing_admitter(self, tmp_path: Path) -> None:
@@ -453,7 +461,7 @@ class TestApprovalProtocol:
             ids=SequentialIds(),
             policy=POLICY,
             admitter=TokenizingAdmitter(tk),
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         pending(j, "order-42")
         stored_key = tk.tokenize("order-42")
@@ -478,8 +486,9 @@ class TestApprovalProtocol:
             ("subject", "x" * 300),
         ):
             r = present(gated, "k1", {**bad, field: value}, call_id=f"c-{field}")
-            assert (
-                r.response == "invalid" and r.error_message == "approval_malformed at approval"
+            assert r.response == "invalid" and (r.error_type, r.error_message) == (
+                "approval_malformed",
+                "approval",
             ), field
         assert len(table(gated.path, "approvals")) == 0
 
@@ -553,7 +562,7 @@ class TestApprovalProtocol:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=bad,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         pending(j, "k1", amount=10)
         before = len(table(j.path, "journal"))
@@ -563,7 +572,7 @@ class TestApprovalProtocol:
         assert len(table(j.path, "approval_consumptions")) == 0
         j.close()
 
-    def test_journal_without_verification_key_never_verifies(self, tmp_path: Path) -> None:
+    def test_journal_without_a_seeded_approver_never_verifies(self, tmp_path: Path) -> None:
         no_lines = ThresholdPolicySet(
             version="nk", deny_above=[Threshold("open_transaction", "USD", 100_000)]
         )
@@ -585,7 +594,7 @@ class TestApprovalProtocol:
                 CHART,
                 clock=SteppingClock(EPOCH),
                 ids=SequentialIds(),
-                approval_key="not-a-key",
+                approvers={"cfo": "not-a-key"},
             )
 
 
@@ -641,7 +650,7 @@ class TestConfigurationBinding:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=key,
+            approvers={"cfo": key},
         )
         j.close()
         looser = ThresholdPolicySet(
@@ -668,7 +677,7 @@ class TestConfigurationBinding:
             ids=SequentialIds(),
             policy=POLICY,
             admitter=TokenizingAdmitter(tk),
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         secrets = {
             "approval_id": "card 4111 1111 1111 1111 exp 12/29",
@@ -775,7 +784,7 @@ class TestWindowTimeBase:
             clock=clock,
             ids=SequentialIds(),
             policy=policy,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         assert j.handle(open_txn("o", "t", amount=10_000)).response == "applied"
         assert j.handle(_advance("a", "authorize")).response == "applied"
@@ -836,7 +845,7 @@ class TestNoPolicyCodeOnFailedVerdict:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=Spy(version=POLICY.version, approve_above=POLICY.approve_above),
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         pending(j, "k1")
         calls.clear()
@@ -947,8 +956,8 @@ class TestNoPolicyCodeOnFailedVerdict:
         finally:
             conn.close()
 
-    def test_create_refuses_approval_rules_without_a_verification_key(self, tmp_path: Path) -> None:
-        with pytest.raises(ConfigurationError, match="nothing could ever approve"):
+    def test_create_refuses_approval_rules_without_a_seeded_approver(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="no approver is seeded"):
             Journal.create(
                 str(tmp_path / "x.journal"),
                 CHART,

@@ -39,11 +39,11 @@ class TestLevels:
     def test_shipped_corpus_is_l2_and_l3_against_itself(self) -> None:
         r = run(load_corpus(CORPUS))
         c = conformance(r)
-        assert c.line == "L2 (22 scenarios, 13 red-team; no baseline)"
-        assert conformance(r, r).line == "L3 (22 scenarios, 13 red-team)"
+        assert c.line == "L2 (25 scenarios, 15 red-team; no baseline)"
+        assert conformance(r, r).line == "L3 (25 scenarios, 15 red-team)"
         assert (
             render_markdown(r).splitlines()[2]
-            == "**Conformance: L2 (22 scenarios, 13 red-team; no baseline)**"
+            == "**Conformance: L2 (25 scenarios, 15 red-team; no baseline)**"
         )
 
     def test_reasons_follow_the_fixed_order_and_every_reason_that_holds(self) -> None:
@@ -52,7 +52,7 @@ class TestLevels:
             r, **{"refund-over-cap": {"status": "fail"}, "read-balance": {"status": "fail"}}
         )
         assert conformance(failed).line == (
-            "L0 (22 scenarios, 13 red-team; correct failed: read-balance;"
+            "L0 (25 scenarios, 15 red-team; correct failed: read-balance;"
             " red-team failed: refund-over-cap; no baseline)"
         )
         red_only = _edit(r, **{"refund-over-cap": {"status": "fail"}})
@@ -67,12 +67,12 @@ class TestLevels:
         }
         all_skipped = _edit(r, **{s.id: unscored for s in r.scenarios})
         assert conformance(all_skipped).line == (
-            "L0 (22 scenarios, 13 red-team; skipped: 22; nothing scored; no baseline)"
+            "L0 (25 scenarios, 15 red-team; skipped: 25; nothing scored; no baseline)"
         )
         partial = run(load_corpus(CORPUS), kind="correct")
         assert (
             conformance(partial).line
-            == "L0 (9 scenarios, 0 red-team; partial selection; no red-team; no baseline)"
+            == "L0 (10 scenarios, 0 red-team; partial selection; no red-team; no baseline)"
         )
 
     def test_two_documents(self) -> None:

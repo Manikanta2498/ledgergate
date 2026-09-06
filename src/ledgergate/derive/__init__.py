@@ -35,9 +35,11 @@ from ledgergate.trace.models import (
 from ledgergate.trace.v2 import (
     ApprovalPresentation,
     ApprovalRef,
+    ApproverChange,
     CommandIntent,
     InvocationResolution,
     PolicyDecision,
+    PrincipalChange,
     ReadIntent,
     ReadResult,
     TraceV2,
@@ -120,6 +122,22 @@ class _Derivation:
             at = datetime.fromisoformat(inv["requested_at"])
             last_at = max(last_at, at)
             anchored.extend(((inv["journal_sequence"], o), e) for o, e in self._invocation(inv, at))
+
+        # schema 7: registry events, standalone, at their own sequence (principals.md)
+        for row in self.c.execute("SELECT * FROM principal_events ORDER BY journal_sequence"):
+            at = datetime.fromisoformat(row["at"])
+            last_at = max(last_at, at)
+            change = PrincipalChange(
+                seq=1, at=at, name=row["name"], action=row["action"], kind=row["kind"], by=row["by"]
+            )
+            anchored.append(((row["journal_sequence"], 0), change))
+        for row in self.c.execute("SELECT * FROM approver_events ORDER BY journal_sequence"):
+            at = datetime.fromisoformat(row["at"])
+            last_at = max(last_at, at)
+            change2 = ApproverChange(
+                seq=1, at=at, name=row["name"], action=row["action"], by=row["by"]
+            )
+            anchored.append(((row["journal_sequence"], 0), change2))
 
         anchored.sort(key=lambda x: x[0])
         events = tuple(ev.model_copy(update={"seq": i + 1}) for i, (_k, ev) in enumerate(anchored))
@@ -241,6 +259,9 @@ class _Derivation:
                     presentation_ref=None
                     if presentation is None
                     else presentation_ref(presentation["journal_sequence"]),
+                    principal=inv["principal"],
+                    authentication=inv["authentication"],
+                    error_type=outbound["error"]["type"] if disposition == "invalid" else None,
                 ),
             )
         )

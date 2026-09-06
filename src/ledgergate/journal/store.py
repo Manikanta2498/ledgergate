@@ -56,6 +56,7 @@ from ledgergate.journal.approvals import (
     signature_verifies,
     verification_key,
 )
+from ledgergate.journal.auth import Attribution, AuthError, expiry_cause, verify_envelope
 from ledgergate.journal.policy import (
     Decision,
     NullPolicySet,
@@ -208,7 +209,6 @@ class Definition:
     token_key_version: str = "none"  # noqa: S105 - a version label, not a credential
     token_check: str = "none"  # noqa: S105 - identifies the key; not key material
     policy_config: str = "none"
-    approval_key: str = "none"
     policy_configuration: str | None = None
     """The set's declarative rules as JCS text, when it has any; a trace carries it so a
     verifier can recompute decisions. ``policy_config`` is its digest."""
@@ -298,7 +298,8 @@ class Journal:
     _ledger: Ledger = field(init=False, repr=False)
     _cursor: int = field(init=False, default=0)
     _pending_projection: tuple[Ledger, int] | None = field(init=False, default=None, repr=False)
-    _approval_key: str = field(init=False, default="none", repr=False)
+    _seed_approvers: dict[str, str] = field(init=False, default_factory=dict, repr=False)
+    _registry_only: bool = field(init=False, default=False, repr=False)
 
     def __setattr__(self, name: str, value: Any) -> None:
         # The components a definition binds (policy, admitter, principal, effects) are
@@ -330,10 +331,16 @@ class Journal:
         (messages,) = self._conn.execute(
             "SELECT COUNT(*) FROM events WHERE invocation IS NULL"
         ).fetchone()
-        if EVENTS_PER_INVOCATION * invocations + messages + cost > MAX_TRACE_EVENTS:
+        # schema 7: registry events derive one trace event each (principals.md)
+        (registry_rows,) = self._conn.execute(
+            "SELECT (SELECT COUNT(*) FROM principal_events)"
+            " + (SELECT COUNT(*) FROM approver_events)"
+        ).fetchone()
+        total = EVENTS_PER_INVOCATION * invocations + messages + registry_rows
+        if total + cost > MAX_TRACE_EVENTS:
             raise CapacityError(
-                f"journal at capacity: {invocations} invocations and {messages} messages derive"
-                f" up to {EVENTS_PER_INVOCATION * invocations + messages} events against a bound"
+                f"journal at capacity: {invocations} invocations, {messages} messages and"
+                f" {registry_rows} registry events derive up to {total} events against a bound"
                 f" of {MAX_TRACE_EVENTS}; start a new journal"
             )
 
@@ -342,6 +349,8 @@ class Journal:
         ones the definition recorded; ``open`` checked once, and this makes the check hold
         for every call rather than for the first."""
         d = self._definition
+        if self._registry_only:
+            return  # neither the policy nor the admitter runs; nothing of them is bound
         if (
             self.policy.version != d.policy_set_version
             or self.policy.configuration_digest() != d.policy_config
@@ -366,24 +375,37 @@ class Journal:
         currencies: Mapping[str, Currency] | None = None,
         admitter: Admitter | None = None,
         policy: PolicySet | None = None,
-        approval_key: str = "none",
+        approvers: Mapping[str, str] | None = None,
         principal: str = LOCAL_PRINCIPAL,
     ) -> Journal:
-        """``approval_key`` is the base64url Ed25519 verification key approvals must verify
-        against; ``none`` means no artefact can ever verify."""
-        if approval_key != "none":
-            verification_key(approval_key)  # refuse a malformed key at creation
-        elif getattr(policy, "approve_above", ()):  # ThresholdPolicySet declares its lines;
-            # a custom set that returns approval_required without a key is not detectable
-            # here and its operations would wait forever (stated in journal.md)
+        """``approvers`` seeds the approver registry: name -> base64url Ed25519 verification
+        key (docs/spec/principals.md). ``principal`` becomes the bootstrap transport
+        principal, the first registry event, written with the definition."""
+        seeds = dict(approvers or {})
+        for name, key in seeds.items():
+            try:
+                require_identifier(name, "approver")
+            except (InvalidIdentifierError, TypeError) as exc:
+                raise ConfigurationError(f"approver name is not an identifier: {exc}") from exc
+            verification_key(key)  # refuse a malformed key at creation
+        lines = getattr(policy, "approve_above", ())
+        if lines and not seeds:  # ThresholdPolicySet declares its lines; a custom set that
+            # returns approval_required without an approver is not detectable here and its
+            # operations would wait forever (stated in journal.md)
             raise ConfigurationError(
-                "the policy set can require approval but the journal has no verification key,"
-                " so nothing could ever approve; supply approval_key or drop approve_above"
+                "the policy set can require approval but no approver is seeded,"
+                " so nothing could ever approve; supply approvers or drop approve_above"
             )
+        for line in lines:
+            for name in getattr(line, "approvers", None) or ():
+                if name not in seeds:
+                    raise ConfigurationError(
+                        f"policy line names approver {name!r}, who is not seeded at create"
+                    )
         self = cls(
             path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet(), principal
         )
-        self._approval_key = approval_key
+        self._seed_approvers = seeds
         target = Path(path)
         if target.exists() and target.stat().st_size > 0:
             # Inspect read-only before any pragma touches the file. Only an empty database
@@ -450,14 +472,14 @@ class Journal:
             token_key_version=self.admitter.token_key_version,
             token_check=self.admitter.key_check(),
             policy_config=self.policy.configuration_digest(),
-            approval_key=self._approval_key,
             policy_configuration=_configuration_text(self.policy),
         )
         registry = definition.registry
+        created_at = _Effects.aware_now(self.clock)
         with self._txn():
             seq = self._alloc("definition")
             self._conn.execute(
-                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO definition VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     seq,
                     1,
@@ -470,12 +492,26 @@ class Journal:
                     definition.token_check,
                     definition.policy_config,
                     definition.policy_configuration,
-                    definition.approval_key,
                     json.dumps(_encode_chart(chart, self.admitter), sort_keys=True),
                     json.dumps({c: cur.exponent for c, cur in registry.items()}, sort_keys=True),
-                    _Effects.aware_now(self.clock).isoformat(),
+                    created_at.isoformat(),
                 ),
             )
+            # schema 7: the bootstrap transport principal, by itself, then the seeded
+            # approvers, all in the create transaction (docs/spec/principals.md)
+            self._registry_row(
+                "principal_events",
+                self.principal,
+                "add",
+                "transport",
+                None,
+                self.principal,
+                created_at,
+            )
+            for name, key in sorted(self._seed_approvers.items()):
+                self._registry_row(
+                    "approver_events", name, "add", None, key, self.principal, created_at
+                )
         self._definition = definition
         self._ledger = Ledger.empty(chart)
         self._cursor = 0
@@ -491,10 +527,16 @@ class Journal:
         admitter: Admitter | None = None,
         policy: PolicySet | None = None,
         principal: str = LOCAL_PRINCIPAL,
+        registry_only: bool = False,
     ) -> Journal:
+        """``registry_only`` opens for registry changes alone (docs/spec/principals.md): a
+        registry transaction runs neither the policy nor the admitter, so neither is bound;
+        the schema, codec and the operator's liveness still are, and ``handle`` and
+        ``record_message`` refuse such a journal."""
         self = cls(
             path, clock, ids, admitter or IdentityAdmitter(), policy or NullPolicySet(), principal
         )
+        self._registry_only = registry_only
         try:
             probe(path)  # read-only: a foreign file is refused before any pragma touches it
             row = _read_definition_row(path)  # also read-only; refuses another schema version
@@ -506,26 +548,27 @@ class Journal:
             raise ConfigurationError(
                 f"journal is codec {row[1]!r}; this process is codec {CODEC_VERSION!r}"
             )
-        if row[2] != self.policy.version:
-            raise ConfigurationError(
-                f"journal was defined with policy set {row[2]!r};"
-                f" this process runs {self.policy.version!r}"
-            )
-        if row[10] != self.policy.configuration_digest():
-            raise ConfigurationError(
-                f"policy set {self.policy.version!r} has different rules from the ones this"
-                " journal was defined with; a rule change is a new journal"
-            )
-        if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
-            raise ConfigurationError(
-                f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
-                f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
-            )
-        if not hmac.compare_digest(row[9], self.admitter.key_check()):
-            raise ConfigurationError(
-                "this admitter's key does not reproduce the journal's token check;"
-                " a different key under the same label would fork the identifier space"
-            )
+        if not registry_only:
+            if row[2] != self.policy.version:
+                raise ConfigurationError(
+                    f"journal was defined with policy set {row[2]!r};"
+                    f" this process runs {self.policy.version!r}"
+                )
+            if row[10] != self.policy.configuration_digest():
+                raise ConfigurationError(
+                    f"policy set {self.policy.version!r} has different rules from the ones this"
+                    " journal was defined with; a rule change is a new journal"
+                )
+            if (row[3], row[4]) != (self.admitter.token_domain, self.admitter.token_key_version):
+                raise ConfigurationError(
+                    f"journal tokens are {row[3]!r}/{row[4]!r}; this admitter is"
+                    f" {self.admitter.token_domain!r}/{self.admitter.token_key_version!r}"
+                )
+            if not hmac.compare_digest(row[9], self.admitter.key_check()):
+                raise ConfigurationError(
+                    "this admitter's key does not reproduce the journal's token check;"
+                    " a different key under the same label would fork the identifier space"
+                )
         try:
             self._conn = connect(path, create=False)
         except sqlite3.Error as exc:
@@ -546,9 +589,12 @@ class Journal:
                 row[4],
                 row[9],
                 row[10],
-                row[5],
                 row[11],
             )
+            if not self._principal_live(self.principal, "transport"):
+                raise ConfigurationError(
+                    f"principal {self.principal!r} is not a live transport principal here"
+                )
             self._ledger = Ledger.empty(chart)
             self._cursor = 0
             self._conn.execute("BEGIN")  # one snapshot for the chain check and the fold
@@ -593,20 +639,94 @@ class Journal:
             require_ijson(value)
         except IJsonError as exc:
             raise JournalError(f"input is not I-JSON: {exc}") from exc
+        if self._registry_only:
+            raise ConfigurationError("journal opened for registry changes only; reopen to handle")
         with self._txn():
             self._check_binding()
             self._check_capacity(EVENTS_PER_INVOCATION)
             self._ensure_current()  # step 2
+            # step 3 (schema 7, principals.md): the session's liveness first, then a present
+            # envelope's clockless checks, then admission of the command
+            attribution = Attribution.transport(self.principal)
+            if not self._principal_live(self.principal, "transport"):
+                return self._invalid(value, AdmissionError("revoked_principal"), attribution)
+            admitted = value
+            if isinstance(value, dict) and "auth" in value:
+                admitted = {k: v for k, v in value.items() if k != "auth"}
+                try:
+                    principal, expires_at, signature = verify_envelope(
+                        admitted,
+                        value["auth"],
+                        signers=self._live_signers(),
+                        journal_id=self._definition.journal_id,
+                    )
+                except AuthError as exc:
+                    return self._invalid(
+                        value,
+                        AdmissionError(exc.code, "auth"),
+                        Attribution.rejected(self.principal),
+                    )
+                attribution = Attribution(principal, "signed", principal, expires_at, signature)
+                # the replay check is clockless: a spent (principal, call_id) is refused here,
+                # before admission, so a second presentation is always `replayed_call`
+                call_id = admitted.get("call_id")
+                if isinstance(call_id, str) and _is_identifier(call_id):
+                    token = self.admitter.tokenize_identifier(call_id)
+                    if self._signed_call_spent(principal, token):
+                        return self._invalid(
+                            value, AdmissionError("replayed_call", "auth"), attribution
+                        )
             scope = AdmissionScope(
-                self._definition.registry, self._definition.chart, self.principal, self._ledger
+                self._definition.registry,
+                self._definition.chart,
+                attribution.principal,
+                self._ledger,
             )
             try:
-                request = self.admitter.admit(value, scope)  # step 3
+                request = self.admitter.admit(admitted, scope)  # step 3
             except AdmissionError as exc:
-                return self._invalid(value, exc)
+                return self._invalid(value, exc, attribution)
             if request.is_read:
-                return self._read(request)
-            return self._write(request)
+                return self._read(request, attribution, value)
+            return self._write(request, attribution, value)
+
+    def _clock_checks(
+        self, attribution: Attribution, request: Request, now: datetime, value: Any
+    ) -> Response | None:
+        """Step 4's checks at the single reading: expiry and the expiry bound of a signed
+        request (the replay check is clockless and ran at step 3); ``None`` when the request
+        may proceed."""
+        if attribution.authentication != "signed":
+            return None
+        assert attribution.auth_expires_at is not None
+        cause = expiry_cause(attribution.auth_expires_at, now)
+        if cause is None:
+            return None
+        return self._invalid(value, AdmissionError(cause, "auth"), attribution, now)
+
+    def _signed_call_spent(self, principal: str, call_id: str) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM signed_calls WHERE principal = ? AND call_id = ?",
+                (principal, call_id),
+            ).fetchone()
+            is not None
+        )
+
+    def _spend_signed_call(
+        self, attribution: Attribution, call_id: str | None, inv_seq: int, cause: str | None
+    ) -> None:
+        """Every verified envelope with an identifier call id is spent on its first
+        presentation (principals.md): the pair enters `signed_calls` unconditionally, so the
+        UNIQUE is the guarantee and the step-3 SELECT the optimisation. A `replayed_call`
+        refusal is the one row that writes nothing here: the pair is already there."""
+        if attribution.authentication != "signed" or call_id is None or cause == "replayed_call":
+            return
+        seq = self._alloc("signed_calls")
+        self._conn.execute(
+            "INSERT INTO signed_calls VALUES (?,?,?,?)",
+            (seq, attribution.principal, call_id, inv_seq),
+        )
 
     def record_message(self, role: str, content: str) -> int:
         """A standalone message event: its own transaction, no invocation. ``role`` is one
@@ -615,6 +735,8 @@ class Journal:
             raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}")
         if len(content) > MAX_MESSAGE_CHARS:
             raise ValueError(f"message content exceeds {MAX_MESSAGE_CHARS} characters")
+        if self._registry_only:
+            raise ConfigurationError("journal opened for registry changes only; reopen to record")
         with self._txn():
             self._check_binding()
             self._check_capacity(1)
@@ -639,11 +761,14 @@ class Journal:
 
     # ---------------------------------------------------------------- write
 
-    def _write(self, request: Request) -> Response:
+    def _write(self, request: Request, attribution: Attribution, value: Any) -> Response:
         assert request.command is not None and request.key is not None
         command = request.command
         fingerprint = command_fingerprint(command)
         now = _Effects.aware_now(self.clock)
+        refused = self._clock_checks(attribution, request, now, value)
+        if refused is not None:
+            return refused
         encoded = json.dumps(encode_command(command), sort_keys=True)
         row = self._conn.execute(
             "SELECT journal_sequence, fingerprint FROM operations WHERE key = ?", (request.key,)
@@ -667,12 +792,12 @@ class Journal:
 
         inv_seq = self._alloc("invocations")
         self._conn.execute(
-            "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 inv_seq,
                 op_seq,
                 now.isoformat(),
-                self.principal,
+                *attribution.columns(),
                 disposition,
                 fingerprint,
                 encoded,
@@ -680,6 +805,7 @@ class Journal:
                 request.call_id,
             ),
         )
+        self._spend_signed_call(attribution, request.call_id, inv_seq, None)
         self._inbound(inv_seq, request)  # step 5
 
         # An artefact presented where none was expected is kept, not dropped.
@@ -709,14 +835,17 @@ class Journal:
             )
             self._respond(inv_seq, disposition, None, "conflict", response)
             return response
+        approver: str | None = None
         if disposition == "approval":
-            presentation, verdict, consumption = self._validate_approval(
-                inv_seq, request, now, fingerprint
+            presentation, verdict, consumption, approver = self._validate_approval(
+                inv_seq, request, now, fingerprint, command
             )
 
         # step 7: decide
         approval_ctx = (
-            None if verdict is None else {"presentation": presentation, "verdict": verdict}
+            None
+            if verdict is None
+            else {"presentation": presentation, "verdict": verdict, "approver": approver}
         )
         money = command_amount(command)
         failed_verdict = verdict is not None and verdict not in (
@@ -727,7 +856,7 @@ class Journal:
         # aggregate reads: the runtime decides from the verdict alone, and the persisted
         # context says so with a null subject and no aggregates.
         context = PolicyContext(
-            principal=self.principal,
+            principal=attribution.principal,
             subject=None
             if failed_verdict
             else _bounded_subject(self._guarded(lambda: self.policy.subject_of(command))),
@@ -846,16 +975,19 @@ class Journal:
 
     # ----------------------------------------------------------------- read
 
-    def _read(self, request: Request) -> Response:
+    def _read(self, request: Request, attribution: Attribution, value: Any) -> Response:
         now = _Effects.aware_now(self.clock)
+        refused = self._clock_checks(attribution, request, now, value)
+        if refused is not None:
+            return refused
         inv_seq = self._alloc("invocations")
         self._conn.execute(
-            "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 inv_seq,
                 None,
                 now.isoformat(),
-                self.principal,
+                *attribution.columns(),
                 "read",
                 None,
                 None,
@@ -863,6 +995,7 @@ class Journal:
                 request.call_id,
             ),
         )
+        self._spend_signed_call(attribution, request.call_id, inv_seq, None)
         self._inbound(inv_seq, request)
         presentation: int | None = None
         if request.approval is not None:
@@ -870,7 +1003,7 @@ class Journal:
         if self.policy.gates_read(request.tool):
             verdict: Verdict | None = None if presentation is None else "approval_not_applicable"
             context = PolicyContext(
-                self.principal,
+                attribution.principal,
                 None,
                 request.request_digest(),
                 "request",
@@ -878,7 +1011,7 @@ class Journal:
                 self.policy.version,
                 approval=None
                 if verdict is None
-                else {"presentation": presentation, "verdict": verdict},
+                else {"presentation": presentation, "verdict": verdict, "approver": None},
             )
             decision = self._guarded(lambda: self.policy.evaluate(context))
             self._refuse_runtime_namespace(decision)
@@ -933,10 +1066,18 @@ class Journal:
 
     # -------------------------------------------------------------- invalid
 
-    def _invalid(self, value: Any, exc: AdmissionError) -> Response:
-        """Step 3 failure: an invocation with no operation and a bounded failure envelope
-        in place of the request as received."""
-        now = _Effects.aware_now(self.clock)
+    def _invalid(
+        self,
+        value: Any,
+        exc: AdmissionError,
+        attribution: Attribution,
+        now: datetime | None = None,
+    ) -> Response:
+        """Step 3 failure (or a step-4 clock check on a signed request, which passes its
+        reading): an invocation with no operation and a bounded failure envelope in place of
+        the request as received. Schema 7: the error type is the admission cause."""
+        if now is None:
+            now = _Effects.aware_now(self.clock)
         call_id = value.get("call_id") if isinstance(value, dict) else None
         tool = value.get("tool") if isinstance(value, dict) else None
         safe_call_id = (
@@ -946,12 +1087,12 @@ class Journal:
         )
         inv_seq = self._alloc("invocations")
         self._conn.execute(
-            "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 inv_seq,
                 None,
                 now.isoformat(),
-                self.principal,
+                *attribution.columns(),
                 "invalid",
                 None,
                 None,
@@ -959,6 +1100,7 @@ class Journal:
                 safe_call_id,
             ),
         )
+        self._spend_signed_call(attribution, safe_call_id, inv_seq, exc.code)
         envelope = {
             "call_id": safe_call_id,
             "tool": tool if isinstance(tool, str) and tool in TOOLS else None,
@@ -976,8 +1118,8 @@ class Journal:
             "invalid",
             "invalid",
             False,
-            error_type="AdmissionError",
-            error_message=f"{exc.code} at {exc.path or '$'}",
+            error_type=exc.code,
+            error_message=exc.path or "$",
         )
         self._respond(inv_seq, "invalid", None, "invalid", response)
         return response
@@ -1074,6 +1216,134 @@ class Journal:
         if pending is not None:
             self._ledger, self._cursor = pending
             self._pending_projection = None
+
+    # ------------------------------------------------------------ registries
+
+    def _registry_row(
+        self,
+        table: str,
+        name: str,
+        action: str,
+        kind: str | None,
+        key: str | None,
+        by: str,
+        at: datetime,
+    ) -> int:
+        assert table in ("principal_events", "approver_events")
+        seq = self._alloc(table)
+        if table == "principal_events":
+            self._conn.execute(
+                "INSERT INTO principal_events VALUES (?,?,?,?,?,?,?)",
+                (seq, name, action, kind, key, by, at.isoformat()),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO approver_events VALUES (?,?,?,?,?,?)",
+                (seq, name, action, key, by, at.isoformat()),
+            )
+        return seq
+
+    def _live(
+        self, table: str, name: str, upto: int | None = None
+    ) -> tuple[str | None, str | None]:
+        """(kind, key) if ``name`` is live in ``table`` (at the head, or at sequence ``upto``),
+        else (None, None)."""
+        bound = "" if upto is None else f" AND journal_sequence <= {int(upto)}"
+        kind_col = "kind" if table == "principal_events" else "NULL"
+        row = self._conn.execute(
+            f"SELECT {kind_col}, verification_key FROM {table}"  # noqa: S608 - fixed names
+            f" WHERE name = ? AND action = 'add'{bound}",
+            (name,),
+        ).fetchone()
+        if row is None:
+            return None, None
+        revoked = self._conn.execute(
+            f"SELECT 1 FROM {table} WHERE name = ? AND action = 'revoke'{bound}",  # noqa: S608
+            (name,),
+        ).fetchone()
+        if revoked is not None:
+            return None, None
+        return (row[0] if table == "principal_events" else "approver"), row[1]
+
+    def _principal_live(self, name: str, kind: str) -> bool:
+        return self._live("principal_events", name)[0] == kind
+
+    def _live_signers(self) -> dict[str, Any]:
+        rows = self._conn.execute(
+            "SELECT a.name, a.verification_key FROM principal_events a"
+            " WHERE a.action = 'add' AND a.kind = 'signed'"
+            " AND NOT EXISTS (SELECT 1 FROM principal_events r"
+            "                 WHERE r.name = a.name AND r.action = 'revoke')"
+        ).fetchall()
+        return {name: verification_key(key) for name, key in rows}
+
+    def _registry_change(
+        self, table: str, name: str, action: str, kind: str | None, key: str | None
+    ) -> int:
+        """A standalone registry transaction by the session's transport principal: the CLI
+        pre-checks so an operator's typo is a refusal, and the trigger is the guarantee."""
+        try:
+            require_identifier(name, "name")
+        except (InvalidIdentifierError, TypeError) as exc:
+            raise ConfigurationError(f"registry name is not an identifier: {exc}") from exc
+        if key is not None:
+            verification_key(key)
+        with self._txn():
+            self._check_binding()
+            self._check_capacity(1)
+            if not self._principal_live(self.principal, "transport"):
+                raise ConfigurationError(f"{self.principal!r} is not a live transport principal")
+            live, _ = self._live(table, name)
+            added = self._conn.execute(
+                f"SELECT 1 FROM {table} WHERE name = ? AND action = 'add'",  # noqa: S608 - fixed
+                (name,),
+            ).fetchone()
+            if action == "add" and added is not None:
+                raise ConfigurationError(
+                    f"{name!r} was already added to {table} (a new key is a new name)"
+                )
+            if action == "revoke" and live is None:
+                raise ConfigurationError(f"{name!r} is not live in {table}")
+            if action == "revoke" and table == "principal_events" and name == self.principal:
+                raise ConfigurationError("a principal cannot revoke itself")
+            return self._registry_row(
+                table, name, action, kind, key, self.principal, _Effects.aware_now(self.clock)
+            )
+
+    def add_principal(self, name: str, kind: str, verification_key_text: str | None = None) -> int:
+        if kind not in ("transport", "signed"):
+            raise ConfigurationError("principal kind is transport or signed")
+        if (kind == "signed") != (verification_key_text is not None):
+            raise ConfigurationError("a signed principal has a key; a transport one has none")
+        return self._registry_change("principal_events", name, "add", kind, verification_key_text)
+
+    def revoke_principal(self, name: str) -> int:
+        return self._registry_change("principal_events", name, "revoke", None, None)
+
+    def add_approver(self, name: str, verification_key_text: str) -> int:
+        return self._registry_change("approver_events", name, "add", None, verification_key_text)
+
+    def revoke_approver(self, name: str) -> int:
+        return self._registry_change("approver_events", name, "revoke", None, None)
+
+    def registry(self, table: str) -> list[dict[str, Any]]:
+        """Every event of a registry, in order, for the CLI's ``list`` and for tests."""
+        assert table in ("principal_events", "approver_events")
+        cols = (
+            "journal_sequence, name, action, kind, verification_key, by, at"
+            if table == "principal_events"
+            else "journal_sequence, name, action, NULL, verification_key, by, at"
+        )
+        return [
+            dict(
+                zip(
+                    ("sequence", "name", "action", "kind", "verification_key", "by", "at"),
+                    row,
+                    strict=True,
+                )
+            )
+            for row in self._conn.execute(f"SELECT {cols} FROM {table} ORDER BY journal_sequence")  # noqa: S608
+        ]
 
     def _alloc(self, kind: str) -> int:
         cur = self._conn.execute("INSERT INTO journal (kind) VALUES (?)", (kind,))
@@ -1182,42 +1452,70 @@ class Journal:
         )
         return seq
 
+    def _approver_key(self, name: str) -> Any | None:
+        """Check 1's key: the one registered under the artefact's approver, live at the head
+        (the presenting sequence, under the write lock); ``None`` for an unknown or revoked
+        name, which verifies nothing."""
+        kind, key = self._live("approver_events", name)
+        return None if kind is None or key is None else verification_key(key)
+
     def _signature_verifies(self, artefact: Approval) -> bool:
-        if self._definition.approval_key == "none":
-            return False
-        return signature_verifies(artefact, verification_key(self._definition.approval_key))
+        public = self._approver_key(artefact.approver)
+        return public is not None and signature_verifies(artefact, public)
 
     def _validate_approval(
-        self, inv_seq: int, request: Request, now: datetime, fingerprint: str
-    ) -> tuple[int, Verdict, int | None]:
-        """Checks 1 to 3, then the presentation row, then consumption (check 4)."""
+        self,
+        inv_seq: int,
+        request: Request,
+        now: datetime,
+        fingerprint: str,
+        command: Any,
+    ) -> tuple[int, Verdict, int | None, str | None]:
+        """Checks 1, 1b, 2, 3, then the presentation row, then consumption (check 4). Returns
+        the presentation, the verdict, the consumption and the authenticated approver (None
+        unless check 1 passed)."""
         assert request.approval is not None and request.key is not None
         artefact = Approval.from_json(request.approval)
-        if self._definition.approval_key == "none":
-            result: CheckResult = "approval_invalid"  # no verification key: nothing verifies
+        public = self._approver_key(artefact.approver)
+        result: CheckResult
+        approver: str | None = None
+        if public is None or not signature_verifies(artefact, public):
+            result = "approval_invalid"
         else:
-            result = check(
-                artefact,
-                public=verification_key(self._definition.approval_key),
-                now=now,
-                journal_id=self._definition.journal_id,
-                fingerprint=fingerprint,
-                key=request.key,
+            approver = artefact.approver
+            money = command_amount(command)
+            admitted = self._guarded(
+                lambda: getattr(self.policy, "approvers_for", lambda *_a: None)(
+                    command_kind(command),
+                    None if money is None else money.currency.code,
+                    None if money is None else str(money.amount),
+                )
             )
+            if admitted is not None and approver not in admitted:
+                result = "approval_wrong_approver"  # check 1b, before 2 and 3
+            else:
+                result = check(
+                    artefact,
+                    public=public,
+                    now=now,
+                    journal_id=self._definition.journal_id,
+                    fingerprint=fingerprint,
+                    key=request.key,
+                )
         presentation = self._present(inv_seq, request, result, result != "approval_invalid")
         if result != "checks_passed":
-            return presentation, result, None
+            return presentation, result, None, approver
         used = self._conn.execute(
             "SELECT 1 FROM approval_consumptions WHERE approval_id = ?", (artefact.approval_id,)
         ).fetchone()
         if used is not None:
-            return presentation, "approval_already_used", None
+            return presentation, "approval_already_used", None, approver
         seq = self._alloc("approval_consumptions")
         self._conn.execute(
             "INSERT INTO approval_consumptions VALUES (?,?,?,?)",
             (seq, artefact.approval_id, presentation, inv_seq),
         )
-        return presentation, "approval_valid", seq
+        return presentation, "approval_valid", seq, approver
 
     def _outcome(
         self,
@@ -1416,7 +1714,7 @@ def _read_definition_row(path: str) -> tuple[Any, ...] | None:
             )
         row = conn.execute(
             "SELECT journal_id, codec_version, policy_set_version, token_domain,"
-            " token_key_version, approval_key, chart, currencies, schema_version, token_check,"
+            " token_key_version, NULL, chart, currencies, schema_version, token_check,"
             " policy_config, policy_configuration FROM definition"
         ).fetchone()
         return None if row is None else tuple(row)

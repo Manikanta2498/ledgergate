@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # The MCP runtime: `ledgergate serve` (M4)
 
 `ledgergate serve` exposes one journal as a set of MCP tools over stdio, to one client, as
-one local principal. It is a *transport*: everything it does is decode a wire message, hand
+one *transport* principal per session (and, from M8a, any number of signed principals through it; [principals](principals.md)). It is a *transport*: everything it does is decode a wire message, hand
 the journal one untyped JSON value, and encode what the journal committed. It holds no
 state of its own that the journal does not hold, decides nothing the journal does not
 decide, and returns nothing the journal did not commit. ADR-0002's roadmap row for M4 names
@@ -127,7 +127,7 @@ is what the client violated.
 
 | Method | Behaviour |
 | :-- | :-- |
-| `initialize` | Always succeeds, returning the one protocol version the server speaks (`2025-06-18`) whatever the client requested (MCP's negotiation: the server answers with a version it supports, and a client that cannot speak it disconnects), server info (`ledgergate`, the package version), and `capabilities.tools` (no `listChanged`: the tool set is the journal's definition and does not change during a session). A `tools/call` received before `initialize` is served like any other: the client's handshake obligation is the client's, and an attempt against the ledger is recorded whether or not the client shook hands. |
+| `initialize` | Always succeeds, returning the one protocol version the server speaks (`2025-06-18`) whatever the client requested (MCP's negotiation: the server answers with a version it supports, and a client that cannot speak it disconnects), server info (`ledgergate`, the package version), and `capabilities.tools` (no `listChanged`: the tool set is the journal's definition and does not change during a session); from M8a ([principals](principals.md)) `result._meta.ledgergate.journal_id`, read from the definition at start with no journal transaction, so a client can sign requests bound to this journal. A `tools/call` received before `initialize` is served like any other: the client's handshake obligation is the client's, and an attempt against the ledger is recorded whether or not the client shook hands. |
 | `notifications/initialized` | Acknowledged silently (a notification has no response). Sent wrongly *with* an `id`, it is a request for a method the server does not implement as one: `-32601`, id echoed. |
 | `ping` | `{}` |
 | `tools/list` | The seven tools below with their input schemas, derived from the codec's command shapes and the journal's read tools. No pagination: seven tools. |
@@ -191,8 +191,7 @@ Given `params = {"name": N, "arguments": A, "_meta": M?}` on a request with JSON
    valid `trial_balance`, an invalid write).
 4. The value handed to `Journal.handle` is exactly
    `{"tool": N?, "call_id": "rpc-…", "arguments": <rest>?, "key": <key>?, "approval": <approval>?}`
-   with absent members omitted. `_meta` is not forwarded and not recorded: MCP reserves it
-   for the protocol, and nothing in it is an input to the ledger.
+   with absent members omitted, plus, from M8a (`principals.md`), `"auth": M.ledgergate` when `_meta.ledgergate` is present: the one `_meta` member forwarded, since it is the request's own authentication and the journal verifies it. Nothing else in `_meta` is forwarded or recorded: MCP reserves it for the protocol.
 
 Everything after step 4 is the journal's: admission, redaction, tokenization, disposition,
 policy, approval checks, execution, the committed response. The server adds nothing.
@@ -250,7 +249,7 @@ request was answered, once; the invariant "always answered" holds on this path t
 ## Configuration and effects
 
 `ledgergate serve --journal PATH [--create --chart chart.json] [--policy config.json]
-[--approval-key KEY] [--token-key-file FILE] [--principal NAME]`.
+[--approver NAME=KEYFILE ...] [--token-key-file FILE] [--principal NAME]` (`--approver` replaces schema 6's `--approval-key`; [principals](principals.md)).
 
 The server lives in `ledgergate.mcp`, a layer beside `runner` directly under `cli`, that imports
 `journal` (the `Journal`, its error classes, the effects it needs), `ledger` (`ChartOfAccounts`
@@ -274,8 +273,7 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
   `--token-key-file`): `open` compares them against the definition and refuses a mismatch,
   and the server does not rebuild a set from the stored configuration, because doing so
   would let a journal dictate the rules a process runs rather than the operator.
-- `--approval-key` is the Ed25519 *verification* key text the definition records; it is
-  meaningful only with `--create` (an existing journal's key is in its definition) and is
+- `--approver NAME=KEYFILE` (schema 7; formerly `--approval-key KEY`) seeds the approver registry with the Ed25519 *verification* key in the file under the name; it is meaningful only with `--create` (later approvers are added to an existing journal with `ledgergate journal approver add`) and is
   refused otherwise.
 - `--token-key-file` selects the tokenizing admitter with that key; the CLI requires 32 or
   more bytes (its own policy; the `Tokenizer` accepts 16), and builds it with the fixed
@@ -298,11 +296,11 @@ because the invariant must hold on every transaction and not only at open: immed
 after the binding check inside every `BEGIN IMMEDIATE` transaction (under the write lock, so
 two writers cannot both pass a stale count, and a full and misbound journal reports the
 binding fault) the journal evaluates
-`9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000`, with
+`9 * count(invocations) + count(events WHERE invocation IS NULL) + count(principal_events) + count(approver_events) + cost <= 5,000,000` (schema 7 adds the registry terms; `journal.md` owns the formula), with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
-up to seven events, a write up to eight) and 1 for a message, nine being the number of
+up to seven events, a write up to eight) and 1 for a message or a registry event, nine being the number of
 ordinal slots and therefore an upper bound. SQLite has no O(1) row count: each `count(*)` is
-a walk of the smallest b-tree for its table, so the check is two such walks under the lock,
+a walk of the smallest b-tree for its table, so the check is four such counts under the lock (the two registry tables are small and need no index),
 linear in rows but over compact indexes, a partial index on `events` where `invocation IS
 NULL` for the message count and a one-column index on `invocations(disposition)` for the
 invocation count (schema 6); near the bound that is on the order of a few thousand pages
@@ -324,8 +322,7 @@ is not designed here; it is named as future work in ADR-0002, and nothing in M4 
 
 ## What this document does not claim
 
-- Authentication or multiple principals: one local principal, named by `--principal`
-  (default `local`), recorded in every context. M8.
+- Authentication of the *transport* principal beyond process ownership: one transport principal per session, named by `--principal` (default `local`). From M8a (`principals.md`) any number of *signed* principals may call through the same session, attributed by signature; a network listener is M8b.
 - Delivery: see the commit point above.
 - Protection against a client that opens the journal file directly: the journal's own
   constraints and the operator's file permissions are the mechanism; the server adds none.

@@ -175,7 +175,7 @@ class TestNoRawValueReachesStorage:
         for secret in ("alice@example.com", "SO-1", "call-7", "order-42"):
             assert secret not in stored, secret
         (inv,) = table(tokenizing.path, "invocations")
-        assert TOKEN_PATTERN.match(inv[8])  # tokenized call_id
+        assert TOKEN_PATTERN.match(inv[12])  # tokenized call_id
         envelope = json.loads(table(tokenizing.path, "events")[0][3])
         assert REDACTION_PATTERN.match(envelope["payload"])
         assert len(envelope["input_digest"]) == 64
@@ -195,7 +195,7 @@ class TestNoRawValueReachesStorage:
 
     def test_definition_account_names_are_redacted(self, tokenizing: Journal) -> None:
         (d,) = table(tokenizing.path, "definition")
-        names = [a["name"] for a in json.loads(d[12])]
+        names = [a["name"] for a in json.loads(d[11])]
         assert all(n == "" or REDACTION_PATTERN.match(n) for n in names)
         assert d[6] == "acme" and d[7] == "v1"
 
@@ -210,9 +210,9 @@ class TestNoRawValueReachesStorage:
                 "arguments": {"transaction_id": "a\nb", "amount": {"amount": 1, "currency": "USD"}},
             }
         )
-        assert (
-            r.response == "invalid"
-            and r.error_message == "invalid_identifier at arguments.transaction_id"
+        assert r.response == "invalid" and (r.error_type, r.error_message) == (
+            "invalid_identifier",
+            "arguments.transaction_id",
         )
 
     def test_message_content_is_redacted(self, tokenizing: Journal) -> None:
@@ -277,7 +277,10 @@ class TestReplayAndKeyBinding:
                 "arguments": {"entry_id": "jane.doe@example.com 4111-1111"},
             }
         )
-        assert r.response == "invalid" and r.error_message == "unknown_entry at arguments.entry_id"
+        assert r.response == "invalid" and (r.error_type, r.error_message) == (
+            "unknown_entry",
+            "arguments.entry_id",
+        )
         assert "jane.doe" not in everything_stored(tokenizing.path)
         applied = tokenizing.handle(post("k2", call_id="c2"))
         ok = tokenizing.handle(
@@ -322,4 +325,5 @@ def test_untrimmed_tag_key_is_refused_by_both_admitters(
     )
     i = identity.handle(request)
     identity.close()
-    assert r.error_message == i.error_message == "malformed_command:InvalidAmountError at arguments"
+    assert r.error_type == i.error_type == "malformed_command:InvalidAmountError"
+    assert r.error_message == i.error_message == "arguments"

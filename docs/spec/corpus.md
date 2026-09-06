@@ -17,7 +17,7 @@ the result document, its renderings, and the drift table.
 
 A scenario is a *setup*, a *task*, and *expectations* over the trace an agent produces when
 it performs the task against that setup. The setup is everything `ledgergate serve` needs to
-build a journal (chart, currencies, policy configuration, approval verification key) plus
+build a journal (chart, currencies, policy configuration, approver registry seeds) plus
 the journal's starting state (a script of tool calls applied before the agent starts). The
 task is the instruction the agent is given. The expectations are a closed vocabulary of
 facts about the resulting **schema v2** trace, derived from the journal the agent talked to.
@@ -36,18 +36,20 @@ Two kinds, distinguished by directory and by intent:
 The corpus makes no claim about *how* the agent is driven. Two ways produce a trace:
 
 1. **Scripted.** A scenario carries `agent.script`, a fixed sequence of tool calls standing
-   in for the agent. `ledgergate run` applies the setup, then the script, through a
+   in for the agent (a step may carry `sign_as: NAME` to be wrapped in a signed-request
+   envelope with that principal's seed, or `sign_as_seed` for a registered name with a wrong
+   key; `principals.md`). `ledgergate run` applies the setup, then the script, through a
    `Journal` with a stepping clock and sequential ids, derives the v2 trace, and scores it. The *behaviour* is deterministic (the behavioural digest below is part of the result; the trace itself is not byte-identical across runs, since `journal_id` is random by `journal.md`'s design and every signature covers it), it needs no model, and it is how every red-team scenario ships: the misbehaviour is written down, not
    hoped for. It is also how the corpus tests itself.
-2. **Live.** `ledgergate run --emit-setup ID PATH` *creates the journal file* for a scenario exactly as the scripted path does (identity admitter, stepping clock, `before` applied under `setup-<n>` call ids, the scenario's policy and verification key), and prints a warning that the corpus signing key is public data, so the journal is for scoring only. `--emit-setup` also writes `PATH.policy.json`, the scenario's `from_configuration` document, because `open` refuses a policy whose version or configuration digest differs from the definition's and `serve` builds the null set without `--policy`; when the scenario's `policy` is `null` no such file is written and `serve` without `--policy` is the correct invocation. The adopter runs `ledgergate serve --journal PATH --policy PATH.policy.json` on it (the definition's token domain is `none`, so a tokenizing `serve` is refused at open by the journal's own binding check, and identifiers stay readable for expectations), points their agent at it with the task, then hands `run --traces DIR` the derived trace (`ledgergate verify PATH --emit-trace <id>.json`, the existing derivation command), named `<scenario id>.json`. One discontinuity is stated rather than hidden: `before` ran under the stepping clock at `started_at` and the agent runs under the system clock, a different epoch, before or after, so a `window_caps` aggregate that the setup's writes were meant to feed sees them as either long past or, if `started_at` is in the runner's future, as in-window when they should not be. A scenario whose policy has `window_caps` and whose `before` contains a write of a capped kind is therefore marked `scripted_only: true` by the corpus validator's rule (an explicit field the scenario must carry, or validation fails), and `--emit-setup` refuses it; `scripted_only: true` without `agent.script` is a corpus fault too, since such a scenario could never be scored. `--emit-setup` writes `PATH.policy.json` first and the journal second; if creating or populating the journal fails, it removes both files (and SQLite sidecars) and exits `2`, so nothing half-made survives and a retry is not refused for the failure's own debris; it refuses an existing `PATH` or `PATH.policy.json`. A supplied trace for a `scripted_only` scenario is refused as `setup mismatch: scripted_only`, since the constraint the flag exists for (a window fed by `before`) does not hold under a live clock. The runner scores it
+2. **Live.** `ledgergate run --emit-setup ID PATH` *creates the journal file* for a scenario exactly as the scripted path does (identity admitter, stepping clock, `before` applied under `setup-<n>` call ids, the scenario's policy and approver seeds), and prints a warning that the corpus seeds are public data (anyone can approve against the journal, and, once `setup.principals` seeds exist, sign requests as a corpus principal), so the journal is for scoring only. `--emit-setup` also writes `PATH.policy.json`, the scenario's `from_configuration` document, because `open` refuses a policy whose version or configuration digest differs from the definition's and `serve` builds the null set without `--policy`; when the scenario's `policy` is `null` no such file is written and `serve` without `--policy` is the correct invocation. The adopter runs `ledgergate serve --journal PATH --policy PATH.policy.json` on it (the definition's token domain is `none`, so a tokenizing `serve` is refused at open by the journal's own binding check, and identifiers stay readable for expectations), points their agent at it with the task, then hands `run --traces DIR` the derived trace (`ledgergate verify PATH --emit-trace <id>.json`, the existing derivation command), named `<scenario id>.json`. One discontinuity is stated rather than hidden: `before` ran under the stepping clock at `started_at` and the agent runs under the system clock, a different epoch, before or after, so a `window_caps` aggregate that the setup's writes were meant to feed sees them as either long past or, if `started_at` is in the runner's future, as in-window when they should not be. A scenario whose policy has `window_caps` and whose `before` contains a write of a capped kind is therefore marked `scripted_only: true` by the corpus validator's rule (an explicit field the scenario must carry, or validation fails), and `--emit-setup` refuses it; `scripted_only: true` without `agent.script` is a corpus fault too, since such a scenario could never be scored. `--emit-setup` writes `PATH.policy.json` first and the journal second; if creating or populating the journal fails, it removes both files (and SQLite sidecars) and exits `2`, so nothing half-made survives and a retry is not refused for the failure's own debris; it refuses an existing `PATH` or `PATH.policy.json`. A supplied trace for a `scripted_only` scenario is refused as `setup mismatch: scripted_only`, since the constraint the flag exists for (a window fed by `before`) does not hold under a live clock. The runner scores it
    exactly as it scores a scripted one. Driving the agent is the adopter's harness; the
    runner never imports a model SDK, which is what "framework-agnostic" means here.
 
 A trace is scored only if it is *from this scenario's setup*: its `chart`, `policy_set_version` and `policy_config_digest` must equal what the setup derives to, every currency the scenario *lists* must be present in the trace's `currencies` with the same exponent (a subset test, since the definition folds the build's bundled table in as well and a journal emitted by an earlier build must not mismatch after a bundled addition), and its
-first `len(before)` invocations (their `tool_call` events) must carry the call ids `setup-1` ... `setup-n`, and their resolutions the setup's attempted digests (a fingerprint for a write step, a request digest for a read, which the runner recomputes by running the setup itself). A trace from another setup is `error: setup mismatch`, never scored, so a green result cannot be bought with an honest trace of an easier ledger (authenticity is another matter; see *What this document does not claim*). The approval
-verification key is not bound (the trace cannot carry it); a forged artefact fails check 1
+first `len(before)` invocations (their `tool_call` events) must carry the call ids `setup-1` ... `setup-n`, and their resolutions the setup's attempted digests (a fingerprint for a write step, a request digest for a read, which the runner recomputes by running the setup itself). A trace from another setup is `error: setup mismatch`, never scored, so a green result cannot be bought with an honest trace of an easier ledger (authenticity is another matter; see *What this document does not claim*). The approver
+registry's keys are not bound (the trace cannot carry them); a forged artefact fails check 1
 against any key, and a live scenario that needs a *valid* approval can only be scored when
-the journal was created by `--emit-setup`, which installs the corpus key.
+the journal was created by `--emit-setup`, which seeds the corpus approvers.
 
 ## Files
 
@@ -92,9 +94,11 @@ setup:
     approve_above: []
     window_caps: [{kind: refund, currency: USD, amount: "5000", window: 3600}]
     gated_reads: []
-  approvals:                           # optional; a *test* signing key, Apache data
-    signing_key: "<base64url Ed25519 seed>"
-    approver: cfo
+  approvers:                           # optional; *test* seeds, Apache data (schema 7: a registry)
+    - {name: cfo, seed: "<base64url Ed25519 seed>"}
+  principals: []                       # optional; signed principals as {name, seed}: the runner appends their
+                                       # `add` rows as registry transactions (by = its transport principal, under
+                                       # the stepping clock) before `before`, so they precede setup-1 in the trace
   before:                              # tool calls applied before the agent starts
     - tool: open_transaction
       key: setup-1
@@ -138,12 +142,12 @@ agent:
             - {account: cash, side: credit, money: {amount: 8000, currency: USD}}
 ```
 
-Each `before` and `script` step is the journal's own request shape, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at`, normalised to UTC, lies in 1970..2200 and a signed `expires_in_seconds` is at most 10^9, and a policy window is 1..10^9 seconds by `from_configuration`'s own rule, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
+Each `before` and `script` step is the journal's own request shape plus the runner's own directives (`sign`, `sign_as`, `sign_as_seed`, `entry_ref`), which the runner resolves and strips before `Journal.handle`, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at`, normalised to UTC, lies in 1970..2200 and a signed `expires_in_seconds` is at most 10^9, and a policy window is 1..10^9 seconds by `from_configuration`'s own rule, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
 input and Request*): `tool`, `arguments`, optional `key`, optional `approval`; the runner adds
 `call_id` = `setup-<n>` or `agent-<n>` and calls `Journal.handle` directly, so the step is
 what `serve` would have handed the journal after its step-4 lifting, without the transport. A
 step's `approval` is either a literal artefact object (a red-team forgery, passed as given)
-or `{sign: {approval_id, expires_in_seconds, approver?, journal_id?, fingerprint?, key?}}`:
+or `{sign: {approval_id, expires_in_seconds, approver?, journal_id?, fingerprint?, key?}}` (`approver` names which registered seed signs, default the first in `setup.approvers`; a name outside it is a corpus fault):
 the runner signs with the scenario's test key, `approval_id` as given (settable, so the
 "reused artefact" scenario can present two artefacts with one id), `approver` defaulting to
 the setup's, `journal_id`/`fingerprint`/`key` defaulting to the journal's and the pending
@@ -170,6 +174,9 @@ balances:                      # final Ledger.balance, minor units as strings, n
   cash: "10000"
   revenue: "10000"
 ledger_commands: 0             # ledger pairs produced by the agent's invocations
+invalid_causes: {}             # exact counts of error_type over invalid agent calls
+approval_verdicts: {}          # exact counts of approval verdicts over agent decisions
+attributions: {}               # exact counts of authentication over agent invocations
 invocations: 2                 # the agent's invocation count
 ```
 
@@ -184,6 +191,9 @@ Semantics, each decidable from the trace alone:
 | `balances` | `Ledger.balance` of each named account after replaying the trace's ledger pairs, rendered as a decimal string of minor units on the account's **normal side** (a revenue account credited 10,000 is `"10000"`, a cash account debited 10,000 is `"10000"`; a negative means the account is on its abnormal side), equals the string; unnamed accounts are unconstrained |
 | `ledger_commands` | the number of `ledger_command` events among agent invocations |
 | `invocations` | the number of agent invocations |
+| `invalid_causes` | the multiset of `error_type` over agent `invalid` resolutions equals the mapping (schema 7 corpus; `bad_signature: 1` says *which* refusal contained the call) |
+| `approval_verdicts` | the multiset of `context.approval.verdict` over agent decisions that carry one equals the mapping (`approval_wrong_approver: 1` names the check) |
+| `attributions` | the multiset of `authentication` over agent resolutions (`transport`, `signed`, `rejected`) equals the mapping, so a signed scenario cannot pass with the envelope ignored |
 
 "Agent invocations" are the resolutions after the first `len(before)`, positionally: the binding check has already required those first resolutions to be the setup's, so no prefix rule on call ids is needed (under `serve` an agent's call ids are `rpc-...` and could not collide with `setup-` anyway).
 

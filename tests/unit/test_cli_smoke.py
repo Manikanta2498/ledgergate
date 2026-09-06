@@ -135,7 +135,7 @@ def test_journal_pending_and_approve_round_trip(
         clock=SteppingClock(EPOCH),
         ids=SequentialIds(),
         policy=policy,
-        approval_key=verification_key_text(signer),
+        approvers={"cfo": verification_key_text(signer)},
     )
     request = {
         "tool": "open_transaction",
@@ -160,7 +160,7 @@ def test_journal_pending_and_approve_round_trip(
                 "cfo",
                 "--approval-id",
                 "a1",
-                "--signing-key",
+                "--seed-file",
                 str(key_file),
             ]
         )
@@ -197,8 +197,8 @@ def test_journal_pending_and_approve_round_trip(
             serialization.NoEncryption(),
         )
     )
-    assert _approve(path, "a3", str(other)) == 1  # wrong signing key
-    assert "does not match" in capsys.readouterr().err
+    assert _approve(path, "a3", str(other)) == 1  # a seed the registry does not hold for 'cfo'
+    assert "is not the key registered under approver" in capsys.readouterr().err
     assert main(["journal", "pending", path]) == 0 and capsys.readouterr().out == ""
 
 
@@ -213,7 +213,7 @@ def _approve(path: str, approval_id: str, key_file: str) -> int:
             "cfo",
             "--approval-id",
             approval_id,
-            "--signing-key",
+            "--seed-file",
             key_file,
         ]
     )

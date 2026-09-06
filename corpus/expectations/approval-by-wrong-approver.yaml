@@ -1,0 +1,14 @@
+schema_version: '1'
+id: approval-by-wrong-approver
+status: pass
+dispositions:
+  new: 1
+  approval: 1
+outcomes:
+  awaiting_approval: 1
+matched_rules:
+  corpus-v1.approve_above: 1
+  runtime.approval_rejected: 1
+approval_verdicts:
+  approval_wrong_approver: 1
+ledger_commands: 0

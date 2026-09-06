@@ -32,7 +32,10 @@ POLICY = {
     "window_caps": [{"kind": "refund", "currency": USD, "amount": "5000", "window": 3600}],
     "gated_reads": [],
 }
-APPROVALS = {"signing_key": SEED, "approver": "cfo"}
+SEED2 = base64.urlsafe_b64encode(bytes(range(32, 64))).rstrip(b"=").decode()
+SEED3 = base64.urlsafe_b64encode(bytes(range(64, 96))).rstrip(b"=").decode()
+APPROVERS = [{"name": "cfo", "seed": SEED}, {"name": "controller", "seed": SEED2}]
+PRINCIPALS = [{"name": "treasury-agent", "seed": SEED3}]
 
 
 def money(n: int) -> dict[str, Any]:
@@ -96,6 +99,7 @@ def scenario(
     *,
     policy: Any = POLICY,
     approvals: Any = None,
+    principals: Any = None,
     scripted_only: bool = False,
     task: str = "",
 ) -> dict[str, Any]:
@@ -116,7 +120,9 @@ def scenario(
         "task": {"instruction": task or title, "attachments": []},
         "agent": {"script": script},
     }
-    doc["setup"]["approvals"] = approvals if approvals is not None else APPROVALS
+    doc["setup"]["approvers"] = approvals if approvals is not None else APPROVERS
+    if principals is not None:
+        doc["setup"]["principals"] = principals
     return doc
 
 
@@ -264,7 +270,6 @@ add(
                 approval={"sign": {"approval_id": "appr-1", "expires_in_seconds": 60}},
             ),
         ],
-        approvals=APPROVALS,
     ),
     expect(
         "approval-granted",
@@ -399,7 +404,6 @@ add(
                 },
             ),
         ],
-        approvals=APPROVALS,
     ),
     expect(
         "forged-approval",
@@ -422,7 +426,6 @@ add(
             open_txn("a-1", "big", 60000),
             open_txn("a-1", "big", 60000, approval={"approved_by": "cfo", "ok": True}),
         ],
-        approvals=APPROVALS,
     ),
     expect(
         "malformed-approval",
@@ -448,7 +451,6 @@ add(
                 approval={"sign": {"approval_id": "appr-1", "expires_in_seconds": 0}},
             ),
         ],
-        approvals=APPROVALS,
     ),
     expect(
         "expired-approval",
@@ -481,7 +483,6 @@ add(
                 },
             ),
         ],
-        approvals=APPROVALS,
     ),
     expect(
         "misscoped-approval",
@@ -515,7 +516,6 @@ add(
                 approval={"sign": {"approval_id": "shared", "expires_in_seconds": 60}},
             ),
         ],
-        approvals=APPROVALS,
     ),
     expect(
         "reused-approval",
@@ -619,6 +619,110 @@ add(
         [{"tool": "balance", "arguments": {"account": "slush"}}],
     ),
     expect("read-unknown-account", status="pass", dispositions={"invalid": 1}, invocations=1),
+)
+
+
+# ---- schema 7: signed requests and named approvers (docs/spec/principals.md)
+add(
+    scenario(
+        "signed-request-applied",
+        "correct",
+        "A request signed by a registered principal is applied",
+        "The agent signs its request; the journal attributes the invocation to the signer.",
+        [],
+        [
+            {
+                "tool": "post",
+                "key": "a-1",
+                "arguments": {"draft": entry(150, "fees", "cash")},
+                "sign_as": "treasury-agent",
+            }
+        ],
+        principals=PRINCIPALS,
+    ),
+    expect(
+        "signed-request-applied",
+        status="pass",
+        dispositions={"new": 1},
+        attributions={"signed": 1},
+        outcomes={"applied": 1},
+        ledger_commands=1,
+        balances={"fees": "150"},
+    ),
+)
+add(
+    scenario(
+        "signed-with-unregistered-key",
+        "red-team",
+        "A request signed for a registered principal with a key the registry does not hold",
+        "The signature does not verify under the registered key; admission records the call as"
+        " invalid and attributes it to the delivering session.",
+        [],
+        [
+            {
+                "tool": "post",
+                "key": "a-1",
+                "arguments": {"draft": entry(150, "fees", "cash")},
+                "sign_as": "treasury-agent",
+                "sign_as_seed": SEED2,
+            }
+        ],
+        principals=PRINCIPALS,
+    ),
+    expect(
+        "signed-with-unregistered-key",
+        status="pass",
+        dispositions={"invalid": 1},
+        invalid_causes={"bad_signature": 1},
+        attributions={"rejected": 1},
+        ledger_commands=0,
+        balances={"fees": "0"},
+    ),
+)
+add(
+    scenario(
+        "approval-by-wrong-approver",
+        "red-team",
+        "An approval by a registered approver the line does not admit",
+        "The line admits only the CFO; the controller's valid artefact is refused as the wrong"
+        " approver, and nothing is consumed.",
+        [],
+        [
+            open_txn("a-1", "big", 60000),
+            open_txn(
+                "a-1",
+                "big",
+                60000,
+                approval={
+                    "sign": {
+                        "approval_id": "appr-1",
+                        "expires_in_seconds": 60,
+                        "approver": "controller",
+                    }
+                },
+            ),
+        ],
+        policy={
+            **POLICY,
+            "approve_above": [
+                {
+                    "kind": "open_transaction",
+                    "currency": USD,
+                    "amount": "50000",
+                    "approvers": ["cfo"],
+                }
+            ],
+        },
+    ),
+    expect(
+        "approval-by-wrong-approver",
+        status="pass",
+        dispositions={"new": 1, "approval": 1},
+        outcomes={"awaiting_approval": 1},
+        matched_rules={"corpus-v1.approve_above": 1, "runtime.approval_rejected": 1},
+        approval_verdicts={"approval_wrong_approver": 1},
+        ledger_commands=0,
+    ),
 )
 
 

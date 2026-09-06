@@ -47,9 +47,11 @@ setup:
     arguments:
       transaction_id: t1
       event: authorize
-  approvals:
-    signing_key: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
-    approver: cfo
+  approvers:
+  - name: cfo
+    seed: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+  - name: controller
+    seed: ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8
 task:
   instruction: Cancel an authorized transaction
   attachments: []

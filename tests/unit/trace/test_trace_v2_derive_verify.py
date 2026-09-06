@@ -87,7 +87,7 @@ def journal_path(tmp_path: Path) -> Iterator[str]:
         clock=SteppingClock(EPOCH),
         ids=SequentialIds(),
         policy=POLICY,
-        approval_key=verification_key_text(SIGNER),
+        approvers={"cfo": verification_key_text(SIGNER)},
     )
     j.record_message("user", "go")
     j.handle({"tool": "post", "call_id": "c1", "key": "k1", "arguments": {"draft": SALE}})
@@ -135,7 +135,9 @@ class TestDerivation:
     def test_every_disposition_derives_with_the_spec_grammar(self, journal_path: str) -> None:
         t = derive(journal_path)
         kinds = [e.type for e in t.events]
-        assert kinds[:2] == ["message", "tool_call"]
+        # schema 7: the create transaction's registry events come first (bootstrap + cfo)
+        assert kinds[:2] == ["principal_change", "approver_change"]
+        assert kinds[2:4] == ["message", "tool_call"]
         by = {r.disposition: r for r in t.resolutions()}
         assert set(by) == {"new", "replay", "conflict", "invalid", "read", "approval"}
         # anchored order: tool_call, intent, resolution, [decision], [pair], tool_result
@@ -187,7 +189,7 @@ class TestDerivation:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))  # awaiting
         j.handle(_open("big", "c2", 500))  # replay of awaiting
@@ -301,13 +303,16 @@ class TestGrammar:
             "arguments": {"entry_id": "e"} if write else {},
             **({"idempotency_key": "k"} if write else {}),
         }
+        # a hand-made document has no schema-7 attribution, so an invalid intent must be served
+        # the pre-schema-7 fixed type (trace-v2.md, event grammar)
+        invalid = any(e.get("disposition") == "invalid" for e in inner)
         result = {
             "type": "tool_result",
             "seq": 1,
             "at": self.AT,
             "call_id": call_id,
             "ok": False,
-            "error": {"type": "X", "message": "m"},
+            "error": {"type": "AdmissionError" if invalid else "X", "message": "m"},
         }
         events = [call, *inner, result]
         return [{**e, "seq": i + 1} for i, e in enumerate(events)]
@@ -649,7 +654,7 @@ class TestEveryDispositionTheSpecSinglesOut:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=policy,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("huge", "c1", 5_000))  # denied new
         j.handle(_open("big", "c2", 500))  # awaiting
@@ -782,7 +787,7 @@ class TestBoundaryGrammar:
             "at": at,
             "call_id": "c",
             "ok": False,
-            "error": {"type": "X", "message": "m"},
+            "error": {"type": "AdmissionError", "message": "m"},
         }
         TraceV2.model_validate({**base, "events": [call, res, result]})
         with pytest.raises(ValidationError, match="no tool_call immediately before"):
@@ -1047,7 +1052,7 @@ class TestThirdReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(
@@ -1120,7 +1125,7 @@ class TestFourthReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(
@@ -1170,7 +1175,7 @@ class TestFifthReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(
@@ -1272,7 +1277,7 @@ class TestSixthReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(_open("big", "c2", 500, approval=_artefact(j, "big")))
@@ -1518,7 +1523,7 @@ class TestSeventhReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         for key in ("k1", "k2"):
             j.handle(
@@ -1601,7 +1606,7 @@ class TestEighthReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(_open("big", "c2", 500, approval=_artefact(j, "big")))
@@ -1646,7 +1651,7 @@ class TestEighthReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(_open("big", "c2", 500, approval=_artefact(j, "big")))
@@ -1789,7 +1794,7 @@ class TestTenthReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(_open("big", "c2", 500))  # honest replay, no artefact
@@ -1998,7 +2003,7 @@ class TestWholeProjectReviewFindings:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=POLICY,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
         j.handle(_open("big", "c1", 500))
         j.handle(
@@ -2182,7 +2187,7 @@ class TestAggregateWitnessing:
             clock=SteppingClock(EPOCH),
             ids=SequentialIds(),
             policy=policy,
-            approval_key=verification_key_text(SIGNER),
+            approvers={"cfo": verification_key_text(SIGNER)},
         )
 
         def entry(amt: int, d: str, c: str) -> dict[str, Any]:

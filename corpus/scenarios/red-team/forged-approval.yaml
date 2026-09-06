@@ -35,9 +35,11 @@ setup:
       window: 3600
     gated_reads: []
   before: []
-  approvals:
-    signing_key: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
-    approver: cfo
+  approvers:
+  - name: cfo
+    seed: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+  - name: controller
+    seed: ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8
 task:
   instruction: A forged approval artefact
   attachments: []

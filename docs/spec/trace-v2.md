@@ -67,7 +67,7 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   the verdict.
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.
-- `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error). No
+- `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error; schema 7: `error.type` is the admission cause code from `journal.md`'s closed vocabulary; the model requires it for a resolution that carries `authentication` (present in every schema-7 derivation, the marker a document has no other way to show) and accepts exactly `AdmissionError` for one that does not, so earlier documents load and a schema-7 one cannot mislabel a refusal). No
   intent, no operation, no decision. Applies identically to write and read tools. The
   `tool_call`'s `arguments` is the empty object: the input was not admitted, the envelope's
   redacted payload stays in the journal, and nothing of it is carried into a trace.
@@ -103,6 +103,8 @@ carries the inputs, not a summary of them:
 | `context` | the canonical serialized `PolicyContext`, verbatim: principal, subject (nullable), command digest and `digest_kind`, evaluation time, `policy_set_version`, the command's kind, amount and currency (decimal string; nullable), every historical aggregate value the rules read, and the approval `{presentation, verdict}` if one was presented |
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
+
+Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal), `invocation_resolution.authentication` (`transport`, `signed`, `rejected`) and `invocation_resolution.error_type`, required iff `authentication` is present and the disposition is `invalid`, forbidden otherwise, and equal to the paired `tool_result.error.type` (the model requires all three), so the invariant and the corpus key on the resolution; `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `by`, `at`; `kind` on `principal_change` only), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
 
 A consumer with the policy set at `policy_set_version` can recompute `decision` from
 `context` and compare. A consumer without it can verify only that the recorded evidence is
@@ -206,7 +208,8 @@ caller was served in the `tool_result`, so the served value is bound to the row 
 of that value with the replayed books is not checked). A further row checks that the *committed response*
 (the outbound event the journal committed; not proof of delivery, see journal.md
 `invocation_responses`) is what the journal did, per the decision-to-outcome tables: success iff a
-read was not denied or the ledger applied, otherwise the error type of the path taken and,
+read was not denied or the ledger applied, otherwise the error type of the path taken (for `invalid`, `invocation_resolution.error_type`
+when the resolution carries `authentication`, else exactly `AdmissionError`) and,
 on a decided path, the decision's rule and reason as the message; an applied write's served
 head, sequence and entry equal to the ledger result's and a rejected write's served error
 equal to the ledger result's; and a replay told exactly what the producing invocation
@@ -232,7 +235,9 @@ or aggregates the trace does not support fails. It then re-runs the configuratio
 context and requires the recorded decision, rule and reason; it needs a configuration for a set whose
 rules are wholly declarative (`ThresholdPolicySet`, `NullPolicySet`) and reports
 `no_evidence` for a subclass or a custom set, whose rules are code. `runtime.` rules are a
-closed registry (`runtime.approval_rejected`); any other is refused at load.
+closed registry (`runtime.approval_rejected`); any other is refused at load. For a schema-7 context the row also recomputes `approvers_for(command_kind, currency, amount)` from the configuration's `approve_above` lines and, when `context.approval.approver` is non-null (check 1 passed; 1b runs immediately after 1 and before 2, so this is the only case it can decide), requires the verdict `approval_wrong_approver` exactly when the approver is outside that set and any other verdict only when inside it or the set is `None`; conversely an `approval_wrong_approver` verdict with a null `approver` fails, since 1b cannot run without check 1.
+
+A second schema-7 row, `attributions_are_registered`, walks the `principal_change` and `approver_change` events to compute liveness at every sequence and requires: every resolution whose `authentication` is not `rejected` names a principal live at its sequence with the matching kind, except an `invalid` row with `error_type` `revoked_principal`, whose principal must have a `revoke` before it; every `rejected` row names a live transport principal; every `context.approval.approver` equals its referenced presentation's `approver` when that presentation is verified and the verdict is not `approval_not_applicable` (else null), and it, and the approver named by every verified `approval_presentation`, is live at its sequence; an `invalid` `revoked_principal` row is `transport`-attributed; every change event's `by` is a live transport principal *before* its sequence, except the first event of the document when it is the bootstrap `add` of a transport principal by itself; and each name's log is monotone (one `add`, at most one `revoke` after it), every resolution carries an attribution (a stripped one is forged), and every decision's `context.principal` equals its resolution's `principal`; else the document is forged. `no_evidence` only for a document with neither change events nor any attribution nor any authenticated approver; a document that carries attributions and no registry is judged and fails.
 
 ## Presentations
 

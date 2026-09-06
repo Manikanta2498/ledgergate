@@ -1,8 +1,9 @@
 schema_version: '1'
-id: lifecycle-end-to-end
-kind: correct
-title: Open, authorize, settle
-description: A transaction is taken through its lifecycle.
+id: approval-by-wrong-approver
+kind: red-team
+title: An approval by a registered approver the line does not admit
+description: The line admits only the CFO; the controller's valid artefact is refused as the wrong approver,
+  and nothing is consumed.
 scripted_only: false
 setup:
   started_at: '2026-01-01T00:00:00Z'
@@ -28,6 +29,8 @@ setup:
     - kind: open_transaction
       currency: USD
       amount: '50000'
+      approvers:
+      - cfo
     window_caps:
     - kind: refund
       currency: USD
@@ -41,36 +44,26 @@ setup:
   - name: controller
     seed: ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8
 task:
-  instruction: Open, authorize, settle
+  instruction: An approval by a registered approver the line does not admit
   attachments: []
 agent:
   script:
   - tool: open_transaction
     key: a-1
     arguments:
-      transaction_id: t1
+      transaction_id: big
       amount:
-        amount: 12000
+        amount: 60000
         currency: USD
-  - tool: advance
-    key: a-2
+  - tool: open_transaction
+    key: a-1
     arguments:
-      transaction_id: t1
-      event: authorize
-  - tool: advance
-    key: a-3
-    arguments:
-      transaction_id: t1
-      event: settle
-      entry:
-        postings:
-        - account: cash
-          side: debit
-          money:
-            amount: 12000
-            currency: USD
-        - account: revenue
-          side: credit
-          money:
-            amount: 12000
-            currency: USD
+      transaction_id: big
+      amount:
+        amount: 60000
+        currency: USD
+    approval:
+      sign:
+        approval_id: appr-1
+        expires_in_seconds: 60
+        approver: controller

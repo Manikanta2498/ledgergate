@@ -11,6 +11,16 @@ the package's `__version__`. The trace and result schemas carry their own versio
 
 ## [Unreleased]
 
+### Added
+- Journal schema 7: principal and approver registries, Ed25519-signed requests verified in
+  admission with expiry and replay refusal, named approvers on policy lines
+  (`approval_wrong_approver`), attribution on every invocation, admission cause codes as the
+  served error type, `attributions_are_registered` (M8a).
+
+### Changed
+- `ledgergate serve --approval-key` is `--approver NAME=KEYFILE`; `ledgergate approve
+  --signing-key` is `--seed-file`; a schema-6 journal is refused (re-create).
+
 ## [0.1.0a1] - 2026-09-06
 
 The first alpha: everything from milestones M0 to M7, as recorded in the merged pull requests.

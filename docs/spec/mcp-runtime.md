@@ -273,8 +273,7 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
   `--token-key-file`): `open` compares them against the definition and refuses a mismatch,
   and the server does not rebuild a set from the stored configuration, because doing so
   would let a journal dictate the rules a process runs rather than the operator.
-- `--approver NAME=KEYFILE` (schema 7; formerly `--approval-key KEY`) seeds the approver registry with the Ed25519 *verification* key in the file under the name; it is
-  meaningful only with `--create` (an existing journal's key is in its definition) and is
+- `--approver NAME=KEYFILE` (schema 7; formerly `--approval-key KEY`) seeds the approver registry with the Ed25519 *verification* key in the file under the name; it is meaningful only with `--create` (later approvers are added to an existing journal with `ledgergate journal approver add`) and is
   refused otherwise.
 - `--token-key-file` selects the tokenizing admitter with that key; the CLI requires 32 or
   more bytes (its own policy; the `Tokenizer` accepts 16), and builds it with the fixed

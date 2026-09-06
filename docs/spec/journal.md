@@ -228,7 +228,7 @@ artefact never touches `approval_consumptions`.
    reachable only when a *distinct* artefact reuses an `approval_id`; it is a defensive
    constraint, and the test for it constructs exactly that.
 
-The verdict enters the `PolicyContext`. Nothing is consumed on any verdict other than
+The verdict enters the `PolicyContext` as `approval = {presentation, verdict}` and, from schema 7, `approver`: the authenticated approver name when check 1 passed, else null, so the canonical serialization gains the member, a custom set may read it, and a verifier recomputes check 1b from it ([principals](principals.md)). Nothing is consumed on any verdict other than
 `approval_valid`.
 
 **Failed verdicts are exactly the outputs of checks 1 to 4 other than `approval_valid`.**
@@ -328,8 +328,9 @@ milestones replace an implementation, never the protocol:
 - **Admission** is an interface (`Admitter`). M2b ships the identity admitter: identifiers
   are validated by `require_identifier` and passed through, free text is passed through.
   M2c replaces it with the tokenizing, redacting one. Token domain and key version in the
-  definition are `none` under the identity admitter, as is the approval verification key,
-  and the definition says so.
+  definition are `none` under the identity admitter, and the definition says so (schema 6 also
+  recorded the approval verification key as `none` there; schema 7 keeps approver keys in the
+  registry).
 - **Policy** is an interface. M2b ships the null policy set, version `none`, which returns
   `allow` for every context and still writes a complete `decisions` row, so every
   operation has a decision and the outcome tables above hold from day one. Its row is

@@ -54,7 +54,8 @@ definition is the bootstrap: `create` writes the definition and, in the same tra
 first event, `add` of the transport principal named by `--principal` (default `local`), with
 `by` equal to itself, the single stated exemption from "`by` is live at its sequence": the act
 of creating the journal is the operator's own attribution. `create --approver NAME=KEYFILE`
-(repeatable) appends approver adds the same way, and the existing `create`-time rule "a
+(repeatable) appends approver adds in the *same create transaction* (a crash leaves either a
+complete journal with its seeds or no journal), and the existing `create`-time rule "a
 policy that can require approval needs someone who can approve" now reads: `approve_above`
 non-empty requires at least one approver seeded, and every name in any line's `approvers`
 (below) must be seeded. Later commands append: `ledgergate journal principal add PATH NAME
@@ -127,7 +128,9 @@ and `expires_at` is covered. A client learns `journal_id` from `initialize`'s
 `result._meta.ledgergate.journal_id` (added; `_meta` is where MCP puts such things) or from
 `ledgergate journal id PATH`.
 
-**Where each check runs.** Admission is pure and clockless, so it does what needs no clock:
+**Where each check runs.** Admission is clockless and reads nothing outside its scope; the
+journal hands it, under the lock at step 3, the live `signed` principals as part of the
+`AdmissionScope` (as it already hands the currency registry), so it does what needs no clock:
 `auth` present but not this shape → `invalid: authentication_malformed`; `principal` not a
 live `signed` principal at the current head → `invalid: unknown_principal` (a `transport`
 name or a revoked name is unknown *as a signer*); signature does not verify over the
@@ -136,7 +139,9 @@ recomputed bytes → `invalid: bad_signature`. Admission runs on the pre-tokeniz
 checks that need the clock run at the protocol's **single reading**: in the write protocol at
 step 4 and in the read protocol at its own reading (`journal.md`), `expires_at <=
 requested_at` → `invalid: request_expired`, and `(principal, call_id)` in the replay set →
-`invalid: replayed_call`; such a row is written in the step-3 failure-envelope shape (an
+`invalid: replayed_call` (served by a partial index on `invocations (principal, call_id)
+WHERE authentication = 'signed' AND disposition <> 'invalid'`, so the lookup does not walk the
+journal); such a row is written in the step-3 failure-envelope shape (an
 `invalid` invocation with a null `request_digest`, the redacted raw payload including `auth`
 as an untyped blob, and its keyed `input_digest`), the one shape `invalid` has (a replayed message is refused; a legitimate retry is a *new* call with the *same idempotency key*, which the write protocol answers as it always has). The one-reading rule is untouched.
 
@@ -180,8 +185,11 @@ reads nothing but the `approve_above` lines, needs no context, no subject, no ag
 it runs before any `PolicyContext` exists and the failed-verdict rule ("on a failed verdict
 nothing of the set ran") keeps its meaning, since only this one line-lookup ran and the
 persisted context says so through the three fields it already carries. The journal calls it,
-guarded like every policy call (an exception is a configuration fault), as **check 1b**, after
-check 1 and before consumption (check 4), with the fields it has before the context is built:
+guarded like every policy call (an exception is a configuration fault), as **check 1b**,
+immediately after check 1 and before check 2 (so an artefact that is expired or mis-scoped
+*and* wrongly approved reports the wrong approver, and a verifier's rule below is exact), with
+the three fields of the *presenting request's* command, the ones the persisted context will
+carry:
 a verified artefact whose authenticated approver is not in the set is the failed verdict
 `approval_wrong_approver`, decided by the runtime as the other failed verdicts are
 (`runtime.approval_rejected`, reason = the verdict; nothing is consumed; the operation stays
@@ -235,8 +243,9 @@ carries the cause as today.
   `setup.approvals`; `setup.principals: [{name, seed}]` seeds signed principals; a step's
   `sign: {approver: NAME, ...}` picks the approver seed (the wrong-approver scenario signs
   with a registered-but-not-allowed one); a step's `sign_as: NAME` wraps it in an envelope
-  with that principal's seed (an unregistered `sign_as` name is a corpus fault; the
-  unregistered-key scenario uses a registered name with a *different* seed, `sign_as_seed`).
+  with that principal's seed (an unregistered `sign_as` name is a corpus fault); `sign_as_seed:
+  SEED` alongside `sign_as` substitutes the signing seed, which is how the unregistered-key
+  scenario signs a registered name with a key the registry does not hold.
   Three new scenarios: a signed request applied (`correct/`), a request signed with a key not
   registered for its principal, and an approval by a registered approver the line does not
   admit (`red-team/`), each expecting the containing mechanism (`invalid: bad_signature`,
@@ -268,3 +277,7 @@ carries the cause as today.
 - **Cross-clone consumption authority.** The clone limit stands; M8c.
 - **Key custody or rotation.** The journal holds verification keys; seeds are the operator's.
 - **Recomputation of a request signature from a trace.** Stored as evidence, not re-derivable.
+- **Client libraries.** The signed `call_id` is derived from the JSON-RPC `id`
+  (`mcp-runtime.md`), so a signer must control the `id` its client sends; many MCP client
+  libraries assign it. A client that cannot is M8b's concern (a listener could accept a
+  client-chosen call id in the envelope), not M8a's.

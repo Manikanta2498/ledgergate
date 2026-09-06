@@ -93,7 +93,7 @@ class TestRatchet:
         out = capsys.readouterr().out
         assert "warning: stale entry m.h:d" in out and "bucket changed m.g:c" in out
 
-    def test_baseline_regeneration_preserves_killed_timeouts_and_drops_vanished_equivalents(
+    def test_baseline_regeneration_keeps_killed_entries_as_flaky_and_drops_vanished_equivalents(
         self, in_tmp: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         gate_mod.BASELINE.write_text(
@@ -110,10 +110,12 @@ class TestRatchet:
         run = _current(("m.h:d", "killed"), ("m.e:z", "survived"), ("m.f:a", "survived"))
         assert gate_mod.write_baseline(run) == 0
         base = json.loads(gate_mod.BASELINE.read_text())
-        assert "m.h:d" in base["unkilled"] and base["unkilled"]["m.h:d"]["bucket"] == "timeout"
+        assert (
+            base["unkilled"]["m.h:d"]["bucket"] == "timeout" and base["unkilled"]["m.h:d"]["flaky"]
+        )
         assert "m.e:z" not in base["unkilled"] and set(base["equivalent"]) == {"m.e:z"}
         out = capsys.readouterr().out
-        assert "preserved timeout entry" in out and "dropped equivalent" in out
+        assert "kept as flaky" in out and "dropped equivalent" in out
         assert gate_mod.gate(run) == 0
 
 

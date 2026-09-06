@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -87,7 +88,17 @@ def gate(current: dict[str, dict[str, Any]]) -> int:
     base = load_baseline()
     failures: list[str] = []
     warnings: list[str] = []
+    overlap = sorted(set(base["unkilled"]) & set(base["equivalent"]))
+    for key in overlap:
+        failures.append(f"key {key} is both unkilled and equivalent in the baseline")
     baselined = {**base["unkilled"], **base["equivalent"]}
+    readme = Path("README.md")
+    if readme.exists():
+        m = re.search(r"unkilled mutants\*\* of ([0-9,]+)", readme.read_text())
+        if m is not None and int(m.group(1).replace(",", "")) != len(current):
+            failures.append(
+                f"README says of {m.group(1)} mutants, this run has {len(current)}; update it"
+            )
     for key, info in current.items():
         if info["bucket"] == "killed":
             continue
@@ -128,7 +139,11 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
         if entry.get("bucket") == "timeout" and key in current and key not in unkilled:
             unkilled[key] = entry
             preserved.append(key)
-    equivalent = {k: v for k, v in old["equivalent"].items() if k in current}
+    equivalent = {
+        k: v
+        for k, v in old["equivalent"].items()
+        if k in current and current[k]["bucket"] != "killed"
+    }
     dropped = sorted(set(old["equivalent"]) - set(equivalent))
     doc = {
         "_": "docs/spec/assurance.md, the mutation gate; regenerate with `make mutation-baseline`",

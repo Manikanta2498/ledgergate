@@ -183,3 +183,42 @@ def test_readme_bucket_breakdown_matches_the_baseline() -> None:
     else:
         for bucket, n in buckets.items():
             assert f"{n} `{bucket}`" in readme, (bucket, n)
+
+
+class TestSecondImplementationReview:
+    def test_killed_equivalents_are_dropped_and_overlap_fails(
+        self, in_tmp: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        gate_mod.BASELINE.write_text(
+            json.dumps({"unkilled": {}, "equivalent": {"m.e:z": {"reason": "renames a local"}}})
+        )
+        assert gate_mod.write_baseline(_current(("m.e:z", "killed"), ("m.f:a", "survived"))) == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["equivalent"] == {} and "dropped equivalent" in capsys.readouterr().out
+        gate_mod.BASELINE.write_text(
+            json.dumps(
+                {
+                    "unkilled": {
+                        "m.f:a": {"function": "m.f", "bucket": "survived", "example": "x"}
+                    },
+                    "equivalent": {"m.f:a": {"reason": "also here"}},
+                }
+            )
+        )
+        assert gate_mod.gate(_current(("m.f:a", "survived"))) == 1
+        assert "both unkilled and equivalent" in capsys.readouterr().out
+
+    def test_readme_total_is_checked_by_the_gate(
+        self, in_tmp: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        (in_tmp / "README.md").write_text("baseline: **1 unkilled mutants** of 1,697 (all")
+        run = _current(("m.f:a", "survived"), ("m.f:b", "killed"))
+        gate_mod.write_baseline(run)
+        assert gate_mod.gate(run) == 1
+        assert "README says of 1,697 mutants, this run has 2" in capsys.readouterr().out
+        (in_tmp / "README.md").write_text("baseline: **1 unkilled mutants** of 2 (all")
+        assert gate_mod.gate(run) == 0
+
+    def test_baseline_keys_are_disjoint(self) -> None:
+        baseline = json.loads((ROOT / ".mutation-baseline.json").read_text())
+        assert not set(baseline["unkilled"]) & set(baseline["equivalent"])

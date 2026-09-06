@@ -260,6 +260,7 @@ For an `error` or `skipped` scenario `trace_digest` and `scorecard` are `null` a
 ```
 ledgergate report result.json --format md|junit|sarif [--out FILE]
 ledgergate report --drift baseline.json candidate.json [--format md|json] [--out FILE] [--allow-newly-skipped]
+ledgergate report --conformance [--baseline BASELINE] CANDIDATE [--require L1|L2|L3]   (assurance.md)
 ```
 
 - **md**: the conformance level line (`assurance.md`) at the top, then a table of scenarios (id, kind, status, failing expectations) and the summary.

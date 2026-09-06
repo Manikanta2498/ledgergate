@@ -11,11 +11,17 @@ import pytest
 from hypothesis import settings
 
 
-@pytest.mark.parametrize("env", [{"CI": "true"}, {"MUTANT_UNDER_TEST": ""}])
-def test_ci_profile_is_loaded_under_ci_and_mutmut(env: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    ("env", "profile", "suppressed"),
+    [({"CI": "true"}, "ci", "False"), ({"MUTANT_UNDER_TEST": ""}, "mutation", "True")],
+)
+def test_ci_profile_is_loaded_under_ci_and_mutmut(
+    env: dict[str, str], profile: str, suppressed: str
+) -> None:
     code = (
-        "import tests.conftest; from hypothesis import settings;"
-        " s = settings(); print(s.derandomize, s.database is None)"
+        "import tests.conftest; from hypothesis import HealthCheck, settings;"
+        " s = settings(); print(s.derandomize, s.database is None, settings._current_profile,"
+        " HealthCheck.differing_executors in s.suppress_health_check)"
     )
     clean = {k: v for k, v in os.environ.items() if k not in ("CI", "MUTANT_UNDER_TEST")}
     out = subprocess.run(
@@ -25,7 +31,7 @@ def test_ci_profile_is_loaded_under_ci_and_mutmut(env: dict[str, str]) -> None:
         text=True,
         check=True,
     ).stdout
-    assert out.strip() == "True True"
+    assert out.strip() == f"True True {profile} {suppressed}"
 
 
 def test_the_ci_profile_is_hypothesis_own() -> None:

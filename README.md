@@ -16,7 +16,8 @@ deployment.**
 > `ledgergate serve` (M4), and the OpenTelemetry GenAI observational adapter behind
 > `ledgergate record` (M5), the scenario and red-team corpus with `ledgergate run` and
 > `report` (M6), and the assurance layer (M7: conformance levels, a ratcheting mutation gate,
-> CodeQL, Scorecard, a provenance-attested release pipeline) are implemented and tested. An agent run can be recorded, validated against the published
+> CodeQL, Scorecard) are implemented and tested; the provenance-attested release pipeline is
+> implemented and *unrehearsed* until its first TestPyPI dispatch has run. An agent run can be recorded, validated against the published
 > schema, replayed against the core, and journaled so a retried key after a restart gets
 > the answer it got the first time. See [Roadmap](#roadmap).
 
@@ -471,7 +472,7 @@ These are enforced by CI gates, not by convention:
 | **M4** | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log; designed in [docs/spec/mcp-runtime.md](docs/spec/mcp-runtime.md) | **done** |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
-| M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | **done**; nothing is tagged until the release workflow has run against TestPyPI |
+| M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | **done**, release pipeline unrehearsed: nothing is tagged until it has run against TestPyPI |
 | M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
 
 The reasoning behind this order, and what was deliberately left out, is in
@@ -501,11 +502,15 @@ gh attestation verify ledgergate-<v>-py3-none-any.whl --bundle ledgergate-<v>-py
   --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml
 ```
 
-The Scorecard badge above is the live score, not a claim. Two of its checks are known to be
-flagged and are not worked around: `Branch-Protection` (a single-maintainer pre-alpha has no
-required reviews on `main`) and `Signed-Releases` until the first release exists with its
-bundles beside it. CodeQL runs on every pull request; whether an alert fails the check is a
-repository setting (set to `high`), not something the workflow file can claim.
+The Scorecard badge above is the live score, not a claim. Checks known to be flagged, and not
+worked around, are at least: `Branch-Protection` and `Code-Review` (a single-maintainer
+pre-alpha has no required reviews and no reviewed merges), `Dependency-Update-Tool` (no
+auto-bumping; `uv.lock` pins and `pip-audit` audits), `CII-Best-Practices`, `Signed-Releases`
+until the first release exists with its bundles beside it, and `Pinned-Dependencies` for the
+release smoke job's `pip install` of the artefact under test. CodeQL runs on every pull
+request; whether an alert fails the check is a repository setting, not something the
+workflow file can claim, and trusted publishing likewise depends on the publisher being
+registered on the index.
 
 ## Development
 

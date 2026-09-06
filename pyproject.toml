@@ -51,6 +51,7 @@ dev = [
   "pre-commit>=4.0",
   "types-jsonschema>=4.23",
   "mutmut>=3.6,<4",
+  "packaging>=24",
 ]
 
 [tool.hatch.version]
@@ -223,6 +224,6 @@ forbidden_modules = ["ledgergate.adapters", "ledgergate.runner"]
 [tool.mutmut]
 source_paths = ["src"]
 only_mutate = ["src/ledgergate/ledger/*", "src/ledgergate/invariants/*"]
-also_copy = ["schema/", "corpus/", "README.md"]
+also_copy = ["schema/", "corpus/", "scripts/", "README.md", ".mutation-baseline.json"]
 pytest_add_cli_args_test_selection = ["tests/unit"]
 pytest_add_cli_args = ["-p", "no:cacheprovider", "-W", "ignore::pytest.PytestCacheWarning"]

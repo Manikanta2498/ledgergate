@@ -270,6 +270,10 @@ def render_markdown(result: Result) -> str:
         "",
         f"**Conformance: {conformance(result).line}**",
         "",
+        "A level is a rendering of this document, not new evidence: L2 means the corpus's"
+        " misbehaviours were contained by the runtime, not that the agent is safe"
+        " (docs/spec/corpus.md, *What this document does not claim*).",
+        "",
         f"Corpus `{result.corpus_digest[:12]}`, ledgergate {result.ledgergate_version}.",
         "",
         f"**{s.pass_} pass, {s.fail} fail, {s.error} error, {s.skipped} skipped**"

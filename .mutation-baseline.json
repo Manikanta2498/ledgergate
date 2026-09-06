@@ -506,11 +506,6 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_12"
     },
-    "ledgergate.invariants.x_committed_response_matches_journal:681668b25a9e13e0": {
-      "function": "ledgergate.invariants.x_committed_response_matches_journal",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_139"
-    },
     "ledgergate.invariants.x_committed_response_matches_journal:68256572f95c6824": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -621,11 +616,6 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_100"
     },
-    "ledgergate.invariants.x_committed_response_matches_journal:9359b14b47326756": {
-      "function": "ledgergate.invariants.x_committed_response_matches_journal",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_267"
-    },
     "ledgergate.invariants.x_committed_response_matches_journal:986f2ee266d78263": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -665,6 +655,11 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_194"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a058898ecceb0bde": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_97"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:a475e7af231a5e31": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -1086,6 +1081,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_118"
     },
+    "ledgergate.invariants.x_decision_recomputes:3092eca4bd18a2c5": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_120"
+    },
     "ledgergate.invariants.x_decision_recomputes:31dcdf3b1ab2262a": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
@@ -1476,11 +1476,6 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_15"
     },
-    "ledgergate.invariants.x_denied_never_reaches_ledger:81f9a0aac4594caf": {
-      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_19"
-    },
     "ledgergate.invariants.x_denied_never_reaches_ledger:b555b3f2ede41a31": {
       "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
       "bucket": "survived",
@@ -1520,11 +1515,6 @@
       "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_21"
-    },
-    "ledgergate.invariants.x_denied_never_reaches_ledger:f177ef306278e156": {
-      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_18"
     },
     "ledgergate.invariants.x_denied_never_reaches_ledger:f4939b4a8750552a": {
       "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
@@ -2526,11 +2516,6 @@
       "bucket": "survived",
       "example": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init____mutmut_11"
     },
-    "ledgergate.ledger.effects.xǁFixedClockǁ__init__:22d24e82c6da39fb": {
-      "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",
-      "bucket": "survived",
-      "example": "ledgergate.ledger.effects.xǁFixedClockǁ__init____mutmut_2"
-    },
     "ledgergate.ledger.effects.xǁFixedClockǁ__init__:328ff703fc9d3a62": {
       "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",
       "bucket": "survived",
@@ -3046,6 +3031,11 @@
       "bucket": "survived",
       "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_65"
     },
+    "ledgergate.ledger.state.x_command_fingerprint:e508859e6e15b4b9": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_41"
+    },
     "ledgergate.ledger.state.x_command_fingerprint:e5b1507369d89149": {
       "function": "ledgergate.ledger.state.x_command_fingerprint",
       "bucket": "survived",
@@ -3055,6 +3045,11 @@
       "function": "ledgergate.ledger.state.x_command_fingerprint",
       "bucket": "survived",
       "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_61"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:ffd702be8d34b535": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_47"
     }
   },
   "equivalent": {}

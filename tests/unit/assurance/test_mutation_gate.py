@@ -124,3 +124,62 @@ class TestCheckedInBaseline:
             assert entry["bucket"] in gate_mod.BUCKETS and key.startswith(entry["function"] + ":")
         for entry in baseline["equivalent"].values():
             assert entry["reason"]
+
+
+class TestCleanRunViability:
+    @pytest.mark.slow
+    def test_the_unit_suite_runs_from_a_mutmut_shaped_copy(self, tmp_path: Path) -> None:
+        """mutmut runs the tests from mutants/, which holds source_paths, tests/, pyproject.toml,
+        uv.lock and also_copy; a unit test reading anything else breaks the clean run and the
+        nightly gate with it. Shape the copy exactly as mutmut does and run the suite."""
+        import os
+        import shutil
+        import subprocess
+        import tomllib
+
+        cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["mutmut"]
+        copy = tmp_path / "mutants"
+        copy.mkdir()
+        for rel in [*cfg["source_paths"], *cfg["also_copy"], "tests", "pyproject.toml", "uv.lock"]:
+            src = ROOT / rel
+            if src.is_dir():
+                shutil.copytree(
+                    src, copy / rel, ignore=shutil.ignore_patterns("__pycache__", ".hypothesis")
+                )
+            elif src.exists():
+                shutil.copy2(src, copy / rel)
+        env = {**os.environ, "MUTANT_UNDER_TEST": "stats", "PYTHONPATH": str(copy / "src")}
+        env.pop("CI", None)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-x",
+                "-p",
+                "no:cacheprovider",
+                "-m",
+                "not slow",
+                *cfg["pytest_add_cli_args_test_selection"],
+            ],
+            cwd=copy,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+
+
+def test_readme_bucket_breakdown_matches_the_baseline() -> None:
+    baseline = json.loads((ROOT / ".mutation-baseline.json").read_text())
+    buckets: dict[str, int] = {}
+    for entry in baseline["unkilled"].values():
+        buckets[entry["bucket"]] = buckets.get(entry["bucket"], 0) + 1
+    readme = (ROOT / "README.md").read_text()
+    if buckets == {"survived": len(baseline["unkilled"])}:
+        assert "all `survived`; none `no tests`" in readme
+    else:
+        for bucket, n in buckets.items():
+            assert f"{n} `{bucket}`" in readme, (bucket, n)

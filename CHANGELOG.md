@@ -11,7 +11,7 @@ the package's `__version__`. The trace and result schemas carry their own versio
 
 ## [Unreleased]
 
-## [0.1.0a1] - unreleased
+## [0.1.0a1] - 2026-09-06
 
 The first alpha: everything from milestones M0 to M7, as recorded in the merged pull requests.
 

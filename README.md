@@ -457,7 +457,7 @@ These are enforced by CI gates, not by convention:
 | **M4** | **`ledgergate serve`: local MCP runtime** (stdio, single principal). The ledger as tools, idempotency required, policy enforced at the call boundary, every call through the command log; designed in [docs/spec/mcp-runtime.md](docs/spec/mcp-runtime.md) | **done** |
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
-| M7 | Mutation gate, CodeQL, OpenSSF Scorecard, PyPI release, conformance levels | |
+| M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | next |
 | M8 | Authenticated network transport and principals; real approvers; external execution via outbox and reconciliation | |
 
 The reasoning behind this order, and what was deliberately left out, is in

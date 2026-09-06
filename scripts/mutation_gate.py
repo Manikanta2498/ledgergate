@@ -6,9 +6,10 @@ Reads every mutant's status from the completed mutmut run under ``mutants/`` (ki
 keys each mutant by ``(function, sha256 of the diff body)`` so the key survives mutmut's
 positional renumbering, and compares the unkilled set with ``.mutation-baseline.json``:
 
-  gate      fail if an unkilled key is not baselined, or a baselined key is now killed (stale,
-            except a `timeout` entry, which warns) or matches no current mutant (vanished);
-            warn on a bucket change.
+  gate      fail if an unkilled key is not baselined, or a baselined key matches no current
+            mutant (vanished); warn if a baselined key is killed this run (stale: the runner
+            flaps on some mutants, so a stale entry is regenerated away, never a red night) or
+            changed bucket.
   baseline  write the baseline from this run, preserving `timeout` entries that killed this
             run and every `equivalent` entry whose key still exists and is unkilled; print what
             it preserved and dropped.
@@ -131,14 +132,15 @@ def gate(current: dict[str, dict[str, Any]]) -> int:
             warnings.append(
                 f"bucket changed {key}: {base['unkilled'][key]['bucket']} -> {info['bucket']}"
             )
-    for key, entry in baselined.items():
+    for key in baselined:
         if key not in current:
             failures.append(f"stale entry {key}: matches no current mutant (vanished)")
         elif current[key]["bucket"] == "killed":
-            if entry.get("bucket") == "timeout":
-                warnings.append(f"timeout entry {key} killed this run; remove it by hand")
-            else:
-                failures.append(f"stale entry {key}: now killed; remove it in the same change")
+            # the runner itself kills a given mutant on one night and not the next (observed on
+            # the second nightly: 615 then 614), a property of the tests, not of the mutant; a
+            # stale entry is therefore a warning, and the baseline shrinks by regeneration
+            # from the runner's results, never by a red night
+            warnings.append(f"stale entry {key}: killed this run; regenerate from the runner")
     for w in warnings:
         print(f"warning: {w}")
     for f in failures:

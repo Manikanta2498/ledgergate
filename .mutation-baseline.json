@@ -71,11 +71,6 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x__owner_of__mutmut_7"
     },
-    "ledgergate.invariants.x__owner_of:6ddb7158329923a4": {
-      "function": "ledgergate.invariants.x__owner_of",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x__owner_of__mutmut_6"
-    },
     "ledgergate.invariants.x__pair_owners:d96ec5890d481ff9": {
       "function": "ledgergate.invariants.x__pair_owners",
       "bucket": "survived",

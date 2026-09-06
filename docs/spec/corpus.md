@@ -140,7 +140,7 @@ agent:
             - {account: cash, side: credit, money: {amount: 8000, currency: USD}}
 ```
 
-Each `before` and `script` step is the journal's own request shape, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at`, normalised to UTC, lies in 1970..2200 and a signed `expires_in_seconds` is at most 10^9, and a policy window is 1..10^9 seconds by `from_configuration`'s own rule, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
+Each `before` and `script` step is the journal's own request shape plus the runner's own directives (`sign`, `sign_as`, `sign_as_seed`, `entry_ref`), which the runner resolves and strips before `Journal.handle`, typed by the model (`tool` a string, `key` a string or absent, `arguments` an object or absent, so a step outside it is a corpus fault by construction; `entry_ref` is accepted only on a `reverse`; a scenario's `started_at`, normalised to UTC, lies in 1970..2200 and a signed `expires_in_seconds` is at most 10^9, and a policy window is 1..10^9 seconds by `from_configuration`'s own rule, so no clock arithmetic can overflow at run time) (`journal.md`, *Admission
 input and Request*): `tool`, `arguments`, optional `key`, optional `approval`; the runner adds
 `call_id` = `setup-<n>` or `agent-<n>` and calls `Journal.handle` directly, so the step is
 what `serve` would have handed the journal after its step-4 lifting, without the transport. A

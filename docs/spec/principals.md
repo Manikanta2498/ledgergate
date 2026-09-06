@@ -138,8 +138,9 @@ fields*), every field is bounded before anything is stored: `principal` an ident
 `authentication_malformed`, the predicate that cause names. The three `auth_*` columns are
 stored only on a `signed` row, that is only after the signature verified, since until then
 they are the presenter's words (the same rule the presentation row applies); a read's
-`request_digest` excludes `auth` as it excludes the artefact, so a signed read has the same
-digest as its unsigned twin and "the same read" keeps its meaning. `identifiers-and-redaction.md`
+`request_digest` excludes `auth` as it excludes the artefact (the digest already covers
+`principal`, so a signed read and an unsigned one by another principal differ in digest, as two
+reads by two principals always have). `identifiers-and-redaction.md`
 gains this paragraph.
 
 **Where each check runs.** Admission is clockless and reads nothing outside its scope; the
@@ -207,9 +208,11 @@ protocol gains one **pure** method, `approvers_for(command_kind, currency, amoun
 frozenset[str] | None`: the names admitted by the first `approve_above` line matching those
 three fields by `evaluate`'s own predicate (kind and currency equal, amount above the line;
 any `None` input, a command without an amount, yields `None`), or `None` when no line matches or the matching line has no `approvers` (the
-null set always returns `None`; the protocol gives the method a default of `None`, so an
-existing custom set needs no change and a raise from one that overrides it is the usual
-configuration fault). It is deliberately *not* a prediction of `evaluate`: it
+null set always returns `None`). `PolicySet` is a structural protocol and the project's own
+sets do not inherit from it, so a default body would reach nothing; the journal (and
+`decision_recomputes`, for a declarative set) reads the method with `getattr(set,
+"approvers_for", None)` and treats its absence as `None`, so an existing custom set needs no
+change, and a raise from a set that defines it is the usual configuration fault. It is deliberately *not* a prediction of `evaluate`: it
 reads nothing but the `approve_above` lines, needs no context, no subject, no aggregates, so
 it runs before any `PolicyContext` exists and the failed-verdict rule ("on a failed verdict
 nothing of the set ran") keeps its meaning, since only this one line-lookup ran and the

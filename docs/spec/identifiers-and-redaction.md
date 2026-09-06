@@ -149,6 +149,7 @@ and never reaches a typed column. The `auth_*` columns are stored only on a `sig
 is only after the signature verified under the registered key, since until then the fields are
 the presenter's words; a rejected envelope survives only inside the redacted `invalid`
 envelope blob, under the keyed `input_digest`. A read's `request_digest` excludes `auth` as it
-excludes the artefact, so a signed read and its unsigned twin have one digest.
+excludes the artefact; it covers `principal`, as it always has, so reads by different
+principals differ in digest, signed or not.
 
 v2's intent and policy fields are designed under the same four classes in M3.

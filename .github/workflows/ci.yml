@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow calls this one whole, so a release runs exactly the pull-request
+  # gates (docs/spec/assurance.md, Releases).
+  workflow_call:
 
 # Least privilege by default. No job here needs write access; a job that does
 # must elevate explicitly. Fork PRs run under `pull_request`, never

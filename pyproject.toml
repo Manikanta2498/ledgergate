@@ -50,6 +50,7 @@ dev = [
   "pip-audit>=2.10",
   "pre-commit>=4.0",
   "types-jsonschema>=4.23",
+  "mutmut>=3.6,<4",
 ]
 
 [tool.hatch.version]
@@ -214,3 +215,14 @@ name = "Adapters never leak into invariants"
 type = "forbidden"
 source_modules = ["ledgergate.invariants"]
 forbidden_modules = ["ledgergate.adapters", "ledgergate.runner"]
+
+# ---------------------------------------------------------------- mutmut
+# docs/spec/assurance.md, *The mutation gate*: the core and the registry are gated; nothing
+# else is mutated. Tests run from a copy under mutants/, so the data the unit tests read
+# relative to the working directory is copied too (tests/, pyproject.toml, uv.lock already are).
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = ["src/ledgergate/ledger/*", "src/ledgergate/invariants/*"]
+also_copy = ["schema/", "corpus/", "README.md"]
+pytest_add_cli_args_test_selection = ["tests/unit"]
+pytest_add_cli_args = ["-p", "no:cacheprovider", "-W", "ignore::pytest.PytestCacheWarning"]

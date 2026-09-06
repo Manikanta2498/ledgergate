@@ -42,3 +42,6 @@ coverage.xml
 .agents/
 .idea/
 .vscode/
+
+# mutmut's working copy (docs/spec/assurance.md); the baseline is checked in, this is not
+mutants/

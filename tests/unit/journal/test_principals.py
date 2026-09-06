@@ -344,20 +344,20 @@ class TestSignedRequests:
         r = j.handle(signed(j, post("k9", call_id="c9")))
         assert r.error_type == "unknown_principal"
 
-    def test_signed_document_uses_null_for_absent_members(self) -> None:
+    def test_signed_document_is_the_request_as_delivered(self) -> None:
         doc = signed_document(
-            {"tool": "balance", "call_id": "r1"}, journal_id="j", principal="p", expires_at="t"
+            {"tool": "balance", "call_id": "r1", "auth": {"x": 1}},
+            journal_id="j",
+            principal="p",
+            expires_at="t",
         )
         assert doc == {
             "tool": "balance",
             "call_id": "r1",
-            "arguments": None,
-            "key": None,
-            "approval": None,
             "journal_id": "j",
             "principal": "p",
             "expires_at": "t",
-        }
+        }  # absent is absent, not null; auth excluded
         with pytest.raises(AuthError, match="authentication_malformed"):
             verify_envelope(
                 {},
@@ -1181,3 +1181,13 @@ class TestFourthImplementationReview:
                 e["authentication"] = "signed"
         card = verify(load_any(json.dumps(forged)))
         assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"
+
+
+class TestFifthImplementationReview:
+    @pytest.mark.parametrize("member", ["arguments", "key", "approval"])
+    def test_an_attached_null_member_breaks_the_signature(self, j: Journal, member: str) -> None:
+        v = signed(j, {"tool": "trial_balance", "call_id": "r1"})
+        v[member] = None
+        r = j.handle(v)
+        assert (r.error_type, table(j.path, "invocations")[-1][4]) == ("bad_signature", "rejected")
+        assert j.handle(signed(j, {"tool": "trial_balance", "call_id": "r1"})).ok

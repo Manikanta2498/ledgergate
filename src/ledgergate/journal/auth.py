@@ -39,7 +39,6 @@ SIGN_CAP_SECONDS = 86_340
 """What ``ledgergate sign`` caps ``--expires-in`` at: a minute inside the journal's bound, so
 a signer's clock a little ahead of the journal's is not refused at the maximum."""
 _SIGNATURE = re.compile(r"[A-Za-z0-9_-]{86}")
-SIGNED_MEMBERS = ("tool", "call_id", "arguments", "key", "approval")
 
 __all__ = [
     "ENVELOPE_FIELDS",
@@ -98,13 +97,11 @@ class Attribution:
 def signed_document(
     request: dict[str, Any], *, journal_id: str, principal: str, expires_at: str
 ) -> dict[str, Any]:
-    """The document the signature covers: the whole request as delivered minus ``auth`` (so a
-    member a third party attaches breaks the signature rather than being attributed to the
-    signer), with the five request members present, absent ones as null, plus the journal id
-    and the envelope's principal and expiry."""
+    """The document the signature covers: the request exactly as delivered minus ``auth``
+    (absent is absent, not null: any member a third party attaches, an explicit null included,
+    breaks the signature rather than producing a refusal attributed to the signer), plus the
+    journal id and the envelope's principal and expiry."""
     doc: dict[str, Any] = {k: v for k, v in request.items() if k != "auth"}
-    for member in SIGNED_MEMBERS:
-        doc.setdefault(member, None)
     doc["journal_id"] = journal_id
     doc["principal"] = principal
     doc["expires_at"] = expires_at
@@ -194,6 +191,6 @@ def expiry_cause(expires_at: datetime, now: datetime) -> str | None:
     bound; ``None`` when the envelope is in its window."""
     if expires_at <= now:
         return "request_expired"
-    if expires_at > now + timedelta(seconds=MAX_EXPIRY_SECONDS):
+    if expires_at - now > timedelta(seconds=MAX_EXPIRY_SECONDS):  # a subtraction never overflows
         return "request_expiry_unbounded"
     return None

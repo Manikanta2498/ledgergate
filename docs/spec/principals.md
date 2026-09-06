@@ -125,16 +125,15 @@ The admission input (`journal.md`, *Admission input and Request*) gains one opti
 ```
 
 The signature is over `canonical_bytes` (JCS) of a document *constructed* from the request:
-the whole step-4 value minus `auth` (so a member a third party attaches to a captured request
-breaks the signature instead of producing a refusal attributed to the signer), with `tool`,
-`call_id`, `arguments`, `key` and `approval` always present, an absent one signed as `null`
-(step 4 omits absent members, and the signer and the journal must agree on one form), plus `journal_id` and the envelope's `principal` and `expires_at` (the signature covers the
+the step-4 value *exactly as delivered* minus `auth`, absent members absent (not null: an
+explicit `null` a third party attaches to a captured request is a member the signer did not
+send, and breaks the signature instead of producing a refusal attributed to the signer), plus `journal_id` and the envelope's `principal` and `expires_at` (the signature covers the
 `expires_at` *text as sent*; the stored `auth_expires_at` is that instant normalised to UTC),
 the signature itself excluded:
 
 ```json
 {"journal_id": "<the journal's>", "call_id": "<the call's, as serve derives it>",
- "tool": "...", "arguments": {...}, "key": "..." | null, "approval": {...} | null,
+ "tool": "...", "arguments": {...}, "key": "..." (when sent), "approval": {...} (when sent),
  "principal": "treasury-agent", "expires_at": "..."}
 ```
 

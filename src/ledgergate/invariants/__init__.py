@@ -950,7 +950,10 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                     )
             elif e.error_type == "revoked_principal":
                 revoked = any(ev[0] < pos and ev[1] == "revoke" for ev in principals[e.principal])
-                if not revoked or e.authentication != "transport":
+                was_transport = any(
+                    ev[1] == "add" and ev[2] == "transport" for ev in principals[e.principal]
+                )
+                if not revoked or not was_transport or e.authentication != "transport":
                     out.append(
                         Finding(
                             "attributions_are_registered",

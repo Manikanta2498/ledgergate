@@ -67,7 +67,7 @@ put `command_intent` before `tool_call`. Standalone `message` events sit at
   the verdict.
 - `approval`: the decision carries the approval presentation reference and verdict; if
   `allow`, the ledger pair follows.
-- `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error). No
+- `invalid`: `tool_call`, `invocation_resolution` (`invalid`), `tool_result` (error; schema 7: `error.type` is the admission cause code from `journal.md`'s closed vocabulary, refused by the model outside it, so a verifier and the corpus can name the refusal). No
   intent, no operation, no decision. Applies identically to write and read tools. The
   `tool_call`'s `arguments` is the empty object: the input was not admitted, the envelope's
   redacted payload stays in the journal, and nothing of it is carried into a trace.

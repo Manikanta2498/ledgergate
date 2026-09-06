@@ -298,9 +298,9 @@ two writers cannot both pass a stale count, and a full and misbound journal repo
 binding fault) the journal evaluates
 `9 * count(invocations) + count(events WHERE invocation IS NULL) + count(principal_events) + count(approver_events) + cost <= 5,000,000` (schema 7 adds the registry terms; `journal.md` owns the formula), with
 `cost` 9 for an invocation (write tool *or* audited read: a read is an invocation and derives
-up to seven events, a write up to eight) and 1 for a message, nine being the number of
+up to seven events, a write up to eight) and 1 for a message or a registry event, nine being the number of
 ordinal slots and therefore an upper bound. SQLite has no O(1) row count: each `count(*)` is
-a walk of the smallest b-tree for its table, so the check is two such walks under the lock,
+a walk of the smallest b-tree for its table, so the check is four such counts under the lock (the two registry tables are small and need no index),
 linear in rows but over compact indexes, a partial index on `events` where `invocation IS
 NULL` for the message count and a one-column index on `invocations(disposition)` for the
 invocation count (schema 6); near the bound that is on the order of a few thousand pages

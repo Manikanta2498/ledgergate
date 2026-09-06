@@ -71,8 +71,9 @@ principal, live at that sequence.
 
 ### Attribution of every invocation
 
-Every invocation row carries `principal` and `authentication`, and every `open` and every
-transaction holds the registry rule:
+Every invocation row carries `principal` and `authentication`, and every `open`, every
+invocation transaction and every registry transaction holds the registry rule (a standalone
+`message` row is unattributed, as today):
 
 - `serve --principal NAME` (and every CLI command that writes) refuses to start unless `NAME`
   is a live `transport` principal (exit `2`); if `NAME` is revoked *during* a session (another
@@ -185,7 +186,9 @@ validity is a fact about the presentation).
 
 `ThresholdPolicySet.approve_above` lines gain an optional `approvers: [names]`; the set's
 `configuration()` omits the field when absent, so every existing configuration digest is
-unchanged, and includes it when present, so a changed list is a changed policy. The policy
+unchanged, and includes it when present, so a changed list is a changed policy; an empty list
+is refused at construction (a line nobody may approve is stranded by construction and would
+pass the seeding rule vacuously). The policy
 protocol gains one **pure** method, `approvers_for(command_kind, currency, amount) ->
 frozenset[str] | None`: the names admitted by the first `approve_above` line matching those
 three fields by `evaluate`'s own predicate (kind and currency equal, amount above the line;
@@ -248,16 +251,28 @@ sees the stranding before, not after, the last revoke.
   events alongside invocations and null-invocation events; the formula is amended.
 
 `invalid` causes gain `authentication_malformed`, `unknown_principal`, `bad_signature`,
-`request_expired`, `replayed_call`, `revoked_principal`; `error_type` on the `tool_result`
-carries the cause as today.
+`request_expired`, `replayed_call`, `revoked_principal`. **Where the cause is carried.** Today
+an `invalid` call's `tool_result.error.type` is the fixed string `AdmissionError` and the
+admission code (`unknown_tool`, `missing_key`, ...) lives only in the journal's inbound
+failure envelope, which no trace carries; a trace therefore cannot say *which* refusal
+contained a call. Schema 7 changes the `invalid` outbound body: `error.type` **is the
+admission cause code** (the closed vocabulary `admission.py` already defines, plus the six
+above), `error.message` the path as today. This is a body-shape change the schema-7 bump
+licenses (`journal.md`, *Tables*, `events`), the derived `tool_result.error.type` carries it,
+the corpus's `invalid_causes` counts it, and the trace invariant's `revoked_principal`
+exemption reads it. The vocabulary is listed once, in `journal.md`'s admission section, and
+the v2 model refuses an `invalid` result whose `error.type` is outside it.
 
 ## CLI and corpus
 
 - `ledgergate keygen`, `ledgergate sign`, `ledgergate journal id`, `ledgergate journal
-  principal {add,revoke,list}`, `ledgergate journal approver {add,revoke,list}`; `journal
-  pending` lists each pending operation's admitted approvers and which are live; `create`
-  gains `--approver NAME=KEYFILE` (replacing `--approval-key`); `approve` gains `--seed-file`
-  and `--approver`; `initialize` returns `journal_id` in `_meta`.
+  principal {add,revoke,list}`, `ledgergate journal approver {add,revoke,list}` (each
+  pre-checks the registry and reports a typo as a refusal, exit `2`; the trigger behind it is
+  the guarantee, as check 4's `UNIQUE` is, so an operator error is never reported as
+  corruption); `journal pending` lists each pending operation's admitted approvers and which
+  are live; `create`
+  gains `--approver NAME=KEYFILE` (replacing `--approval-key`); `approve`'s `--signing-key`
+  becomes `--seed-file`, and its existing `--approver` is checked against the registry; `initialize` returns `journal_id` in `_meta`.
 - Corpus grammar: `setup.approvers: [{name, seed}]` (published test seeds) replaces
   `setup.approvals`; `setup.principals: [{name, seed}]` seeds signed principals; a step's
   `sign: {approver: NAME, ...}` picks the approver seed (the wrong-approver scenario signs
@@ -303,6 +318,8 @@ carries the cause as today.
   causes, so a caller on a stdio session can learn whether a name is registered. The session
   is the process owner's; a listener (M8b) decides whether to collapse them.
 - **Client libraries.** The signed `call_id` is derived from the JSON-RPC `id`
-  (`mcp-runtime.md`), so a signer must control the `id` its client sends; many MCP client
-  libraries assign it. A client that cannot is M8b's concern (a listener could accept a
+  (`mcp-runtime.md`), so a signer must control the `id` its client sends, and must keep its
+  call ids unique *per principal per journal*, not per session: a second session that restarts
+  its ids at 1 meets `replayed_call` on every reused one, which is the mechanism working.
+  Many MCP client libraries assign ids. A client that cannot is M8b's concern (a listener could accept a
   client-chosen call id in the envelope), not M8a's.

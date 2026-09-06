@@ -96,20 +96,17 @@ class TestRatchet:
     def test_baseline_regeneration_keeps_killed_entries_as_flaky_and_drops_vanished_equivalents(
         self, in_tmp: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        gate_mod.BASELINE.write_text(
-            json.dumps(
-                {
-                    "unkilled": {"m.h:d": {"function": "m.h", "bucket": "timeout", "example": "x"}},
-                    "equivalent": {
-                        "m.e:z": {"reason": "renames a local"},
-                        "m.gone:q": {"reason": "old"},
-                    },
-                }
-            )
-        )
+        old = {
+            "source": "abc",
+            "unkilled": {"m.h:d": {"function": "m.h", "bucket": "timeout", "example": "x"}},
+            "equivalent": {"m.e:z": {"reason": "renames a local"}, "m.gone:q": {"reason": "old"}},
+        }
+        gate_mod.BASELINE.write_text(json.dumps(old))
         run = _current(("m.h:d", "killed"), ("m.e:z", "survived"), ("m.f:a", "survived"))
-        assert gate_mod.write_baseline(run) == 0
+        # the same source: a killed baselined entry is a flap and stays, marked flaky
+        assert gate_mod.write_baseline(run, source="abc") == 0
         base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["source"] == "abc"
         assert (
             base["unkilled"]["m.h:d"]["bucket"] == "timeout" and base["unkilled"]["m.h:d"]["flaky"]
         )
@@ -117,6 +114,12 @@ class TestRatchet:
         out = capsys.readouterr().out
         assert "kept as flaky" in out and "dropped equivalent" in out
         assert gate_mod.gate(run) == 0
+        # a moved source: the kill is a new test's doing and the entry is dropped
+        gate_mod.BASELINE.write_text(json.dumps(old))
+        assert gate_mod.write_baseline(run, source="def") == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["source"] == "def" and "m.h:d" not in base["unkilled"]
+        assert "dropped 1 baselined entries killed by the moved source" in capsys.readouterr().out
 
 
 class TestCheckedInBaseline:
@@ -130,7 +133,7 @@ class TestCheckedInBaseline:
 
     def test_baseline_shape(self) -> None:
         baseline = json.loads((ROOT / ".mutation-baseline.json").read_text())
-        assert set(baseline) == {"_", "unkilled", "equivalent"}
+        assert set(baseline) == {"_", "source", "unkilled", "equivalent"}
         for key, entry in baseline["unkilled"].items():
             assert entry["bucket"] in gate_mod.BUCKETS and key.startswith(entry["function"] + ":")
         for entry in baseline["equivalent"].values():

@@ -10,9 +10,10 @@ positional renumbering, and compares the unkilled set with ``.mutation-baseline.
             mutant (vanished); warn if a baselined key is killed this run (stale: the runner
             flaps on some mutants, so a stale entry is regenerated away, never a red night) or
             changed bucket.
-  baseline  write the baseline from this run, keeping (marked `flaky`) every previously
-            baselined entry the run killed, and every `equivalent` entry whose key still exists
-            and is unkilled; print what it kept and dropped.
+  baseline  write the baseline from this run and record the source commit. A previously
+            baselined entry the run killed is kept (marked `flaky`) when the run was over the
+            same source as the baseline (a flap), and dropped when the source moved (a new
+            test killed it). `--source SHA` names the results' commit; default `git HEAD`.
   count     print the baseline's total (the number the README states).
 
 ``baseline --from-results FILE`` takes the statuses from a ``mutmut results --all true``
@@ -28,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -152,21 +154,42 @@ def gate(current: dict[str, dict[str, Any]]) -> int:
     return 1 if failures else 0
 
 
-def write_baseline(current: dict[str, dict[str, Any]]) -> int:
+def _source_commit() -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - git from PATH, no input
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out or None
+
+
+def write_baseline(current: dict[str, dict[str, Any]], source: str | None = None) -> int:
     old = load_baseline()
+    source = source or _source_commit()
+    same_source = source is not None and old.get("source") == source
     unkilled = {
         key: {"function": info["function"], "bucket": info["bucket"], "example": info["names"][0]}
         for key, info in sorted(current.items())
         if info["bucket"] != "killed" and key not in old["equivalent"]
     }
     preserved = []
+    dropped_killed = []
     for key, entry in old["unkilled"].items():
         if key in current and key not in unkilled:
-            # baselined before, killed in this run: a mutant killed on one run and not another
-            # is unkilled *sometimes*, which is not proven; it stays, marked flaky, and leaves
-            # only by hand (the baseline file is the memory the nightly has none of)
-            unkilled[key] = {**entry, "flaky": True}
-            preserved.append(key)
+            if same_source:
+                # baselined before, killed in a run over the *same* source: a mutant killed on
+                # one run and not another is unkilled *sometimes*, which is not proven; it
+                # stays, marked flaky, and leaves only by hand (the baseline is the memory the
+                # nightly has none of)
+                unkilled[key] = {**entry, "flaky": True}
+                preserved.append(key)
+            else:
+                # the source moved: a new or stronger test killed it, which is progress
+                dropped_killed.append(key)
     equivalent = {
         k: v
         for k, v in old["equivalent"].items()
@@ -175,6 +198,7 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     dropped = sorted(set(old["equivalent"]) - set(equivalent))
     doc = {
         "_": "docs/spec/assurance.md, the mutation gate; regenerate with `make mutation-baseline`",
+        "source": source,
         "unkilled": dict(sorted(unkilled.items())),
         "equivalent": dict(sorted(equivalent.items())),
     }
@@ -185,7 +209,9 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     summary = f"{len(unkilled)} unkilled ({dict(by_bucket)}), {len(equivalent)} equivalent"
     print(f"baseline written: {summary}")
     for key in preserved:
-        print(f"kept as flaky (baselined, killed this run): {key}")
+        print(f"kept as flaky (baselined, killed this run over the same source): {key}")
+    if dropped_killed:
+        print(f"dropped {len(dropped_killed)} baselined entries killed by the moved source")
     for key in dropped:
         print(f"dropped equivalent (its key vanished or it is now killed): {key}")
     return 0
@@ -204,11 +230,20 @@ def main(argv: list[str]) -> int:
         print("no mutants/ directory: run `mutmut run` first", file=sys.stderr)
         return 2
     statuses = None
-    if len(argv) == 3 and argv[1] == "--from-results":
-        statuses = _parse_results(Path(argv[2]).read_text())
+    source = None
+    rest = list(argv[1:])
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--from-results" and rest:
+            statuses = _parse_results(Path(rest.pop(0)).read_text())
+        elif flag == "--source" and rest:
+            source = rest.pop(0)  # the commit the results were produced from
+        else:
+            print(f"unknown argument {flag!r}", file=sys.stderr)
+            return 2
     current = collect(statuses)
     if mode == "baseline":
-        return write_baseline(current)
+        return write_baseline(current, source)
     if mode == "gate":
         return gate(current)
     print(f"unknown mode {mode!r}: gate | baseline | count", file=sys.stderr)

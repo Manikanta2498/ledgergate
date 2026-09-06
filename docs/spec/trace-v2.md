@@ -104,6 +104,8 @@ carries the inputs, not a summary of them:
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
+Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal) and `invocation_resolution.authentication` (`transport`, `signed`, `rejected`); `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `kind` for principals, `by`, `at`), at their `journal_sequence` position; and the verdict `approval_wrong_approver` in `Verdict`.
+
 A consumer with the policy set at `policy_set_version` can recompute `decision` from
 `context` and compare. A consumer without it can verify only that the recorded evidence is
 internally consistent, and must say which of the two it did.
@@ -232,7 +234,9 @@ or aggregates the trace does not support fails. It then re-runs the configuratio
 context and requires the recorded decision, rule and reason; it needs a configuration for a set whose
 rules are wholly declarative (`ThresholdPolicySet`, `NullPolicySet`) and reports
 `no_evidence` for a subclass or a custom set, whose rules are code. `runtime.` rules are a
-closed registry (`runtime.approval_rejected`); any other is refused at load.
+closed registry (`runtime.approval_rejected`); any other is refused at load. For a schema-7 context the row also recomputes `approvers_for(command_kind, currency, amount)` from the configuration's `approve_above` lines and requires an `approval_wrong_approver` verdict exactly when `context.approval.approver` is outside that set, and an `approval_valid` one only when inside it (or the set is `None`).
+
+A second schema-7 row, `attributions_are_registered`, walks the `principal_change` and `approver_change` events to compute liveness at every sequence and requires: every resolution whose `authentication` is not `rejected` names a principal live at its sequence with the matching kind, except an `invalid` row with `error_type` `revoked_principal`, whose principal must have a `revoke` before it; every `rejected` row names a live transport principal; every `context.approval.approver` is live at its sequence; every change event's `by` is live at its sequence, except the first event of the document when it is the bootstrap `add` of a transport principal by itself. `no_evidence` for a document without change events.
 
 ## Presentations
 

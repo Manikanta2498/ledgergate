@@ -39,8 +39,11 @@ A **principal** is an identifier (the existing grammar) with an authentication k
 `principal_events` is append-only, like every journal table: `journal_sequence`, `principal`,
 `action` (`add` | `revoke`), `kind` (on `add`), `verification_key` (base64url Ed25519 on a
 `signed` add, null otherwise), `by` (the principal whose invocation appended it), `at` (the
-transaction's single clock reading). A `CHECK`-and-trigger rule makes the log monotone per
-name: exactly one `add`, at most one `revoke`, and never an `add` after a `revoke` (a new key
+transaction's single clock reading). Monotonicity per name is enforced by a partial
+`UNIQUE (principal) WHERE action = 'add'` and a `BEFORE INSERT` trigger (a `CHECK` cannot see
+other rows): an `add` requires no prior row for the name, a `revoke` requires a prior `add`
+and no prior `revoke`; so exactly one `add`, at most one `revoke`, and never an `add` after a
+`revoke` (a new key
 is a new name, so "who was `treasury-agent` at sequence *n*" has one answer, computed by
 walking the log to *n*). A name is **live at *n*** iff its `add` is at or before *n* and no
 `revoke` is. `approver_events` is the same table shape for approvers (`kind` absent).
@@ -56,9 +59,14 @@ policy that can require approval needs someone who can approve" now reads: `appr
 non-empty requires at least one approver seeded, and every name in any line's `approvers`
 (below) must be seeded. Later commands append: `ledgergate journal principal add PATH NAME
 --verification-key-file FILE` (`signed`; a `transport` add takes no key), `... revoke PATH
-NAME`, and `ledgergate journal approver add|revoke ...`. Each is an invocation of the
-principal running the command (`--principal`, or a signed request through `serve`; the CLI's
-own principal must be live), so `by` is always a recorded, attributed actor.
+NAME`, and `ledgergate journal approver add|revoke ...`. **Registry mutation is the process
+owner's alone**: these are CLI commands run by a live `transport` principal (`--principal`,
+default `local`, refused if not live), never a tool `serve` exposes and never something a
+`signed` principal can do, so an agent cannot register itself as an approver or a colleague as
+a principal. A registry event is a *standalone row in its own transaction*, allocator row
+included, with no `invocations` row (like a `message`, which is why it costs 1 in the
+capacity formula), and its trace event has no invocation anchor; `by` is the CLI's transport
+principal, live at that sequence.
 
 ### Attribution of every invocation
 
@@ -74,10 +82,21 @@ transaction holds the registry rule:
 - A request **with** an `auth` member is a signed invocation: attributed by the signature, not
   the session (a signed request over any stdio session is accepted; the session's principal
   is not consulted). `principal` = the envelope's, `authentication` = `signed`, once verified.
-- A request whose `auth` member fails is recorded `invalid` with the cause below;
-  `principal` = **the session's transport principal** (who delivered it; the claimed name is
-  caller text and is never stored, per `identifiers-and-redaction.md` §4: it resolves to a
-  registry name or it is content), `authentication` = `rejected`.
+- A request whose `auth` member fails one of the **clockless** checks (shape, unknown
+  principal, bad signature) is recorded `invalid` with the cause below; `principal` = **the
+  session's transport principal** (who delivered it; the claimed name is caller text and is
+  never stored, per `identifiers-and-redaction.md` §4: it resolves to a registry name or it is
+  content), `authentication` = `rejected`.
+- Attribution is **fixed at signature verification**: a verified envelope whose request then
+  fails (`request_expired`, `replayed_call`, or a command that does not decode) is an
+  `invalid` row with `principal` = the envelope's and `authentication` = `signed`, since the
+  signer is known and pretending otherwise would be a then-versus-now error. The **replay set**
+  is the `(principal, call_id)` pairs of verified signed invocations whose disposition is not
+  `invalid`: a rejected envelope never enters it, and neither does an expired or undecodable
+  one, so nothing a third party can send blocks a principal's own later call id.
+- Order of checks on one request: the session's `revoked_principal` check first (a revoked
+  operator's session delivers nothing, envelope or not), then the envelope's clockless checks,
+  then admission of the command, then, at the single reading, expiry and replay.
 
 `PolicyContext.principal` is the authenticated principal, so a policy line can name it.
 
@@ -91,8 +110,11 @@ The admission input (`journal.md`, *Admission input and Request*) gains one opti
 {"principal": "treasury-agent", "expires_at": "2026-09-06T12:00:30+00:00", "signature": "<base64url Ed25519>"}
 ```
 
-The signature is over `canonical_bytes` (JCS) of the **request as delivered** with the
-signature removed:
+The signature is over `canonical_bytes` (JCS) of a document *constructed* from the request:
+the step-4 value's `tool`, `call_id`, `arguments`, `key` and `approval` (an absent member is
+signed as `null`, since step 4 omits absent members and the signer and the journal must agree
+on one form), plus `journal_id` and the envelope's `principal` and `expires_at` (RFC 3339 with
+an offset, normalised as artefact timestamps are), the signature itself excluded:
 
 ```json
 {"journal_id": "<the journal's>", "call_id": "<the call's, as serve derives it>",
@@ -113,11 +135,10 @@ recomputed bytes → `invalid: bad_signature`. Admission runs on the pre-tokeniz
 (`admission.py` already sees the raw request), which is the value the client signed. The two
 checks that need the clock run at the protocol's **single reading**: in the write protocol at
 step 4 and in the read protocol at its own reading (`journal.md`), `expires_at <=
-requested_at` → `invalid: request_expired`, and `(principal, call_id)` already present among
-*verified signed* invocations → `invalid: replayed_call` (a replayed message is refused; a
-legitimate retry is a *new* call with the *same idempotency key*, which the write protocol
-answers as it always has; a rejected envelope never enters the replay set, so a forged
-`(victim, X)` cannot block the victim's later `X`). The one-reading rule is untouched.
+requested_at` → `invalid: request_expired`, and `(principal, call_id)` in the replay set →
+`invalid: replayed_call`; such a row is written in the step-3 failure-envelope shape (an
+`invalid` invocation with a null `request_digest`, the redacted raw payload including `auth`
+as an untyped blob, and its keyed `input_digest`), the one shape `invalid` has (a replayed message is refused; a legitimate retry is a *new* call with the *same idempotency key*, which the write protocol answers as it always has). The one-reading rule is untouched.
 
 **What is stored.** A verified signed invocation persists `auth_principal`, `auth_expires_at`
 and `auth_signature` on its row, like a presentation persists an artefact; the signature is
@@ -151,19 +172,25 @@ validity is a fact about the presentation).
 `ThresholdPolicySet.approve_above` lines gain an optional `approvers: [names]`; the set's
 `configuration()` omits the field when absent, so every existing configuration digest is
 unchanged, and includes it when present, so a changed list is a changed policy. The policy
-protocol gains one **pure** method, `approvers_for(context) -> frozenset[str] | None`: the
-names the line that would require approval for this context admits, or `None` for any
-approver (the null set and lines without the field return `None`; the same first-match walk
-as `evaluate`, so the answer is the line `evaluate` would name). The journal calls it,
-guarded like every policy call, as **check 1b**, after check 1 and before consumption (check
-4): a verified artefact whose authenticated approver is not in the set is the failed verdict
+protocol gains one **pure** method, `approvers_for(command_kind, currency, amount) ->
+frozenset[str] | None`: the names admitted by the first `approve_above` line matching those
+three fields, or `None` when no line matches or the matching line has no `approvers` (the
+null set always returns `None`). It is deliberately *not* a prediction of `evaluate`: it
+reads nothing but the `approve_above` lines, needs no context, no subject, no aggregates, so
+it runs before any `PolicyContext` exists and the failed-verdict rule ("on a failed verdict
+nothing of the set ran") keeps its meaning, since only this one line-lookup ran and the
+persisted context says so through the three fields it already carries. The journal calls it,
+guarded like every policy call (an exception is a configuration fault), as **check 1b**, after
+check 1 and before consumption (check 4), with the fields it has before the context is built:
+a verified artefact whose authenticated approver is not in the set is the failed verdict
 `approval_wrong_approver`, decided by the runtime as the other failed verdicts are
 (`runtime.approval_rejected`, reason = the verdict; nothing is consumed; the operation stays
 pending). The closed verdict vocabulary grows by that one value in `approvals.check_result`,
 `decisions.approval_verdict` and v2's `Verdict`, part of the schema-7 change. The existing
 rule that a policy asking for approval *after* a valid artefact was consumed is a
 configuration error stands: the wrong-approver case never reaches consumption, so it cannot
-trip it.
+trip it. Check 1 is deterministic under the write lock rather than pure in the old sense: it
+reads the registry at the presenting sequence.
 
 A line naming an approver later revoked is not a fault (the registry is history, the
 definition is not): the line can no longer be satisfied and its operations stay pending until
@@ -175,15 +202,19 @@ the operator adds an allowed approver, which `journal pending` shows.
   (`transport` | `signed` | `rejected`), derived from the invocation row, present in every
   schema-7 derivation and absent in lifted or pre-M8a documents (optional fields).
 - `policy_decision.context.approval` gains `approver` (the authenticated name when check 1
-  passed, else `null`), so a verifier can recompute `approvers_for` and check that
-  `approval_wrong_approver` was the right verdict and that `approval_valid` was allowed by the
-  line; `decision_recomputes` does exactly that for `ThresholdPolicySet` contexts (a runtime
+  passed, else `null`), so a verifier can recompute `approvers_for(command_kind, currency, amount)` from the three
+  fields every context carries (a failed-verdict context too) and check that
+  `approval_wrong_approver` was the right verdict and that `approval_valid` was admitted by
+  the line; `decision_recomputes` does exactly that for `ThresholdPolicySet` contexts (a runtime
   rule is still never recomputed as a *policy* decision; this is recomputing the input it
   keyed on).
 - Two event types, `principal_change` and `approver_change` (`name`, `action`, `kind`, `by`,
   `at`), at their `journal_sequence` position, so a verifier computes liveness at any sequence.
-- One invariant, `attributions_are_registered`: every `signed` resolution's principal is live
-  at its sequence; every verified presentation's approver (`context.approval.approver`) is
+- One invariant, `attributions_are_registered`: every resolution whose `authentication` is
+  not `rejected` names a principal live at its sequence (a `transport` one as a `transport`
+  add, a `signed` one as a `signed` add), except an `invalid: revoked_principal` row, whose
+  principal must have a `revoke` before it; a `rejected` row names the session's transport
+  principal, live; every verified presentation's approver (`context.approval.approver`) is
   live at its sequence; every change event's `by` is live at its sequence, except the first
   event of the trace when it is the bootstrap `add` of a transport principal by itself.
   `no_evidence` for a document without change events (a lifted v1, an earlier v2).
@@ -211,15 +242,19 @@ carries the cause as today.
   admit (`red-team/`), each expecting the containing mechanism (`invalid: bad_signature`,
   `runtime.approval_rejected` with `approval_wrong_approver`).
 
-## Amendments to earlier documents (made in this change)
+## Amendments to earlier documents (made in this change; the remainder at implementation)
 
-- `journal.md`: admission input gains `auth`; the write protocol's step 4 and the read
-  protocol name the expiry and replay checks at the single reading; approval check 1 reads the
-  registry, check 1b added; schema 7 tables; capacity formula; the clone limit's owner is M8c.
-- `mcp-runtime.md`: step 4 forwards `params._meta.ledgergate` as `auth`; the single-principal
-  statements become "one *transport* principal per session; any number of signed ones";
-  `initialize` carries `journal_id`.
-- `trace-v2.md`: the additive fields, the two events, the invariant, the verdict.
+- `journal.md` (made): admission input gains `auth`; write step 4 and read step 4 name the
+  expiry and replay checks at the single reading; approval check 1 reads the registry, check
+  1b added, `approvers_for` among the guarded policy calls; the tables section gains the two
+  registry tables, the `invocations` attribution columns and the new verdict; capacity
+  formula; the clone limit's owner is M8c.
+- `mcp-runtime.md` (made): step 4 forwards `params._meta.ledgergate` as `auth`; the
+  single-principal statements become "one *transport* principal per session; any number of
+  signed ones"; `initialize` carries `journal_id`; `--approval-key` becomes `--approver`.
+- `trace-v2.md` (made): the additive fields, the two events, the invariant, the verdict.
+- `corpus.md` (made): `setup.approvals` becomes `setup.approvers`; `setup.principals`,
+  `sign_as`, `sign.approver`.
 - ADR-0002 §3 body: authentication and approver identity are M8a; the network listener M8b;
   multi-tenancy is *not* claimed by any M8 row (one journal is one tenant; several tenants are
   several journals, and nothing here changes that).

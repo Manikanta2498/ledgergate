@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # The MCP runtime: `ledgergate serve` (M4)
 
 `ledgergate serve` exposes one journal as a set of MCP tools over stdio, to one client, as
-one local principal. It is a *transport*: everything it does is decode a wire message, hand
+one *transport* principal per session (and, from M8a, any number of signed principals through it; [principals](principals.md)). It is a *transport*: everything it does is decode a wire message, hand
 the journal one untyped JSON value, and encode what the journal committed. It holds no
 state of its own that the journal does not hold, decides nothing the journal does not
 decide, and returns nothing the journal did not commit. ADR-0002's roadmap row for M4 names
@@ -249,7 +249,7 @@ request was answered, once; the invariant "always answered" holds on this path t
 ## Configuration and effects
 
 `ledgergate serve --journal PATH [--create --chart chart.json] [--policy config.json]
-[--approval-key KEY] [--token-key-file FILE] [--principal NAME]`.
+[--approver NAME=KEYFILE ...] [--token-key-file FILE] [--principal NAME]` (`--approver` replaces schema 6's `--approval-key`; [principals](principals.md)).
 
 The server lives in `ledgergate.mcp`, a layer beside `runner` directly under `cli`, that imports
 `journal` (the `Journal`, its error classes, the effects it needs), `ledger` (`ChartOfAccounts`
@@ -273,7 +273,7 @@ separate `forbidden` contract (`source_modules = ["ledgergate.mcp"]`) is what en
   `--token-key-file`): `open` compares them against the definition and refuses a mismatch,
   and the server does not rebuild a set from the stored configuration, because doing so
   would let a journal dictate the rules a process runs rather than the operator.
-- `--approval-key` is the Ed25519 *verification* key text the definition records; it is
+- `--approver NAME=KEYFILE` (schema 7; formerly `--approval-key KEY`) seeds the approver registry with the Ed25519 *verification* key in the file under the name; it is
   meaningful only with `--create` (an existing journal's key is in its definition) and is
   refused otherwise.
 - `--token-key-file` selects the tokenizing admitter with that key; the CLI requires 32 or

@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: BUSL-1.1
 """Signed requests: the ``auth`` envelope of docs/spec/principals.md.
 
-The signature is Ed25519 over the JCS bytes of a document constructed from the request
-(``tool``, ``call_id``, ``arguments``, ``key``, ``approval``, absent members as ``null``),
-the journal id and the envelope's ``principal`` and ``expires_at``. The clockless checks
+The signature is Ed25519 over the JCS bytes of ``{"request": <the request exactly as
+delivered, minus auth>, "journal_id", "principal", "expires_at"}``: nesting keeps the document
+injective over the delivered value, so no member a third party attaches, whatever its name,
+can leave the signed bytes unchanged. The clockless checks
 (shape, live signer, signature) live here and run at admission; the clock checks (expiry,
 the expiry bound, replay) run in the journal at its single reading.
 """
@@ -97,15 +98,17 @@ class Attribution:
 def signed_document(
     request: dict[str, Any], *, journal_id: str, principal: str, expires_at: str
 ) -> dict[str, Any]:
-    """The document the signature covers: the request exactly as delivered minus ``auth``
-    (absent is absent, not null: any member a third party attaches, an explicit null included,
-    breaks the signature rather than producing a refusal attributed to the signer), plus the
-    journal id and the envelope's principal and expiry."""
-    doc: dict[str, Any] = {k: v for k, v in request.items() if k != "auth"}
-    doc["journal_id"] = journal_id
-    doc["principal"] = principal
-    doc["expires_at"] = expires_at
-    return doc
+    """The document the signature covers: the request exactly as delivered minus ``auth``,
+    nested under ``request`` so it cannot collide with the three envelope fields beside it
+    (absent is absent, not null: any member a third party attaches, an explicit null or a
+    member named ``principal`` included, breaks the signature rather than producing a refusal
+    attributed to the signer)."""
+    return {
+        "request": {k: v for k, v in request.items() if k != "auth"},
+        "journal_id": journal_id,
+        "principal": principal,
+        "expires_at": expires_at,
+    }
 
 
 def _b64(data: bytes) -> str:
@@ -125,6 +128,8 @@ def sign_request(
     expires_at: datetime,
 ) -> dict[str, Any]:
     """The ``auth`` envelope for ``request`` (which must not already carry one)."""
+    if "auth" in request:
+        raise ValueError("the request already carries an auth member")
     if expires_at.tzinfo is None:
         raise ValueError("expires_at must carry a timezone")
     stamp = expires_at.astimezone(UTC).isoformat()

@@ -132,10 +132,13 @@ send, and breaks the signature instead of producing a refusal attributed to the 
 the signature itself excluded:
 
 ```json
-{"journal_id": "<the journal's>", "call_id": "<the call's, as serve derives it>",
- "tool": "...", "arguments": {...}, "key": "..." (when sent), "approval": {...} (when sent),
- "principal": "treasury-agent", "expires_at": "..."}
+{"request": {"tool": "...", "call_id": "<the call's, as serve derives it>", "arguments": {...},
+             "key": "..." (when sent), "approval": {...} (when sent)},
+ "journal_id": "<the journal's>", "principal": "treasury-agent", "expires_at": "..."}
 ```
+
+The request is *nested*, so the document is injective over the delivered value: a member a
+third party attaches under any name, `principal` or `journal_id` included, changes the bytes.
 
 so a signature cannot be moved between journals, calls, tools, arguments, keys or artefacts,
 and `expires_at` is covered. A client learns `journal_id` from `initialize`'s

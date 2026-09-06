@@ -352,12 +352,11 @@ class TestSignedRequests:
             expires_at="t",
         )
         assert doc == {
-            "tool": "balance",
-            "call_id": "r1",
+            "request": {"tool": "balance", "call_id": "r1"},
             "journal_id": "j",
             "principal": "p",
             "expires_at": "t",
-        }  # absent is absent, not null; auth excluded
+        }  # absent is absent, not null; auth excluded; nested, so nothing collides
         with pytest.raises(AuthError, match="authentication_malformed"):
             verify_envelope(
                 {},
@@ -1191,3 +1190,39 @@ class TestFifthImplementationReview:
         r = j.handle(v)
         assert (r.error_type, table(j.path, "invocations")[-1][4]) == ("bad_signature", "rejected")
         assert j.handle(signed(j, {"tool": "trial_balance", "call_id": "r1"})).ok
+
+
+class TestSixthImplementationReview:
+    @pytest.mark.parametrize("member", ["journal_id", "principal", "expires_at"])
+    def test_an_attached_envelope_named_member_breaks_the_signature(
+        self, j: Journal, member: str
+    ) -> None:
+        v = signed(j, {"tool": "trial_balance", "call_id": "r1"})
+        v[member] = v["auth"].get(member, j.definition.journal_id)
+        r = j.handle(v)
+        assert (r.error_type, table(j.path, "invocations")[-1][4]) == ("bad_signature", "rejected")
+        assert j.handle(signed(j, {"tool": "trial_balance", "call_id": "r1"})).ok
+
+    def test_sign_request_refuses_a_request_that_already_carries_auth(self, j: Journal) -> None:
+        with pytest.raises(ValueError, match="already carries"):
+            signed(j, {**post("k1"), "auth": {}})
+
+    def test_revoked_principal_row_naming_a_signed_add_is_forged(self, j: Journal) -> None:
+        j.add_principal("ops", "transport")
+        other = Journal.open(
+            j.path, clock=SteppingClock(EPOCH), ids=SequentialIds(), principal="ops"
+        )
+        try:
+            other.revoke_principal("agent")  # a signed principal, revoked first
+            other.revoke_principal("local")
+        finally:
+            other.close()
+        j.handle(post("k1"))  # the revoked_principal row, after both revokes
+        doc = json.loads(dump_v2(derive_trace(j.path)))
+        assert verify(load_any(json.dumps(doc))).status == "pass"
+        forged = json.loads(json.dumps(doc))
+        for e in forged["events"]:
+            if e["type"] == "invocation_resolution" and e.get("error_type") == "revoked_principal":
+                e["principal"] = "agent"  # has a revoke before the row, but was never transport
+        card = verify(load_any(json.dumps(forged)))
+        assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"

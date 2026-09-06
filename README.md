@@ -283,8 +283,8 @@ by a positional prefix rule, ordering is total and decided in nanoseconds, and e
 cassette under `corpus/cassettes/otel/` reproduces byte for byte.
 
 **The MCP runtime (M4).** `ledgergate serve --journal PATH` exposes one journal as seven
-MCP tools over stdio to one client as one local principal. It is a transport and nothing
-more: every line is decoded by the project's I-JSON decoder before anything else looks at
+MCP tools over stdio to one client as one *transport* principal (and, since M8a, any number of
+signed principals through it). It is a transport and nothing more: every line is decoded by the project's I-JSON decoder before anything else looks at
 it, a `tools/call` becomes exactly one value handed to `Journal.handle` (the idempotency key
 and any approval artefact lifted out of the arguments, the JSON-RPC id rendered as the call
 id), and the response is the journal's committed result with `isError` for every

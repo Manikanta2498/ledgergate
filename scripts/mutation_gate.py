@@ -10,9 +10,9 @@ positional renumbering, and compares the unkilled set with ``.mutation-baseline.
             mutant (vanished); warn if a baselined key is killed this run (stale: the runner
             flaps on some mutants, so a stale entry is regenerated away, never a red night) or
             changed bucket.
-  baseline  write the baseline from this run, preserving `timeout` entries that killed this
-            run and every `equivalent` entry whose key still exists and is unkilled; print what
-            it preserved and dropped.
+  baseline  write the baseline from this run, keeping (marked `flaky`) every previously
+            baselined entry the run killed, and every `equivalent` entry whose key still exists
+            and is unkilled; print what it kept and dropped.
   count     print the baseline's total (the number the README states).
 
 ``baseline --from-results FILE`` takes the statuses from a ``mutmut results --all true``
@@ -161,8 +161,11 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     }
     preserved = []
     for key, entry in old["unkilled"].items():
-        if entry.get("bucket") == "timeout" and key in current and key not in unkilled:
-            unkilled[key] = entry
+        if key in current and key not in unkilled:
+            # baselined before, killed in this run: a mutant killed on one run and not another
+            # is unkilled *sometimes*, which is not proven; it stays, marked flaky, and leaves
+            # only by hand (the baseline file is the memory the nightly has none of)
+            unkilled[key] = {**entry, "flaky": True}
             preserved.append(key)
     equivalent = {
         k: v
@@ -182,7 +185,7 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     summary = f"{len(unkilled)} unkilled ({dict(by_bucket)}), {len(equivalent)} equivalent"
     print(f"baseline written: {summary}")
     for key in preserved:
-        print(f"preserved timeout entry that killed this run: {key}")
+        print(f"kept as flaky (baselined, killed this run): {key}")
     for key in dropped:
         print(f"dropped equivalent (its key vanished or it is now killed): {key}")
     return 0

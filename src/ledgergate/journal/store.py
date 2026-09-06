@@ -330,7 +330,12 @@ class Journal:
         (messages,) = self._conn.execute(
             "SELECT COUNT(*) FROM events WHERE invocation IS NULL"
         ).fetchone()
-        if EVENTS_PER_INVOCATION * invocations + messages + cost > MAX_TRACE_EVENTS:
+        # schema 7: registry events derive one trace event each (principals.md)
+        (registry_rows,) = self._conn.execute(
+            "SELECT (SELECT COUNT(*) FROM principal_events)"
+            " + (SELECT COUNT(*) FROM approver_events)"
+        ).fetchone()
+        if EVENTS_PER_INVOCATION * invocations + messages + registry_rows + cost > MAX_TRACE_EVENTS:
             raise CapacityError(
                 f"journal at capacity: {invocations} invocations and {messages} messages derive"
                 f" up to {EVENTS_PER_INVOCATION * invocations + messages} events against a bound"

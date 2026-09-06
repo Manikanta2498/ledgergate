@@ -432,7 +432,8 @@ class TestJournalChanges:
             ).response
             == "applied"
         )
-        monkeypatch.setattr(store, "MAX_TRACE_EVENTS", 9 + 1)  # one invocation, one message
+        # one invocation, the bootstrap registry event (schema 7), one message
+        monkeypatch.setattr(store, "MAX_TRACE_EVENTS", 9 + 1 + 1)
         assert j.record_message("user", "fits") > 0
         with pytest.raises(CapacityError, match="capacity"):
             j.handle(
@@ -440,6 +441,8 @@ class TestJournalChanges:
             )  # a read is an invocation
         with pytest.raises(CapacityError):
             j.record_message("user", "no room")
+        with pytest.raises(CapacityError):
+            j.add_principal("ops", "transport")  # a registry event costs one too
         conn = sqlite3.connect(j.path)
         assert conn.execute("SELECT COUNT(*) FROM invocations").fetchone()[0] == 1
         conn.close()

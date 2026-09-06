@@ -184,6 +184,82 @@ def json_schema() -> dict[str, Any]:
     return schema
 
 
+# ------------------------------------------------------------------ conformance levels
+
+LEVELS = ("L0", "L1", "L2", "L3")
+
+
+class Conformance(_Strict):
+    """docs/spec/assurance.md, *Conformance levels*: a rendering of one or two result documents,
+    never new evidence. ``reasons`` is every reason that holds, in the spec's fixed order."""
+
+    level: Literal["L0", "L1", "L2", "L3"]
+    reasons: tuple[str, ...]
+
+    @property
+    def line(self) -> str:
+        return f"{self.level} ({'; '.join(self.reasons)})"
+
+    def at_least(self, required: str) -> bool:
+        return LEVELS.index(self.level) >= LEVELS.index(required)
+
+
+def _single_level(r: Result) -> tuple[int, list[str]]:
+    s = r.summary
+    reasons: list[str] = []
+    partial = bool(r.selection.only) or r.selection.kind is not None
+    if partial:
+        reasons.append("partial selection")
+    if s.error:
+        reasons.append(f"error: {s.error}")
+    if s.skipped:
+        reasons.append(f"skipped: {s.skipped}")
+    scored = s.scenarios - s.skipped - s.error
+    if scored == 0:
+        reasons.append("nothing scored")
+    if s.by_kind["correct"].scenarios == 0:
+        reasons.append("no correct")
+    if s.by_kind["red-team"].scenarios == 0:
+        reasons.append("no red-team")
+    correct_failed = [x.id for x in r.scenarios if x.kind == "correct" and x.status == "fail"]
+    red_failed = [x.id for x in r.scenarios if x.kind == "red-team" and x.status == "fail"]
+    if correct_failed:
+        reasons.append(f"correct failed: {', '.join(correct_failed)}")
+    if red_failed:
+        reasons.append(f"red-team failed: {', '.join(red_failed)}")
+    l1 = (
+        not partial
+        and not s.error
+        and not s.skipped
+        and scored > 0
+        and s.by_kind["correct"].scenarios > 0
+        and not correct_failed
+    )
+    l2 = l1 and s.by_kind["red-team"].scenarios > 0 and not red_failed
+    return (2 if l2 else 1 if l1 else 0), reasons
+
+
+def conformance(candidate: Result, baseline: Result | None = None) -> Conformance:
+    """The candidate's level; with a baseline that passes the drift preconditions (else
+    ``ResultError``), raised to L3 when both are L2 and every digest is unchanged."""
+    s = candidate.summary
+    level, reasons = _single_level(candidate)
+    reasons.insert(0, f"{s.scenarios} scenarios, {s.by_kind['red-team'].scenarios} red-team")
+    if baseline is None:
+        reasons.append("no baseline")
+    else:
+        table = drift(baseline, candidate)  # raises ResultError on a precondition failure
+        base_level, _ = _single_level(baseline)
+        if base_level < 2:
+            reasons.append(f"baseline: L{base_level}")
+        changed = [row.id for row in table.rows if row.same_trace is False]
+        if changed:
+            reasons.append(f"trace changed: {', '.join(changed)}")
+        if level == 2 and base_level == 2 and not changed:
+            level = 3
+    return Conformance(level=LEVELS[level], reasons=tuple(reasons))
+
+
 # ------------------------------------------------------------------ renderers
 
 
@@ -191,6 +267,8 @@ def render_markdown(result: Result) -> str:
     s = result.summary
     lines = [
         "# LedgerGate corpus result",
+        "",
+        f"**Conformance: {conformance(result).line}**",
         "",
         f"Corpus `{result.corpus_digest[:12]}`, ledgergate {result.ledgergate_version}.",
         "",
@@ -462,6 +540,8 @@ def render_drift_json(d: Drift) -> str:
 
 
 __all__ = [
+    "LEVELS",
+    "Conformance",
     "Drift",
     "DriftRow",
     "ExpectationDoc",
@@ -474,6 +554,7 @@ __all__ = [
     "ScorecardDoc",
     "Selection",
     "Summary",
+    "conformance",
     "drift",
     "dump_result",
     "json_schema",

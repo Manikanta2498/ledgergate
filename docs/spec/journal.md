@@ -34,9 +34,7 @@ recompute. There is no third digest.
 
 **Admission input and Request.** The transport hands admission one untyped JSON value
 (M4's MCP layer decodes the wire and hands the journal the value it constructs from a
-`tools/call`, per [mcp-runtime](mcp-runtime.md) step 4; the journal never sees wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `arguments`
-(JSON object), `call_id`, `principal`, `key` (idempotency key), optional `approval`. Two
-named digests over canonical JSON (RFC 8785, below), SHA-256 in M2b and, for
+`tools/call`, per [mcp-runtime](mcp-runtime.md) step 4; the journal never sees wire bytes). Admission's *output* on success is a canonical `Request`: `tool`, `arguments` (JSON object), `call_id`, `principal`, `key` (idempotency key), optional `approval`, and from M8a (schema 7, [principals](principals.md)) optional `auth`, the signed-request envelope, whose shape and signature admission verifies before the command is decoded and whose principal then *is* the request's. Two named digests over canonical JSON (RFC 8785, below), SHA-256 in M2b and, for
 `input_digest`, keyed from M2c:
 `input_digest`, over the untyped input, is what the failure envelope records, because a
 malformed input has no `Request` to digest. It is computed by the admitter (`digest_input`),
@@ -143,8 +141,7 @@ All strictly append-only. No row is ever updated or deleted.
    (deferred to M8).** The guarantee holds within one writable file lineage. A byte copy of
    a journal carries the same `journal_id`, and each copy enforces uniqueness locally, so one
    artefact can be consumed once in each writable clone; SQLite-local constraints cannot
-   coordinate clones. Until an external consumption authority exists (M8, with the approver
-   identity work), operators must keep exactly one writable copy of a journal; a copy taken
+   coordinate clones. Until an external consumption authority exists (M8c; the approver identity work of M8a does not coordinate clones), operators must keep exactly one writable copy of a journal; a copy taken
    for backup or analysis must be treated as read-only. A consumed approval's operation
    leaves `awaiting_approval` in the same transaction (to `applied`, `rejected` or
    `denied`), so a consumed artefact never has a live operation to attach to.
@@ -202,8 +199,7 @@ they all passed and references that row. The final verdict is recorded on the `d
 row, which is written after check 4 and so can hold it. An invalid, expired or mis-scoped
 artefact never touches `approval_consumptions`.
 
-1. Signature verifies against the definition's key, else verdict `approval_invalid`. The
-   signature covers every field the artefact carries (`journal_id`, `approval_id`,
+1. Signature verifies against the key registered for the artefact's `approver` in the approver registry, live at the presenting invocation's sequence (schema 7, [principals](principals.md); before M8a, the definition's single key), else verdict `approval_invalid`. **1b** (schema 7): the authenticated approver is admitted by the policy's pure `approvers_for(context)` (or that is `None`), else verdict `approval_wrong_approver`; nothing is consumed. The signature covers every field the artefact carries (`journal_id`, `approval_id`,
    approver, `fingerprint`, `key`, subject, amount, currency, `issued_at`, `expires_at`),
    serialized per RFC 8785, so no field can be re-labelled after issuance. The two
    timestamps are normalised to UTC and signed as RFC 3339 strings with the `+00:00`
@@ -403,9 +399,7 @@ anything that references it, an operation before the invocation that references 
    M2b's identity admitter the redactor is a pass-through and the bounded payload may
    contain unredacted values. Protection of sensitive content begins with M2c, and M2b
    must not be deployed against data that needs it.
-4. **Resolve the key** in `operations` and write the invocation. The invocation's
-   `requested_at` is the transaction's *single* clock reading, taken here and reused as the
-   evaluation time of the approval checks (step 6) and of the `PolicyContext`; the only other
+4. **Resolve the key** in `operations` and write the invocation. The invocation's `requested_at` is the transaction's *single* clock reading, taken here and reused as the evaluation time of the approval checks (step 6), of the `PolicyContext`, and (schema 7, [principals](principals.md)) of a signed request's expiry and replay checks, which run here before the key is resolved and record `invalid` on failure; the only other
    reading a call may take is the core's `posted_at`, after execution. A test pins this through
    `Journal.handle` (an artefact expiring at exactly the reading the write will take is
    `approval_expired`; one expiring later is `approval_valid`):
@@ -472,7 +466,7 @@ fault of this process's injected effects (an id generator that repeats an id the
 already holds or produces an invalid one, a clock that returns a naive datetime; these are
 not verdicts on the command and must never spend its key), a transport-level I-JSON
 violation (a number outside the JCS-safe range, a non-finite
-double, an unpaired surrogate, a duplicate member name, nesting deeper than 64 levels or more than 200,000 nodes never reaches admission, and the MCP transport refuses a wire line over 16 MiB before decoding it; these transport-class bounds are what let every later stage recurse safely), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, a policy set that raises (from `evaluate`, `subject_of` or `aggregates_for`; the exception is wrapped as a configuration fault), a policy set returning a rule or reason over 1,024 characters, a subject that is not an identifier or aggregates outside the `applied.<kind>.<CCY>.<W>s -> decimal string` grammar (`W` at most ten digits, the most a `ThresholdPolicySet` window of 1..10^9 seconds can have; a custom set writing a longer window is refused here so recomputation arithmetic can never overflow), an error message over 1,024 characters (a bug in whoever built it), the journal at capacity (`CapacityError`, M4: immediately after the binding re-assertion at the start of every transaction, under the write lock, so a full and misbound journal reports the binding fault, for a write tool, an audited read or a message alike, the journal evaluates `9 * count(invocations) + count(events WHERE invocation IS NULL) + cost <= 5,000,000` with `cost` 9 for an invocation and 1 for a message, and refuses a transaction that would fail it, so a journal written under the check is always derivable, and since `open` and `derive` refuse a journal of an earlier schema, every journal an M4 build opens or derives was written under it; the remedy is a new journal, see [mcp-runtime](mcp-runtime.md) *Segmentation*), or a
+double, an unpaired surrogate, a duplicate member name, nesting deeper than 64 levels or more than 200,000 nodes never reaches admission, and the MCP transport refuses a wire line over 16 MiB before decoding it; these transport-class bounds are what let every later stage recurse safely), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, a policy set that raises (from `evaluate`, `subject_of` or `aggregates_for`; the exception is wrapped as a configuration fault), a policy set returning a rule or reason over 1,024 characters, a subject that is not an identifier or aggregates outside the `applied.<kind>.<CCY>.<W>s -> decimal string` grammar (`W` at most ten digits, the most a `ThresholdPolicySet` window of 1..10^9 seconds can have; a custom set writing a longer window is refused here so recomputation arithmetic can never overflow), an error message over 1,024 characters (a bug in whoever built it), the journal at capacity (`CapacityError`, M4: immediately after the binding re-assertion at the start of every transaction, under the write lock, so a full and misbound journal reports the binding fault, for a write tool, an audited read or a message alike, the journal evaluates `9 * count(invocations) + count(events WHERE invocation IS NULL) + count(principal_events) + count(approver_events) + cost <= 5,000,000` with `cost` 9 for an invocation and 1 for a message or a registry event (schema 7 adds the registry terms), and refuses a transaction that would fail it, so a journal written under the check is always derivable, and since `open` and `derive` refuse a journal of an earlier schema, every journal an M4 build opens or derives was written under it; the remedy is a new journal, see [mcp-runtime](mcp-runtime.md) *Segmentation*), or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error: `-32000` for a `JournalError`, the server continuing except after an `IntegrityError`; `-32603` for the core bug, after which the server exits (see [mcp-runtime](mcp-runtime.md)). This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the
@@ -520,7 +514,7 @@ is null only for an outcome no policy evaluated, which does not occur: every `ne
 and accepts serialization; a deferred transaction that upgrades to write after taking its
 snapshot can fail with `SQLITE_BUSY` and leave a result matching no recordable state.
 
-1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3; an invalid read writes
+1. Lock. 2. Cursor (as write step 2). 3. Admit (as write step 3, including a signed request's clockless checks; an invalid read writes
 `invocations` (`invalid`), the failure-envelope inbound event, `invocation_responses`
 (`invalid`, no outcome), the outbound event; commits; returns). 4. `invocations` (`read`).
 5. Inbound `events`; then, if an approval was presented, an `approvals` row with check result

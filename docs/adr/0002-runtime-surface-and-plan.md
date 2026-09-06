@@ -110,10 +110,7 @@ Write tools require an idempotency key and run the journal's write protocol; rea
 run the audited-read protocol and record the journal position they observed. What M4
 guarantees: within one local process, for a single local principal, the tools cannot
 double-apply, post an unbalanced entry, take an illegal lifecycle step, or exceed the
-configured policies. What M4 does not do: listen on a network. Authentication,
-multi-tenancy and real approver identity arrive together in M8, because a mandate without
-an authenticated principal is not a mandate; the server refuses a network transport until
-then.
+configured policies. What M4 does not do: listen on a network. Authentication of principals and real approver identity arrive in M8a ([spec/principals.md](../spec/principals.md)), transport-independent, because a mandate without an authenticated principal is not a mandate; the network listener is M8b, and it forwards signed requests and adds nothing the journal trusts. Multi-tenancy is not claimed by any M8 row: one journal is one tenant.
 
 ### 4. Trace schema v2 is built around intents and dispositions (M3)
 
@@ -174,7 +171,7 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 | M7 | Conformance levels rendered from `result.json`, a ratcheting mutation gate over the core and the registry, CodeQL and OpenSSF Scorecard, and tag-driven trusted-publishing releases with provenance; designed in [docs/spec/assurance.md](../spec/assurance.md) |
 | M8a | Authenticated principals (a registry plus Ed25519-signed requests verified in admission, transport-independent) and named approvers (a registry; policy lines may require a named approver); designed in [docs/spec/principals.md](../spec/principals.md) |
 | M8b | Network transport: a thin MCP listener that forwards signed requests and adds nothing the journal trusts |
-| M8c | External execution via outbox and reconciliation |
+| M8c | External execution via outbox and reconciliation; the cross-clone approval consumption authority |
 
 ## Consequences
 

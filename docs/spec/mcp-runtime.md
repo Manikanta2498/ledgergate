@@ -191,8 +191,7 @@ Given `params = {"name": N, "arguments": A, "_meta": M?}` on a request with JSON
    valid `trial_balance`, an invalid write).
 4. The value handed to `Journal.handle` is exactly
    `{"tool": N?, "call_id": "rpc-…", "arguments": <rest>?, "key": <key>?, "approval": <approval>?}`
-   with absent members omitted. `_meta` is not forwarded and not recorded: MCP reserves it
-   for the protocol, and nothing in it is an input to the ledger.
+   with absent members omitted, plus, from M8a (`principals.md`), `"auth": M.ledgergate` when `_meta.ledgergate` is present: the one `_meta` member forwarded, since it is the request's own authentication and the journal verifies it. Nothing else in `_meta` is forwarded or recorded: MCP reserves it for the protocol.
 
 Everything after step 4 is the journal's: admission, redaction, tokenization, disposition,
 policy, approval checks, execution, the committed response. The server adds nothing.
@@ -324,8 +323,7 @@ is not designed here; it is named as future work in ADR-0002, and nothing in M4 
 
 ## What this document does not claim
 
-- Authentication or multiple principals: one local principal, named by `--principal`
-  (default `local`), recorded in every context. M8.
+- Authentication of the *transport* principal beyond process ownership: one transport principal per session, named by `--principal` (default `local`). From M8a (`principals.md`) any number of *signed* principals may call through the same session, attributed by signature; a network listener is M8b.
 - Delivery: see the commit point above.
 - Protection against a client that opens the journal file directly: the journal's own
   constraints and the operator's file permissions are the mechanism; the server adds none.

@@ -1,5 +1,10 @@
 # LedgerGate
 
+[![CI](https://github.com/Manikanta2498/ledgergate/actions/workflows/ci.yml/badge.svg)](https://github.com/Manikanta2498/ledgergate/actions/workflows/ci.yml)
+[![Mutation gate](https://github.com/Manikanta2498/ledgergate/actions/workflows/mutation.yml/badge.svg)](https://github.com/Manikanta2498/ledgergate/actions/workflows/mutation.yml)
+[![CodeQL](https://github.com/Manikanta2498/ledgergate/actions/workflows/codeql.yml/badge.svg)](https://github.com/Manikanta2498/ledgergate/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Manikanta2498/ledgergate/badge)](https://scorecard.dev/viewer/?uri=github.com/Manikanta2498/ledgergate)
+
 **A correctness-enforcing ledger runtime for autonomous agents that move money, plus the
 invariant conformance suite that proves an agent respects financial state machines before
 deployment.**
@@ -472,6 +477,35 @@ These are enforced by CI gates, not by convention:
 The reasoning behind this order, and what was deliberately left out, is in
 [ADR-0002](docs/adr/0002-runtime-surface-and-plan.md). The normative protocols the
 milestones are built to are in [`docs/spec/`](docs/spec/).
+
+## Install
+
+Nothing is on PyPI yet: the release workflow exists and is rehearsed against TestPyPI before
+the first tag. When `0.1.0a1` ships, a release is three artefacts, each with a SLSA
+provenance bundle beside it as a release asset (`<artefact>.intoto.jsonl`):
+
+| Artefact | License | Contents |
+| :-- | :-- | :-- |
+| `ledgergate-<v>-py3-none-any.whl`, `ledgergate-<v>.tar.gz` (on PyPI and the release) | BUSL-1.1 | the runtime, `src/ledgergate` only |
+| `ledgergate-corpus-<v>.tar.gz` (release asset) | Apache-2.0 | `corpus/` and `schema/`, which are deliberately not in the wheel or sdist |
+
+```bash
+pip install ledgergate==<v>
+# provenance, through GitHub's attestation API:
+gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate \
+  --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml
+# the same check from the bundle beside the artefact, without the attestation API
+# (fully offline only with a trust root fetched earlier: gh attestation trusted-root > root.json,
+#  then --custom-trusted-root root.json):
+gh attestation verify ledgergate-<v>-py3-none-any.whl --bundle ledgergate-<v>-py3-none-any.whl.intoto.jsonl \
+  --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml
+```
+
+The Scorecard badge above is the live score, not a claim. Two of its checks are known to be
+flagged and are not worked around: `Branch-Protection` (a single-maintainer pre-alpha has no
+required reviews on `main`) and `Signed-Releases` until the first release exists with its
+bundles beside it. CodeQL runs on every pull request; whether an alert fails the check is a
+repository setting (set to `high`), not something the workflow file can claim.
 
 ## Development
 

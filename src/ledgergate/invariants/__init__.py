@@ -950,7 +950,7 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                     )
             elif e.error_type == "revoked_principal":
                 revoked = any(ev[0] < pos and ev[1] == "revoke" for ev in principals[e.principal])
-                if not revoked:
+                if not revoked or e.authentication != "transport":
                     out.append(
                         Finding(
                             "attributions_are_registered",
@@ -971,6 +971,37 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                 )
         elif isinstance(e, PolicyDecision) and e.context.approval is not None:
             approver_name = e.context.approval.approver
+            # the context's approver is the presentation's authenticated approver, or null
+            # when check 1 did not pass (or did not run): a field set independently of the
+            # presentation would switch the 1b recomputation off or misattribute an approval
+            presentation = next(
+                (
+                    p
+                    for p in t.events
+                    if isinstance(p, ApprovalPresentation)
+                    and p.intent_id == e.intent_id
+                    and e.approval is not None
+                    and p.presentation_ref == e.approval.presentation_ref
+                ),
+                None,
+            )
+            expected = (
+                presentation.approver
+                if presentation is not None
+                and presentation.verified
+                and e.context.approval.verdict != "approval_not_applicable"
+                else None
+            )
+            if approver_name != expected:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: context approver {approver_name!r} is not the"
+                        f" presentation's {expected!r}",
+                        e.intent_id,
+                    )
+                )
             if approver_name is not None and _live_at(approvers[approver_name], pos) is None:
                 out.append(
                     Finding(

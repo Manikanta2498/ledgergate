@@ -130,7 +130,8 @@ class Approval:
         try:
             issued = _aware(datetime.fromisoformat(doc["issued_at"]))
             expires = _aware(datetime.fromisoformat(doc["expires_at"]))
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
+            # OverflowError: an offset at the calendar's edge cannot be rendered in UTC
             raise ApprovalError("approval timestamps must be RFC 3339 with an offset") from exc
         for name in ("approval_id", "approver", "key"):
             try:

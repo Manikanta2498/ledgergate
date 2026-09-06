@@ -1083,3 +1083,101 @@ class TestThirdImplementationReview:
         )
         assert raised <= ADMISSION_CAUSES
         assert ADMISSION_CAUSES - raised == set(), ADMISSION_CAUSES - raised
+
+
+class TestFourthImplementationReview:
+    @pytest.mark.parametrize("stamp", ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"])
+    def test_calendar_edge_stamps_are_malformed_not_crashes(self, j: Journal, stamp: str) -> None:
+        v = signed(j, post("k1"))
+        v["auth"]["expires_at"] = stamp
+        assert j.handle(v).error_type == "authentication_malformed"
+        art = {
+            "journal_id": "0" * 32,
+            "approval_id": "a",
+            "approver": "cfo",
+            "fingerprint": "0" * 64,
+            "key": "k1",
+            "subject": None,
+            "amount": None,
+            "currency": None,
+            "issued_at": stamp,
+            "expires_at": stamp,
+            "signature": "A" * 86,
+        }
+        r = j.handle({**post("k2", call_id="c2"), "approval": art})
+        assert r.error_type == "approval_malformed"
+
+    def test_an_attached_member_breaks_the_signature_rather_than_being_attributed(
+        self, j: Journal
+    ) -> None:
+        v = signed(j, post("k1"))
+        v["smuggled"] = 1
+        r = j.handle(v)
+        assert (r.error_type, table(j.path, "invocations")[-1][4]) == ("bad_signature", "rejected")
+        assert j.handle(signed(j, post("k1"))).ok  # the genuine request still applies
+
+    def test_context_approver_is_tied_to_the_presentation(self, tmp_path: Path) -> None:
+        policy = ThresholdPolicySet(
+            version="v1", approve_above=[Threshold("open_transaction", "USD", 5_000)]
+        )
+        j = Journal.create(
+            str(tmp_path / "g.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=policy,
+            approvers={
+                "cfo": verification_key_text(CFO),
+                "controller": verification_key_text(CONTROLLER),
+            },
+        )
+        try:
+            opener = {
+                "tool": "open_transaction",
+                "call_id": "c1",
+                "key": "k1",
+                "arguments": {"transaction_id": "t", "amount": {"amount": 6000, "currency": "USD"}},
+            }
+            j.handle(opener)
+            (op,) = table(j.path, "operations")
+            art = issue(
+                CONTROLLER,
+                journal_id=j.definition.journal_id,
+                approval_id="a1",
+                approver="controller",
+                fingerprint=op[2],
+                key="k1",
+                issued_at=EPOCH,
+                expires_at=EPOCH + timedelta(days=1),
+            ).to_json()
+            assert j.handle({**opener, "call_id": "c2", "approval": art}).response == "applied"
+            doc = json.loads(dump_v2(derive_trace(j.path)))
+        finally:
+            j.close()
+        for forged_value in ("cfo", None):
+            forged = json.loads(json.dumps(doc))
+            for e in forged["events"]:
+                if e["type"] == "policy_decision" and e["context"].get("approval"):
+                    e["context"]["approval"]["approver"] = forged_value
+            card = verify(load_any(json.dumps(forged)))
+            assert {r.name: r.status for r in card.results}[
+                "attributions_are_registered"
+            ] == "fail", forged_value
+
+    def test_revoked_principal_rows_are_transport_attributed(self, j: Journal) -> None:
+        j.add_principal("ops", "transport")
+        other = Journal.open(
+            j.path, clock=SteppingClock(EPOCH), ids=SequentialIds(), principal="ops"
+        )
+        try:
+            other.revoke_principal("local")
+        finally:
+            other.close()
+        j.handle(post("k1"))
+        doc = json.loads(dump_v2(derive_trace(j.path)))
+        forged = json.loads(json.dumps(doc))
+        for e in forged["events"]:
+            if e["type"] == "invocation_resolution" and e.get("error_type") == "revoked_principal":
+                e["authentication"] = "signed"
+        card = verify(load_any(json.dumps(forged)))
+        assert {r.name: r.status for r in card.results}["attributions_are_registered"] == "fail"

@@ -125,9 +125,10 @@ The admission input (`journal.md`, *Admission input and Request*) gains one opti
 ```
 
 The signature is over `canonical_bytes` (JCS) of a document *constructed* from the request:
-the step-4 value's `tool`, `call_id`, `arguments`, `key` and `approval` (an absent member is
-signed as `null`, since step 4 omits absent members and the signer and the journal must agree
-on one form), plus `journal_id` and the envelope's `principal` and `expires_at` (the signature covers the
+the whole step-4 value minus `auth` (so a member a third party attaches to a captured request
+breaks the signature instead of producing a refusal attributed to the signer), with `tool`,
+`call_id`, `arguments`, `key` and `approval` always present, an absent one signed as `null`
+(step 4 omits absent members, and the signer and the journal must agree on one form), plus `journal_id` and the envelope's `principal` and `expires_at` (the signature covers the
 `expires_at` *text as sent*; the stored `auth_expires_at` is that instant normalised to UTC),
 the signature itself excluded:
 
@@ -264,7 +265,9 @@ sees the stranding before, not after, the last revoke.
   (`transport` | `signed` | `rejected`), derived from the invocation row, present in every
   schema-7 derivation and absent in lifted or pre-M8a documents (optional fields).
 - `policy_decision.context.approval` gains `approver` (the authenticated name when check 1
-  passed, else `null`), so a verifier can recompute `approvers_for(command_kind, currency, amount)` from the three
+  passed, else `null`; the invariant requires it to equal the referenced presentation's
+  `approver` when that presentation is verified and the verdict is not
+  `approval_not_applicable`, else `null`, so it cannot be set independently), so a verifier can recompute `approvers_for(command_kind, currency, amount)` from the three
   fields every context carries (a failed-verdict context too) and check that
   `approval_wrong_approver` was the right verdict and that `approval_valid` was admitted by
   the line; `decision_recomputes` does exactly that for `ThresholdPolicySet` contexts (a runtime

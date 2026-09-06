@@ -98,9 +98,13 @@ class Attribution:
 def signed_document(
     request: dict[str, Any], *, journal_id: str, principal: str, expires_at: str
 ) -> dict[str, Any]:
-    """The document the signature covers: the request's five members (absent as null), the
-    journal id and the envelope's principal and expiry."""
-    doc: dict[str, Any] = {member: request.get(member) for member in SIGNED_MEMBERS}
+    """The document the signature covers: the whole request as delivered minus ``auth`` (so a
+    member a third party attaches breaks the signature rather than being attributed to the
+    signer), with the five request members present, absent ones as null, plus the journal id
+    and the envelope's principal and expiry."""
+    doc: dict[str, Any] = {k: v for k, v in request.items() if k != "auth"}
+    for member in SIGNED_MEMBERS:
+        doc.setdefault(member, None)
     doc["journal_id"] = journal_id
     doc["principal"] = principal
     doc["expires_at"] = expires_at
@@ -143,10 +147,10 @@ def _parse_expires_at(text: Any) -> datetime:
     if not _RFC3339.fullmatch(text):
         raise AuthError("authentication_malformed")
     try:
-        at = datetime.fromisoformat(text)
-    except ValueError as exc:
+        return datetime.fromisoformat(text).astimezone(UTC)
+    except (ValueError, OverflowError) as exc:
+        # OverflowError: a shape-valid stamp at the calendar's edge has no UTC rendering
         raise AuthError("authentication_malformed") from exc
-    return at.astimezone(UTC)
 
 
 def verify_envelope(

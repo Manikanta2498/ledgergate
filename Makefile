@@ -69,6 +69,13 @@ mutation-baseline:
 	uv run mutmut run
 	uv run python scripts/mutation_gate.py baseline
 
+# The runner's statuses are the truth (docs/spec/assurance.md): download the nightly's
+# `mutation-results` artefact and rebuild the baseline from it, keys from a local run.
+mutation-baseline-from-runner:
+	@test -n "$(RESULTS)" || { echo "usage: make mutation-baseline-from-runner RESULTS=path/to/mutation-results.txt"; exit 2; }
+	test -d mutants || { rm -rf mutants; uv run mutmut run; }
+	uv run python scripts/mutation_gate.py baseline --from-results "$(RESULTS)"
+
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .hypothesis htmlcov .coverage coverage.xml mutants
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

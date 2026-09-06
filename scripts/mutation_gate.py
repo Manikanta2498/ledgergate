@@ -14,6 +14,11 @@ positional renumbering, and compares the unkilled set with ``.mutation-baseline.
             it preserved and dropped.
   count     print the baseline's total (the number the README states).
 
+``baseline --from-results FILE`` takes the statuses from a ``mutmut results --all true``
+listing (the nightly's artefact) and only the keys from the local ``mutants/``: mutant names
+and diffs are a function of the source, statuses are a function of the machine, and the
+baseline must be the runner's truth, since the runner is what gates.
+
 Run after ``mutmut run``; never runs mutmut itself.
 """
 
@@ -46,8 +51,21 @@ def _function_of(name: str) -> str:
     return name.rsplit("__mutmut_", 1)[0]
 
 
-def collect() -> dict[str, dict[str, Any]]:
-    """{key: {function, bucket, names}} for every current mutant, killed as bucket 'killed'."""
+def _parse_results(text: str) -> dict[str, str]:
+    """`mutmut results --all true` output: `    <name>: <status>` per line."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or ": " not in line:
+            continue
+        name, status = line.rsplit(": ", 1)
+        out[name] = status
+    return out
+
+
+def collect(statuses: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
+    """{key: {function, bucket, names}} for every current mutant, killed as bucket 'killed'.
+    ``statuses`` overrides the local run's statuses by mutant name (the runner's results)."""
     from mutmut.__main__ import (  # type: ignore[attr-defined]
         SourceFileMutationData,
         get_diff_for_mutant,
@@ -63,6 +81,10 @@ def collect() -> dict[str, dict[str, Any]]:
         data.load()
         for name, code in data.exit_code_by_key.items():
             status = status_by_exit_code[code]
+            if statuses is not None:
+                if name not in statuses:
+                    raise SystemExit(f"results file has no entry for {name}: not the same source")
+                status = statuses[name]
             diff = get_diff_for_mutant(name, path=path)
             body = "\n".join(line for line in diff.splitlines() if not line.startswith("# "))
             function = _function_of(name)
@@ -176,7 +198,10 @@ def main(argv: list[str]) -> int:
     if not Path("mutants").is_dir():
         print("no mutants/ directory: run `mutmut run` first", file=sys.stderr)
         return 2
-    current = collect()
+    statuses = None
+    if len(argv) == 3 and argv[1] == "--from-results":
+        statuses = _parse_results(Path(argv[2]).read_text())
+    current = collect(statuses)
     if mode == "baseline":
         return write_baseline(current)
     if mode == "gate":

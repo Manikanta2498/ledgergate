@@ -221,3 +221,8 @@ class TestSecondImplementationReview:
     def test_baseline_keys_are_disjoint(self) -> None:
         baseline = json.loads((ROOT / ".mutation-baseline.json").read_text())
         assert not set(baseline["unkilled"]) & set(baseline["equivalent"])
+
+
+def test_results_listing_is_parsed_and_must_cover_every_mutant() -> None:
+    parsed = gate_mod._parse_results("    m.f__mutmut_1: killed\n    m.f__mutmut_2: no tests\n\n")
+    assert parsed == {"m.f__mutmut_1": "killed", "m.f__mutmut_2": "no tests"}

@@ -506,6 +506,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_12"
     },
+    "ledgergate.invariants.x_committed_response_matches_journal:681668b25a9e13e0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_139"
+    },
     "ledgergate.invariants.x_committed_response_matches_journal:68256572f95c6824": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -615,6 +620,11 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_100"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9359b14b47326756": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_267"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:986f2ee266d78263": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -1476,6 +1486,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_15"
     },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:81f9a0aac4594caf": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_19"
+    },
     "ledgergate.invariants.x_denied_never_reaches_ledger:b555b3f2ede41a31": {
       "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
       "bucket": "survived",
@@ -1515,6 +1530,11 @@
       "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_21"
+    },
+    "ledgergate.invariants.x_denied_never_reaches_ledger:f177ef306278e156": {
+      "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_denied_never_reaches_ledger__mutmut_18"
     },
     "ledgergate.invariants.x_denied_never_reaches_ledger:f4939b4a8750552a": {
       "function": "ledgergate.invariants.x_denied_never_reaches_ledger",
@@ -2515,6 +2535,11 @@
       "function": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__",
       "bucket": "survived",
       "example": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init____mutmut_11"
+    },
+    "ledgergate.ledger.effects.xǁFixedClockǁ__init__:22d24e82c6da39fb": {
+      "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.effects.xǁFixedClockǁ__init____mutmut_2"
     },
     "ledgergate.ledger.effects.xǁFixedClockǁ__init__:328ff703fc9d3a62": {
       "function": "ledgergate.ledger.effects.xǁFixedClockǁ__init__",

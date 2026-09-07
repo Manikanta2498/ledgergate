@@ -388,3 +388,77 @@ class TestSignedRequestStillWorksAfterHardening:
             assert r.ok, (r.error_type, r.error_message)
         finally:
             j.close()
+
+
+class TestSecondPass:
+    def test_a_schema_7_journal_is_refused_not_opened_without_its_triggers(
+        self, tmp_path: Path
+    ) -> None:
+        """The no-replace triggers are schema 8; a journal at schema 7 lacks them and is refused
+        by the version comparison like every earlier schema, never opened under a guarantee it
+        does not have."""
+        from ledgergate.journal import SCHEMA_VERSION, ConfigurationError
+
+        assert SCHEMA_VERSION == 8
+        j = _journal(tmp_path)
+        j.close()
+        conn = sqlite3.connect(tmp_path / "j.journal")
+        for (name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_no_replace'"
+        ).fetchall():
+            conn.execute(f"DROP TRIGGER {name}")
+        # the definition row is append-only, so write the schema-7 state as SQLite allows a
+        # schema-7 build would have: through the schema table, not through the row
+        conn.execute("DROP TRIGGER definition_no_update")
+        conn.execute("UPDATE definition SET schema_version = 7")
+        conn.commit()
+        conn.close()
+        with pytest.raises(
+            ConfigurationError, match="journal is schema 7; this process is schema 8"
+        ):
+            Journal.open(
+                str(tmp_path / "j.journal"), clock=SteppingClock(EPOCH), ids=SequentialIds()
+            )
+
+    def test_a_combined_policy_message_is_bounded_not_corruption(self, tmp_path: Path) -> None:
+        from ledgergate.journal.policy import Decision
+
+        class Verbose(ThresholdPolicySet):
+            def evaluate(self, context: Any) -> Decision:
+                return Decision("deny", "v1." + "r" * 1000, "w" * 1000)
+
+        j = _journal(tmp_path, policy=Verbose(version="v1"))
+        try:
+            r = j.handle(_post("k1"))
+            assert (r.response, r.error_type) == ("denied", "PolicyDenied")
+            assert r.error_message is not None and len(r.error_message) == 1024
+        finally:
+            j.close()
+
+    def test_sign_refuses_an_oversized_request_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        seed = tmp_path / "s.seed"
+        assert main(["keygen", "--seed-file", str(seed)]) == 0
+        capsys.readouterr()
+        req = tmp_path / "req.json"
+        with req.open("wb") as f:
+            f.write(b'{"tool":"post","call_id":"c","arguments":{"x":"')
+            f.write(b"a" * (16 * 1024 * 1024))
+            f.write(b'"}}')
+        assert (
+            main(
+                [
+                    "sign",
+                    str(req),
+                    "--seed-file",
+                    str(seed),
+                    "--journal-id",
+                    "0" * 32,
+                    "--principal",
+                    "a",
+                ]
+            )
+            == 2
+        )
+        assert "byte bound" in capsys.readouterr().err

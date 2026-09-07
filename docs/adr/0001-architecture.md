@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR 0001: Hexagonal core, injected effects, schema as the interop contract
 
 - Status: Accepted

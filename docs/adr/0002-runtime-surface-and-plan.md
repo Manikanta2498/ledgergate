@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR 0002: A runtime surface, a durable journal, and an authority layer
 
 - Status: Accepted

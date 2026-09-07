@@ -912,7 +912,7 @@ class Journal:
                 "awaiting_approval",
                 False,
                 error_type="ApprovalRejected",
-                error_message=f"{decision.matched_rule}: {decision.reason}",
+                error_message=_bounded_message(f"{decision.matched_rule}: {decision.reason}"),
                 outcome=tip,
             )
             self._respond(inv_seq, disposition, tip, "awaiting_approval", response)
@@ -926,7 +926,7 @@ class Journal:
                 kind,
                 False,
                 error_type="PolicyDenied" if kind == "denied" else "ApprovalRequired",
-                error_message=f"{decision.matched_rule}: {decision.reason}",
+                error_message=_bounded_message(f"{decision.matched_rule}: {decision.reason}"),
                 outcome=outcome_seq,
             )
             self._respond(inv_seq, disposition, outcome_seq, kind, response)
@@ -1038,7 +1038,7 @@ class Journal:
                     "denied",
                     False,
                     error_type="PolicyDenied",
-                    error_message=f"{decision.matched_rule}: {decision.reason}",
+                    error_message=_bounded_message(f"{decision.matched_rule}: {decision.reason}"),
                 )
                 self._respond(inv_seq, "read", None, "denied", response)
                 return response

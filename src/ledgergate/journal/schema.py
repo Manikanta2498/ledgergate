@@ -24,7 +24,9 @@ from pathlib import Path
 # 7: principal and approver registries (docs/spec/principals.md); invocations carry the
 #    authenticated attribution and the verified auth envelope, with the replay UNIQUE;
 #    approval_wrong_approver in both verdict vocabularies; the definition carries no key
-SCHEMA_VERSION = 7
+# 8: a BEFORE INSERT no-replace trigger per table (INSERT OR REPLACE refused on every
+#    connection); a schema-7 journal lacks them and is refused like every earlier schema
+SCHEMA_VERSION = 8
 
 FACT_TABLES = (
     "definition",

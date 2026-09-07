@@ -28,7 +28,7 @@ the package's `__version__`. The trace and result schemas carry their own versio
   cause/authentication matrix, reads bound to their principal, replay not bounded by the v1
   document limit, lossless legacy digests, codec bounds as a replay finding, calendar-edge
   timestamps as validation errors.
-- Journal: `INSERT OR REPLACE` refused by a trigger on every connection; rendered ledger error
+- Journal (schema 8): `INSERT OR REPLACE` refused by a trigger on every connection, a schema-7 journal refused like every earlier one; rendered ledger error
   messages bounded rather than classified as corruption; verification keys stored canonically.
 - CLI: `verify --emit-trace` refuses to alias its source; `sign` reads bounded I-JSON;
   `journal pending` reports `unknown` for a custom set; `approve` bounds `--valid-hours` and

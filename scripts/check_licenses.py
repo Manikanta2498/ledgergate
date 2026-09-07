@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+# SPDX-License-Identifier: Apache-2.0
 """Fail if any file in a license-critical directory lacks a license declaration.
 
 This repository is deliberately mixed-license: the runtime is BUSL-1.1 and the corpus and
@@ -57,6 +59,8 @@ REGIONS: list[Region] = [
     Region("src/ledgergate", "BUSL-1.1"),
     Region("corpus", "Apache-2.0", license_text="LICENSE"),
     Region("schema", "Apache-2.0", license_text="LICENSE"),
+    Region("docs", "Apache-2.0"),
+    Region("scripts", "Apache-2.0"),
 ]
 
 # Comment prefixes by extension. A file type absent from this map cannot carry an inline
@@ -69,6 +73,9 @@ COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
     ".toml": ("#",),
     ".cfg": ("#",),
     ".sh": ("#",),
+    # Markdown carries its header inside an HTML comment block; the identifier line itself
+    # has no prefix, so bare lines within the header window are accepted, as for a sidecar.
+    ".md": ("",),
 }
 
 # Only build artefacts are skipped. Directory names such as LICENSES are *not* exempt
@@ -96,7 +103,7 @@ def _declared_identifier(text: str, prefixes: tuple[str, ...]) -> str | None:
     """
     for raw in text.splitlines()[:HEADER_LINES]:
         line = raw.strip()
-        if prefixes:
+        if prefixes and prefixes != ("",):
             matched = next((p for p in prefixes if line.startswith(p)), None)
             if matched is None:
                 continue

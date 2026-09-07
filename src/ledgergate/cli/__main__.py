@@ -326,6 +326,7 @@ def sign_command(args: argparse.Namespace) -> int:
     from ledgergate.journal.auth import SIGN_CAP_SECONDS
     from ledgergate.ledger import InvalidIdentifierError
     from ledgergate.ledger.identifiers import require_identifier
+    from ledgergate.mcp.server import MAX_LINE_BYTES
 
     if not 0 < args.expires_in <= SIGN_CAP_SECONDS:
         print(f"--expires-in must be within 1..{SIGN_CAP_SECONDS}", file=sys.stderr)
@@ -337,7 +338,11 @@ def sign_command(args: argparse.Namespace) -> int:
         return 2
     try:
         private = _read_seed(args.seed_file)
-        request = ijson_loads(args.request.read_bytes())  # bounded; duplicate members refused
+        raw_request = args.request.read_bytes()
+        if len(raw_request) > MAX_LINE_BYTES:
+            print(f"request exceeds the transport's {MAX_LINE_BYTES} byte bound", file=sys.stderr)
+            return 2
+        request = ijson_loads(raw_request)  # node- and depth-bounded; duplicate members refused
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         print(f"cannot read input: {type(exc).__name__}", file=sys.stderr)
         return 2

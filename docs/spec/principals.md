@@ -5,6 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Authenticated principals and named approvers (M8a)
 
+> Schema note: M8a shipped as journal schema 7; the no-replace triggers of the 2026-09-06
+> review made the current schema 8 (`journal.md`, *Tables*). Everything here holds unchanged.
+
 ADR-0002 §3: "a mandate without an authenticated principal is not a mandate; the server
 refuses a network transport until then." Today every invocation is attributed to one
 transport-trusted principal (`--principal`, default `local`), and an approval artefact's

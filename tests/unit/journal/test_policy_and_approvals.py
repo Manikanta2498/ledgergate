@@ -866,7 +866,9 @@ class TestNoPolicyCodeOnFailedVerdict:
             (pres,) = [r for r in rows(conn, "approvals") if r[14] == "checks_passed"]
             (dec,) = [d for d in rows(conn, "decisions") if d[9] == "approval_valid"]
             inv = pres[1]
-            # (a) a valid verdict without a consumption reference is refused by the CHECK
+            # (a) a valid verdict without a consumption reference is refused by the schema:
+            # the no-replace trigger speaks first here (the invocation already has its
+            # decision), the CHECK behind it says the same; either is the schema refusing
             conn.execute("BEGIN")
             seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
             with pytest.raises(sqlite3.IntegrityError, match=r"CHECK|constraint|append-only"):
@@ -931,16 +933,35 @@ class TestNoPolicyCodeOnFailedVerdict:
                     (cons, "other", pres[0], inv),
                 )
             conn.execute("ROLLBACK")
-            # (d) a decision may not claim a presentation another invocation made
+            # (d) a decision may not claim a presentation another invocation made: against a
+            # fresh invocation (no decision of its own yet), so the named trigger is what fires
             conn.execute("BEGIN")
-            other_inv = next(r for r in rows(conn, "invocations") if r[0] != inv)[0]
+            fresh = conn.execute("INSERT INTO journal (kind) VALUES ('invocations')").lastrowid
+            conn.execute(
+                "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    fresh,
+                    None,
+                    "2026-01-01T00:00:00+00:00",
+                    "local",
+                    "transport",
+                    None,
+                    None,
+                    None,
+                    "read",
+                    None,
+                    None,
+                    "0" * 64,
+                    "fresh",
+                ),
+            )
             seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
-            with pytest.raises(sqlite3.IntegrityError, match=r"own invocation|append-only"):
+            with pytest.raises(sqlite3.IntegrityError, match="own invocation"):
                 conn.execute(
                     "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         seq,
-                        other_inv,
+                        fresh,
                         None,
                         "{}",
                         "v",

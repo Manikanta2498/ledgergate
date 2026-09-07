@@ -227,7 +227,7 @@ class TestSchemaLinks:
         conn.execute("BEGIN")
         seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
         cross = (seq, *d_a[1:10], d_b[10])  # a's decision claiming b's consumption
-        with pytest.raises(sqlite3.IntegrityError, match=r"own presentation|UNIQUE"):
+        with pytest.raises(sqlite3.IntegrityError, match=r"own presentation|UNIQUE|append-only"):
             conn.execute("INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)", cross)
         conn.execute("ROLLBACK")
         conn.close()

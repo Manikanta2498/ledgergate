@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import binascii
 import contextlib
 import json
 import sqlite3
@@ -217,7 +218,10 @@ def _admitted_approvers(conn: sqlite3.Connection) -> Any:
         return lambda _doc: "unknown"
     config = json.loads(text)
     if config.get("set") != "ledgergate.journal.policy.ThresholdPolicySet":
-        return lambda _doc: None
+        # a subclass or a custom set: its rules are code, and a declarative document under
+        # another class name says nothing this command can recompute (a CFO-only subclass
+        # would otherwise be reported as "any live approver")
+        return lambda _doc: "unknown"
     policy = ThresholdPolicySet.from_configuration(config)
 
     def admitted(doc: dict[str, Any]) -> Any:
@@ -258,6 +262,11 @@ def journal_pending(args: argparse.Namespace) -> int:
     return 0
 
 
+MAX_APPROVAL_HOURS = 24.0 * 366
+"""An artefact valid for at most a year; a non-positive, NaN or longer window issues an
+artefact that is already expired, or a blank cheque, and is refused here."""
+
+
 def _live_registry_key(conn: sqlite3.Connection, table: str, name: str) -> str | None:
     """The verification key registered under ``name`` and live at the head, or None."""
     assert table in ("principal_events", "approver_events")
@@ -272,6 +281,18 @@ def _live_registry_key(conn: sqlite3.Connection, table: str, name: str) -> str |
         (name,),
     ).fetchone()
     return None if revoked is not None else str(row[0])
+
+
+def _normalised_key(text: str) -> str:
+    """A verification key as the registry stores it: canonical unpadded base64url of the raw
+    bytes, whatever spelling (padding, whitespace) the file used, so `approve`'s comparison of
+    key text against the registry compares one spelling."""
+    from ledgergate.journal import verification_key, verification_key_text_of
+
+    try:
+        return verification_key_text_of(verification_key(text.strip()))
+    except binascii.Error as exc:  # not base64 at all: the same refusal as a wrong-length key
+        raise ValueError("not base64url") from exc
 
 
 def _read_seed(path: Path) -> Any:
@@ -301,6 +322,7 @@ def keygen_command(args: argparse.Namespace) -> int:
 
 
 def sign_command(args: argparse.Namespace) -> int:
+    from ledgergate.codec.ijson import loads as ijson_loads
     from ledgergate.journal.auth import SIGN_CAP_SECONDS
     from ledgergate.ledger import InvalidIdentifierError
     from ledgergate.ledger.identifiers import require_identifier
@@ -315,7 +337,7 @@ def sign_command(args: argparse.Namespace) -> int:
         return 2
     try:
         private = _read_seed(args.seed_file)
-        request = json.loads(args.request.read_text(encoding="utf-8"))
+        request = ijson_loads(args.request.read_bytes())  # bounded; duplicate members refused
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         print(f"cannot read input: {type(exc).__name__}", file=sys.stderr)
         return 2
@@ -385,9 +407,12 @@ def registry_command(args: argparse.Namespace) -> int:
     key_text: str | None = None
     if args.action == "add" and getattr(args, "verification_key_file", None) is not None:
         try:
-            key_text = args.verification_key_file.read_text(encoding="utf-8").strip()
+            key_text = _normalised_key(args.verification_key_file.read_text(encoding="utf-8"))
         except OSError as exc:
             print(f"cannot read key file: {exc}", file=sys.stderr)
+            return 2
+        except ValueError:
+            print("key file is not an Ed25519 verification key", file=sys.stderr)
             return 2
     try:
         journal = Journal.open(
@@ -457,8 +482,12 @@ def journal_approve(args: argparse.Namespace) -> int:
         private = signing_key_from_bytes(
             raw if len(raw) == 32 else bytes.fromhex(raw.decode("ascii").strip())
         )
-    except (ValueError, UnicodeDecodeError) as exc:
-        print(f"signing key is not a 32-byte Ed25519 private key: {exc}", file=sys.stderr)
+    except (ValueError, UnicodeDecodeError):
+        # the exception text can quote a byte of the file; a seed is never echoed
+        print("signing key is not a 32-byte Ed25519 private key", file=sys.stderr)
+        return 2
+    if not (0 < args.valid_hours <= MAX_APPROVAL_HOURS):  # NaN fails this too
+        print(f"--valid-hours must be within (0, {MAX_APPROVAL_HOURS}]", file=sys.stderr)
         return 2
     try:
         conn = _read_only(args.path)
@@ -741,9 +770,11 @@ def serve_command(args: argparse.Namespace) -> int:
         if name in approvers:
             return fail(f"--approver names {name!r} twice")
         try:
-            approvers[name] = Path(keyfile).read_text(encoding="utf-8").strip()
+            approvers[name] = _normalised_key(Path(keyfile).read_text(encoding="utf-8"))
         except OSError as exc:
             return fail(f"cannot read approver key file {keyfile!r}: {type(exc).__name__}")
+        except ValueError as exc:
+            return fail(f"approver {name!r}: not an Ed25519 verification key: {type(exc).__name__}")
     from ledgergate.journal import verification_key
 
     for name, key_text in approvers.items():
@@ -816,6 +847,18 @@ def serve_command(args: argparse.Namespace) -> int:
     return serve(journal)
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths name one file: by inode and device when both exist (symlinks and hard
+    links included), else by resolved path (an output that does not exist yet)."""
+    try:
+        if a.exists() and b.exists():
+            sa, sb = a.stat(), b.stat()
+            return (sa.st_ino, sa.st_dev) == (sb.st_ino, sb.st_dev)
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
+
+
 def verify_command(args: argparse.Namespace) -> int:
     """Exit 0 when at least one invariant ran and none failed, 1 when any failed, 2 when the
     source cannot be read, 3 when nothing could be checked (``no_evidence``: a trace that
@@ -826,6 +869,9 @@ def verify_command(args: argparse.Namespace) -> int:
     from ledgergate.trace import TraceError, dump_v2, load_any
 
     source = Path(args.source)
+    if args.emit_trace is not None and _same_file(source, args.emit_trace):
+        print("--emit-trace must not name the source: refusing to overwrite it", file=sys.stderr)
+        return 2
     try:
         with source.open("rb") as fh:
             header = fh.read(16)

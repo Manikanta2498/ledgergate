@@ -156,7 +156,7 @@ and `expires_at` is covered. A client learns `journal_id` from `initialize`'s
 **Envelope fields.** As for an artefact (`identifiers-and-redaction.md`, *Approval artefact
 fields*), every field is bounded before anything is stored: `principal` an identifier (at most
 256 characters, one line), `expires_at` RFC 3339 in the extended form with an offset
-(`YYYY-MM-DDThh:mm:ss[.f]Z|±hh:mm`, at most 64 characters; a fixed grammar, not what a parser
+(`YYYY-MM-DDThh:mm:ss[.f]Z|±hh:mm`, the offset itself within `00:00`..`23:59`, at most 64 characters; a fixed grammar, not what a parser
 tolerates, since the signature covers the text), `signature` exactly 86 base64url characters in
 canonical spelling (a non-canonical padding bit is `authentication_malformed`, so one signature
 has one spelling); an envelope outside these is

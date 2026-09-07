@@ -32,6 +32,7 @@ from ledgergate.codec import (
     MAX_TRACE_EVENTS,
     CodecError,
     IJsonError,
+    bounded_text,
     canonical_text,
     decode_command,
     digest,
@@ -55,6 +56,7 @@ from ledgergate.journal.approvals import (
     check,
     signature_verifies,
     verification_key,
+    verification_key_text_of,
 )
 from ledgergate.journal.auth import Attribution, AuthError, expiry_cause, verify_envelope
 from ledgergate.journal.policy import (
@@ -186,9 +188,10 @@ class Response:
     outcome: int | None = None
 
     def __post_init__(self) -> None:
-        # Error messages are bounded by construction (fixed text plus identifiers of at most
-        # 256 characters); a longer one is a bug in whoever built it, and would leave the
-        # journal with a row the trace cannot carry, so it is refused before any write.
+        # Error messages built from caller input are bounded where they are rendered
+        # (`_bounded_message`); one that still exceeds the trace bound is a bug in whoever
+        # built it, and would leave the journal with a row the trace cannot carry, so it is
+        # refused before any write.
         if self.error_message is not None and len(self.error_message) > MAX_TEXT:
             raise IntegrityError("error message exceeds the trace bound")
 
@@ -196,6 +199,9 @@ class Response:
         if self.ok:
             return {"ok": True, "result": self.result}
         return {"ok": False, "error": {"type": self.error_type, "message": self.error_message}}
+
+
+_bounded_message = bounded_text  # the replayer compares through the same function
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,7 +393,7 @@ class Journal:
                 require_identifier(name, "approver")
             except (InvalidIdentifierError, TypeError) as exc:
                 raise ConfigurationError(f"approver name is not an identifier: {exc}") from exc
-            verification_key(key)  # refuse a malformed key at creation
+            seeds[name] = verification_key_text_of(verification_key(key))  # canonical spelling
         lines = getattr(policy, "approve_above", ())
         if lines and not seeds:  # ThresholdPolicySet declares its lines; a custom set that
             # returns approval_required without an approver is not detectable here and its
@@ -831,7 +837,9 @@ class Journal:
                 "conflict",
                 False,
                 error_type="IdempotencyConflictError",
-                error_message=f"key {request.key!r} was used for a different request",
+                error_message=_bounded_message(
+                    f"key {request.key!r} was used for a different request"
+                ),
             )
             self._respond(inv_seq, disposition, None, "conflict", response)
             return response
@@ -932,8 +940,10 @@ class Journal:
             applied = self._ledger.execute(command, clock=effects, ids=effects)
         except LedgerError as exc:
             # The core saw the admitted command, so its message carries only tokens and
-            # operator identifiers; it is recorded as is, and a derived trace replays it.
-            message = str(exc)
+            # operator identifiers; it is recorded as rendered, bounded: an identifier of 256
+            # characters can render (`!r`, escapes) past the trace's text bound, and that is
+            # caller input, not corruption
+            message = _bounded_message(str(exc))
             outcome_seq = self._outcome(
                 op_seq, "rejected", dec_seq, head, head, error=(type(exc).__name__, message)
             )
@@ -1287,7 +1297,7 @@ class Journal:
         except (InvalidIdentifierError, TypeError) as exc:
             raise ConfigurationError(f"registry name is not an identifier: {exc}") from exc
         if key is not None:
-            verification_key(key)
+            key = verification_key_text_of(verification_key(key))  # one spelling in the registry
         with self._txn():
             self._check_binding()
             self._check_capacity(1)

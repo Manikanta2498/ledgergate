@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Spec: trace schema v2 and journal derivation
 
 Normative specification for the M3 trace format decided in
@@ -129,6 +134,24 @@ ledger_command
 ledger_result
 ```
 
+**Lossless legacy digests.** The lifted `attempted_digest` is the JCS digest of the command
+document, and v1 admits a command JCS cannot serialize: v1's frozen schema bounds only
+*payloads* (tool arguments and results) to the I-JSON safe range, so a `Money.amount` there
+is an unbounded integer, and the ledger applies such a command and records the result. The
+digest input therefore renders every integer outside the safe range as its decimal string.
+This is lossless and injective over valid v1 command documents, since every position that may
+hold a large integer is typed as an integer by the schema, so the string form is not a
+document the same position could have carried; and it is what makes the digest computable for
+*every* valid v1 document, as this section already requires.
+
+**v1 replay applies the codec's bounds, as a finding.** A schema-valid v1 command may be one
+the codec refuses to decode: v1 bounds a tag *count* and not a tag key's length, and the
+codec bounds the length. Such a document lifts and loads (its digest is over the document,
+not over a decode) and replay reports the refusal as a divergence on the pair
+(`command: recorded 'decodable', recomputed 'CodecError: ...'`), so `ledger_pairs_replay`
+fails. `load_any` and `verify` do not raise on a schema-valid v1 document; a bound the codec
+enforces and v1's schema does not is a fact about the document, reported, never a crash.
+
 **Ordering of lifted content.** A v1 document's own `seq` is the anchor, since it is
 already strictly increasing. Each v1 `ledger_command` at v1 sequence *s* yields
 `legacy_intent` (0), `invocation_resolution` (1), `ledger_command` (2) at `(s, ordinal)`,
@@ -188,6 +211,13 @@ order (its own invocation's, by construction of the ordinals); its `ledger_resul
 to the same intent by `command_id`, however far away it sits (lifted v1 results may be
 separated from their commands by other v1 events). Replay of a v2 document is the v1
 replayer over the ledger pairs alone (`TraceV2.ledger_view()`); nothing else in v2 replays.
+The view is *constructed*, not validated as a v1 document: v1's 100,000-event bound is a rule
+of the frozen v1 ingest format, not a bound on how many pairs a replayer may re-execute, and
+a document within the journal's own capacity may exceed it (50,001 pairs are 100,002 v1
+events, and such a document verifies). Every v1 rule that is about the pairs themselves this
+model already enforces on them: unique command ids, exactly one result per command, results
+after their commands, `seq` strictly increasing, and every currency they or the chart name
+declared or bundled.
 
 ## Invariants and verification
 
@@ -237,7 +267,30 @@ rules are wholly declarative (`ThresholdPolicySet`, `NullPolicySet`) and reports
 `no_evidence` for a subclass or a custom set, whose rules are code. `runtime.` rules are a
 closed registry (`runtime.approval_rejected`); any other is refused at load. For a schema-7 context the row also recomputes `approvers_for(command_kind, currency, amount)` from the configuration's `approve_above` lines and, when `context.approval.approver` is non-null (check 1 passed; 1b runs immediately after 1 and before 2, so this is the only case it can decide), requires the verdict `approval_wrong_approver` exactly when the approver is outside that set and any other verdict only when inside it or the set is `None`; conversely an `approval_wrong_approver` verdict with a null `approver` fails, since 1b cannot run without check 1.
 
-A second schema-7 row, `attributions_are_registered`, walks the `principal_change` and `approver_change` events to compute liveness at every sequence and requires: every resolution whose `authentication` is not `rejected` names a principal live at its sequence with the matching kind, except an `invalid` row with `error_type` `revoked_principal`, whose principal must have a `revoke` before it; every `rejected` row names a live transport principal; every `context.approval.approver` equals its referenced presentation's `approver` when that presentation is verified and the verdict is not `approval_not_applicable` (else null), and it, and the approver named by every verified `approval_presentation`, is live at its sequence; an `invalid` `revoked_principal` row is `transport`-attributed; every change event's `by` is a live transport principal *before* its sequence, except the first event of the document when it is the bootstrap `add` of a transport principal by itself; and each name's log is monotone (one `add`, at most one `revoke` after it), every resolution carries an attribution (a stripped one is forged), and every decision's `context.principal` equals its resolution's `principal`; else the document is forged. `no_evidence` only for a document with neither change events nor any attribution nor any authenticated approver; a document that carries attributions and no registry is judged and fails.
+A row `approval_evidence_is_consistent` judges the approval evidence against the approval
+protocol's own check order (`journal.md`, *Validation and consumption*: checks 1 to 3 run in
+order and short-circuit, the presentation row is written carrying their result, check 4 runs
+only if they all passed, and the decision row is written after it). So the presentation's
+`check_result` bounds the decision's verdict, and the row requires exactly that: `checks_passed`
+reaches `approval_valid` or `approval_already_used` (check 4's two outcomes) and nothing else;
+`approval_not_applicable` reaches only itself; any failing check result (`approval_invalid`,
+`approval_wrong_approver`, `approval_expired`, `approval_scope_mismatch`) reaches exactly that
+verdict, since the first failure *is* the result and no later check ran. `approval_valid`
+additionally requires the presentation to be `verified` with `checks_passed`, so an artefact
+whose signature did not verify, or that expired, or whose scope did not match, cannot be
+recorded as consumed. The logical `approval_id` a verified presentation carries is unique
+across the whole trace among decisions whose verdict is `approval_valid`, which is what
+`approval_consumptions`' `UNIQUE` on the logical id says: two distinct consumption *rows* are
+not two approvals, and checking the row references alone let one artefact be spent twice. And
+a `verified` presentation on any verdict but `approval_not_applicable` means check 1 passed, so
+its decision's `context.approval.approver` is non-null: without it a valid approval has no
+named approver at all and check 1b cannot be recomputed. That presence rule lives here rather
+than only in `attributions_are_registered` because a document carrying no registry events is
+`no_evidence` for that row and must still be judged; so a forgery shaped like a pre-schema-7
+document, with the registry, the attributions and the approver stripped together, is caught.
+`no_evidence` only for a trace with neither a presentation nor a decision carrying a verdict.
+
+A second schema-7 row, `attributions_are_registered`, walks the `principal_change` and `approver_change` events to compute liveness at every sequence and requires: every resolution whose `authentication` is not `rejected` names a principal live at its sequence with the matching kind, except an `invalid` row with `error_type` `revoked_principal`, whose principal must have a `revoke` before it; every `rejected` row names a live transport principal; every `context.approval.approver` equals its referenced presentation's `approver` when that presentation is verified and the verdict is not `approval_not_applicable` (else null), and it, and the approver named by every verified `approval_presentation`, is live at its sequence; an `invalid` `revoked_principal` row is `transport`-attributed; every change event's `by` is a live transport principal *before* its sequence, except the first event of the document when it is the bootstrap `add` of a transport principal by itself; and each name's log is monotone (one `add`, at most one `revoke` after it), every resolution carries an attribution (a stripped one is forged), and every decision's `context.principal` equals its resolution's `principal`; and every `invalid` row's `authentication` is the one its cause was reached under, per the schema-7 matrix (`principals.md`, *Attribution of every invocation*): the clockless envelope refusals `authentication_malformed`, `unknown_principal` and `bad_signature` are `rejected`; the causes reached only after the signature verified, `request_expired`, `request_expiry_unbounded` and `replayed_call`, are `signed`, attribution being fixed at verification; `revoked_principal` is `transport`, since a revoked session principal delivered no envelope at all; and `rejected` names no cause outside those three, because `rejected` *is* the clockless refusal. An authentication that contradicts its own cause is a then-versus-now claim the journal could not have written, so a genuine `local / rejected / bad_signature` resolution re-labelled `agent / signed / bad_signature` fails, though the forged row names a live signed principal and satisfies every liveness check it has. Else the document is forged. `no_evidence` only for a document with neither change events nor any attribution nor any authenticated approver; a document that carries attributions and no registry is judged and fails.
 
 ## Presentations
 
@@ -257,12 +310,20 @@ invocation; a `ledger_result`'s `posted_at` is the core's separate reading). The
 The boundary call *is* the intent, and the model checks it: an `invalid` call carries the
 empty arguments, no idempotency key and no presentation; a read call carries the read's tool
 and arguments and no key; a write call, with its idempotency key, decodes to the intent's
-command. Every later intent against an operation (`replay`, `conflict`, `approval`) carries
+command. A read's `attempted_digest` is its `request_digest`, and that is SHA-256 over the
+canonical `{tool, arguments, call_id, principal}` of the admitted request
+(`journal/admission.py`, `Request.request_digest`; no `key` member, since a read has none,
+and neither the artefact nor the `auth` envelope is covered). So wherever the row is attributed
+(schema 7: `principal` present) the model recomputes that digest from the read intent and the
+resolution and requires equality. Both sides are over the *admitted* values, which are the
+tokenized ones a trace carries, so the recomputation is exact; and a read reassigned to
+another live principal is a document whose own digest denies it, however live that principal
+was. Every later intent against an operation (`replay`, `conflict`, `approval`) carries
 the key that created it, since the fingerprint excludes the key by design.
 
 ## Limits
 
-Every payload integer is within the I-JSON safe range (2^53 - 1), a bound the JSON Schema artefact cannot express and the model enforces, like depth and nodes. An aggregate name's window has at most ten digits, the most a `ThresholdPolicySet` window (1..10^9 seconds) can have, so recomputation arithmetic over it cannot overflow. Journal admission enforces every bound the trace has on what the journal admits or serves:
+Every payload integer is within the I-JSON safe range (2^53 - 1), a bound the JSON Schema artefact cannot express and the model enforces, like depth and nodes. (A v1 `Money.amount` is not a payload and is not bounded; see *Legacy grammar*, lossless legacy digests.) Every timestamp is one `datetime` can normalise to UTC: a stamp at either end of the calendar whose offset carries it out of range (`0001-01-01T00:00:00+01:00`) is a validation error, not the `OverflowError` the normalisation itself raises, so no caller of `load_trace` or `load_any` has to defend against a crash on a schema-shaped document. An aggregate name's window has at most ten digits, the most a `ThresholdPolicySet` window (1..10^9 seconds) can have, so recomputation arithmetic over it cannot overflow. Journal admission enforces every bound the trace has on what the journal admits or serves:
 the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per entry,
 1,024 characters for descriptions, tag keys and values, 100 tags per entry, 65,536
 characters per message; `create` refuses a chart whose trial balance would not fit the

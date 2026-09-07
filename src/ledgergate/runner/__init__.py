@@ -362,6 +362,13 @@ def _validate_scenario(sc: Scenario, path: Path) -> None:
             raise CorpusError(f"{path}: step {names[n]} sign_as names no setup principal")
         if step.sign_as_seed is not None and step.sign_as is None:
             raise CorpusError(f"{path}: step {names[n]} sign_as_seed without sign_as")
+        if step.sign_as_seed is not None:
+            try:
+                signing_key_from_bytes(unb64(step.sign_as_seed))
+            except Exception as exc:
+                raise CorpusError(
+                    f"{path}: step {names[n]} sign_as_seed is not an Ed25519 seed"
+                ) from exc
         if isinstance(step.approval, dict) and "sign" in step.approval:
             if not sc.setup.approvers:
                 raise CorpusError(f"{path}: step {names[n]} signs but setup seeds no approver")
@@ -727,12 +734,46 @@ def _bind(t: TraceV2, sc: Scenario, setup_trace: TraceV2) -> str | None:
     if len(rows) < n or len(setup_rows) != n:
         return "setup mismatch: fewer invocations than the setup"
     for i in range(n):
-        if (
-            rows[i].call.call_id != f"setup-{i + 1}"
-            or rows[i].resolution.attempted_digest != setup_rows[i].resolution.attempted_digest
+        # the whole behaviour of the setup step, not its fingerprint alone: a fingerprint
+        # excludes the idempotency key, so a step re-keyed onto an earlier one conflicts
+        # instead of applying and leaves an honest trace of an easier ledger
+        if rows[i].call.call_id != f"setup-{i + 1}" or _setup_item(rows[i]) != _setup_item(
+            setup_rows[i]
         ):
             return f"setup mismatch: invocation {i + 1}"
+    # and the state the agent started from: the balances after the setup's last invocation
+    if _balances_after(t, n) != _balances_after(setup_trace, n):
+        return "setup mismatch: starting balances"
     return None
+
+
+def _setup_item(row: _Row) -> list[Any]:
+    r = row.resolution
+    return [
+        row.call.tool,
+        row.call.idempotency_key,
+        r.disposition,
+        r.attempted_digest,
+        _produced_outcome(row),
+        row.decision.decision if row.decision else None,
+        row.decision.matched_rule if row.decision else None,
+        row.result.ok if row.result else None,
+        None if row.result is None else row.result.error and row.result.error.type,
+    ]
+
+
+def _balances_after(t: TraceV2, n: int) -> dict[str, str]:
+    """Balances after the first ``n`` invocations: the ledger pairs those rows produced."""
+    rows = _rows(t)[:n]
+    produced = {row.command.command_id for row in rows if row.command is not None}
+    view = t.ledger_view()
+    prefix = view.model_copy(
+        update={
+            "events": tuple(e for e in view.events if getattr(e, "command_id", None) in produced)
+        }
+    )
+    ledger = replay_trace(prefix).ledger
+    return {a: str(ledger.balance(a).amount) for a in sorted(t.chart_of_accounts())}
 
 
 def score(

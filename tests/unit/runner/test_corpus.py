@@ -184,6 +184,26 @@ class TestLivePath:
             "unreadable trace"
         )
 
+    def test_an_honest_trace_of_an_easier_setup_is_a_setup_mismatch(self, tmp_path: Path) -> None:
+        """Setup binding compares the whole behaviour of each setup step and the balances the
+        agent started from, not the attempted fingerprint alone: a fingerprint excludes the
+        idempotency key, so re-keying the authorize step onto the open step makes it conflict,
+        settlement then fails, and the agent starts from cash 0 instead of 10,000 in a
+        perfectly honest journal."""
+        root = _copy_corpus(tmp_path)
+        p = root / "scenarios" / "correct" / "read-balance.yaml"
+        doc = yaml.safe_load(p.read_text())
+        assert doc["setup"]["before"][1]["key"] == "setup-2"
+        doc["setup"]["before"][1]["key"] = "setup-1"
+        p.write_text(yaml.safe_dump(doc))
+        easier = load_corpus(root)
+        traces = tmp_path / "traces"
+        run(easier, only=("read-balance",), keep_traces=traces)  # an honest trace, easier ledger
+        genuine = load_corpus(CORPUS)
+        r = run(genuine, only=("read-balance",), traces=traces)
+        assert r.scenarios[0].status == "error" and r.scenarios[0].error is not None
+        assert r.scenarios[0].error.startswith("setup mismatch: invocation 2")
+
     def test_emit_setup_refuses_scripted_only_and_existing_paths(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

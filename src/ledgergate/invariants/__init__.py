@@ -348,6 +348,74 @@ def runtime_decisions_are_verdicts(t: TraceV2) -> list[Finding]:
     return out
 
 
+CHECK_RESULT_VERDICTS: dict[str, frozenset[str]] = {
+    # journal.md, *Validation and consumption*: checks 1 to 3 run in order and short-circuit,
+    # so the presentation row carries the first failure and the decision carries exactly that
+    # failure as its verdict; only a presentation whose checks all passed reaches check 4,
+    # whose two outcomes are the consumption verdicts.
+    "checks_passed": frozenset({"approval_valid", "approval_already_used"}),
+    "approval_not_applicable": frozenset({"approval_not_applicable"}),
+    "approval_invalid": frozenset({"approval_invalid"}),
+    "approval_wrong_approver": frozenset({"approval_wrong_approver"}),
+    "approval_expired": frozenset({"approval_expired"}),
+    "approval_scope_mismatch": frozenset({"approval_scope_mismatch"}),
+}
+"""Which verdict each presented check result can reach. The presentation row is written
+before check 4 and cannot carry its result; every other transition is a claim the journal
+could not have made."""
+
+
+def approval_evidence_is_consistent(t: TraceV2) -> list[Finding]:
+    """The decision's verdict is one its own presentation's check result can reach
+    (`checks_passed` to `approval_valid` or `approval_already_used`, a failing result to
+    exactly that verdict, `approval_not_applicable` to itself), `approval_valid` only on a
+    presentation that is `verified` with `checks_passed`, a verified presentation on any
+    applicable verdict names its authenticated approver in the persisted context (schema 7:
+    check 1 passed, so the context carries the name check 1b was recomputed from), and each
+    logical `approval_id` is valid at most once in the whole trace, which is what
+    `approval_consumptions`' `UNIQUE` on the logical id says: distinct consumption *rows* are
+    not distinct approvals."""
+    out: list[Finding] = []
+    presentations = {e.presentation_ref: e for e in t.events if isinstance(e, ApprovalPresentation)}
+    spent: dict[str, str] = {}
+    for iid, d in _decided(t).items():
+        if d.approval is None:
+            continue
+
+        def bad(message: str, iid: str = iid) -> None:
+            out.append(
+                Finding("approval_evidence_is_consistent", "error", f"{iid}: {message}", iid)
+            )
+
+        p = presentations.get(d.approval.presentation_ref)
+        if p is None:
+            bad(f"verdict against {d.approval.presentation_ref}, which carries no presentation")
+            continue
+        verdict = d.approval.verdict
+        if verdict not in CHECK_RESULT_VERDICTS[p.check_result]:
+            bad(f"check result {p.check_result} cannot reach verdict {verdict}")
+        if verdict == "approval_valid" and not (p.verified and p.check_result == "checks_passed"):
+            bad("approval_valid on a presentation that is not verified with checks_passed")
+        approver = None if d.context.approval is None else d.context.approval.approver
+        if p.verified and verdict != "approval_not_applicable" and approver is None:
+            # check 1 passed (the signature verified under the registered key), so the
+            # context carries the authenticated name; without it check 1b cannot be
+            # recomputed and a valid approval has no named approver at all
+            bad("a verified presentation on an applicable verdict names its approver")
+        if verdict == "approval_valid" and p.approval_id is not None:
+            if (first := spent.get(p.approval_id)) is not None:
+                bad(f"approval {p.approval_id} was already consumed by {first}")
+            else:
+                spent[p.approval_id] = iid
+    return out
+
+
+def _has_approval_evidence(t: TraceV2) -> bool:
+    return any(isinstance(e, ApprovalPresentation) for e in t.events) or any(
+        d.approval is not None for d in t.decisions().values()
+    )
+
+
 def context_matches_decision(t: TraceV2) -> list[Finding]:
     """The persisted context is about this intent: its digest and kind are the resolution's,
     its command kind, amount and currency are the command intent's, it was evaluated at the
@@ -866,13 +934,36 @@ def _live_at(events: list[tuple[int, str, Any]] | list[tuple[int, str]], pos: in
     return kind
 
 
+CAUSE_AUTHENTICATION: dict[str, str] = {
+    # principals.md, *Attribution of every invocation*: which authentication each admission
+    # cause can have been recorded under. The clockless envelope refusals are the session's
+    # rejected rows; the causes reached only after the signature verified are signed rows,
+    # attribution being fixed at verification; a revoked session principal never delivered
+    # an envelope at all, so that row is the session's transport attribution.
+    "authentication_malformed": "rejected",
+    "unknown_principal": "rejected",
+    "bad_signature": "rejected",
+    "request_expired": "signed",
+    "request_expiry_unbounded": "signed",
+    "replayed_call": "signed",
+    "revoked_principal": "transport",
+}
+REJECTING_CAUSES = frozenset(c for c, a in CAUSE_AUTHENTICATION.items() if a == "rejected")
+"""The only causes a `rejected` row can name: `rejected` *is* the envelope's clockless
+refusal, and every other cause is one a session or a verified signer reached."""
+
+
 def attributions_are_registered(t: TraceV2) -> list[Finding]:
     """Every attribution names a registry entry live at its sequence (principals.md): a
     non-rejected resolution's principal with the matching kind (a revoked_principal row's
     principal has a revoke before it instead), a rejected row's session principal as a live
     transport principal, every authenticated approver and every verified presentation's
     approver, and every change event's `by` as a live transport principal, the bootstrap
-    add by itself excepted."""
+    add by itself excepted. Every `invalid` row's authentication is the one its cause was
+    reached under (the schema-7 cause matrix: the clockless envelope refusals are `rejected`,
+    the causes past verification are `signed`, a revoked session principal is `transport`),
+    and `rejected` names no other cause: an authentication that contradicts its own cause is
+    a then-versus-now claim the journal could not have written."""
     out: list[Finding] = []
     principals, approvers = _liveness(t)
     # the log is monotone per name (one add, at most one revoke after it, nothing after a
@@ -937,6 +1028,27 @@ def attributions_are_registered(t: TraceV2) -> list[Finding]:
                 )
         elif isinstance(e, InvocationResolution) and e.authentication is not None:
             assert e.principal is not None
+            expected = CAUSE_AUTHENTICATION.get(e.error_type or "")
+            if expected is not None and e.authentication != expected:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: {e.error_type} is reached under {expected}"
+                        f" authentication, the row says {e.authentication}",
+                        e.intent_id,
+                    )
+                )
+            if e.authentication == "rejected" and e.error_type not in REJECTING_CAUSES:
+                out.append(
+                    Finding(
+                        "attributions_are_registered",
+                        "error",
+                        f"{e.intent_id}: a rejected envelope's cause is one of"
+                        f" {sorted(REJECTING_CAUSES)}, not {e.error_type}",
+                        e.intent_id,
+                    )
+                )
             if e.authentication == "rejected":
                 if _live_at(principals[e.principal], pos) != "transport":
                     out.append(
@@ -1166,6 +1278,13 @@ REGISTRY: tuple[Invariant, ...] = (
         "docs/spec/journal.md, approval artefacts",
         runtime_decisions_are_verdicts,
         lambda t: bool(t.decisions()),
+    ),
+    Invariant(
+        "approval_evidence_is_consistent",
+        approval_evidence_is_consistent.__doc__ or "",
+        "docs/spec/journal.md, approval protocol (checks 1..4)",
+        approval_evidence_is_consistent,
+        _has_approval_evidence,
     ),
     Invariant(
         "context_matches_decision",

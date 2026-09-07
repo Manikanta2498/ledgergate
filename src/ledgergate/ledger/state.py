@@ -32,6 +32,7 @@ from ledgergate.ledger.errors import (
     EntryNotAllowedError,
     EntryRequiredError,
     IdempotencyConflictError,
+    IllegalTransitionError,
     InsufficientFundsError,
     InvalidAmountError,
     UnknownEntryError,
@@ -83,6 +84,12 @@ class Advance:
     transaction_id: str
     event: TransactionEvent
     entry: EntryDraft | None = None
+
+    def __post_init__(self) -> None:
+        if self.event is TransactionEvent.REFUND:
+            # a refund is the Refund command: its destination depends on money, which Advance
+            # does not carry, and the trace vocabulary excludes it from advance
+            raise IllegalTransitionError(self.transaction_id, "advance", "refund")
 
 
 @dataclass(frozen=True, slots=True)

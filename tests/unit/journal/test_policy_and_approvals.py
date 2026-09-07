@@ -869,7 +869,7 @@ class TestNoPolicyCodeOnFailedVerdict:
             # (a) a valid verdict without a consumption reference is refused by the CHECK
             conn.execute("BEGIN")
             seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
-            with pytest.raises(sqlite3.IntegrityError, match=r"CHECK|constraint"):
+            with pytest.raises(sqlite3.IntegrityError, match=r"CHECK|constraint|append-only"):
                 conn.execute(
                     "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
@@ -935,7 +935,7 @@ class TestNoPolicyCodeOnFailedVerdict:
             conn.execute("BEGIN")
             other_inv = next(r for r in rows(conn, "invocations") if r[0] != inv)[0]
             seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
-            with pytest.raises(sqlite3.IntegrityError, match="own invocation"):
+            with pytest.raises(sqlite3.IntegrityError, match=r"own invocation|append-only"):
                 conn.execute(
                     "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (

@@ -348,12 +348,67 @@ END;
 """
 
 
+# Every UNIQUE constraint per table, as (predicate over NEW) clauses: INSERT OR REPLACE resolves
+# a conflict by deleting the existing row, and SQLite fires no DELETE trigger for that implicit
+# deletion on a connection without recursive triggers, so the append-only guarantee would rest
+# on a connection pragma a stranger's connection need not set. A BEFORE INSERT trigger runs
+# before conflict resolution and refuses the insert when any row it would replace exists.
+_UNIQUE_CLAUSES: dict[str, tuple[str, ...]] = {
+    "journal": ("journal_sequence = NEW.journal_sequence",),
+    "definition": ("journal_sequence = NEW.journal_sequence", "singleton = NEW.singleton"),
+    "operations": ("journal_sequence = NEW.journal_sequence", "key = NEW.key"),
+    "invocations": ("journal_sequence = NEW.journal_sequence",),
+    "signed_calls": (
+        "journal_sequence = NEW.journal_sequence",
+        "principal = NEW.principal AND call_id = NEW.call_id",
+    ),
+    "approvals": ("journal_sequence = NEW.journal_sequence", "invocation = NEW.invocation"),
+    "approval_consumptions": (
+        "journal_sequence = NEW.journal_sequence",
+        "approval_id = NEW.approval_id",
+    ),
+    "decisions": (
+        "journal_sequence = NEW.journal_sequence",
+        "invocation = NEW.invocation",
+        "NEW.consumption IS NOT NULL AND consumption = NEW.consumption",
+    ),
+    "outcomes": (
+        "journal_sequence = NEW.journal_sequence",
+        "NEW.previous_outcome IS NOT NULL AND previous_outcome = NEW.previous_outcome",
+        "NEW.previous_outcome IS NULL AND previous_outcome IS NULL AND operation = NEW.operation",
+    ),
+    "invocation_responses": (
+        "journal_sequence = NEW.journal_sequence",
+        "invocation = NEW.invocation",
+    ),
+    "events": (
+        "journal_sequence = NEW.journal_sequence",
+        "NEW.invocation IS NOT NULL AND invocation = NEW.invocation AND direction = NEW.direction",
+    ),
+    "reads": ("journal_sequence = NEW.journal_sequence", "invocation = NEW.invocation"),
+    "principal_events": (
+        "journal_sequence = NEW.journal_sequence",
+        "NEW.action = 'add' AND action = 'add' AND name = NEW.name",
+    ),
+    "approver_events": (
+        "journal_sequence = NEW.journal_sequence",
+        "NEW.action = 'add' AND action = 'add' AND name = NEW.name",
+    ),
+}
+
+
 def _append_only_triggers(table: str) -> str:
+    clauses = " OR ".join(f"({c})" for c in _UNIQUE_CLAUSES[table])
     return f"""
 CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table}
 BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table}
 BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS {table}_no_replace BEFORE INSERT ON {table}
+BEGIN
+    SELECT RAISE(ABORT, 'journal is append-only')
+    WHERE EXISTS (SELECT 1 FROM {table} WHERE {clauses});
+END;
 """
 
 
@@ -418,6 +473,10 @@ def connect(path: str, *, create: bool = True) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA synchronous = FULL")
+        # INSERT OR REPLACE deletes the conflicting row implicitly, and SQLite runs no DELETE
+        # trigger for that deletion unless recursive triggers are on; with them on, the
+        # append-only triggers refuse the replacement as they refuse any delete
+        conn.execute("PRAGMA recursive_triggers = ON")
     except sqlite3.Error:
         conn.close()  # a file that is not a database fails here, lazily
         raise

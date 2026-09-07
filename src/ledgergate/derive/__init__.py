@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from ledgergate.codec import CODEC_VERSION
 from ledgergate.journal.schema import SCHEMA_VERSION
 from ledgergate.trace.models import (
@@ -229,18 +231,24 @@ class _Derivation:
                 )
             )
         elif disposition != "invalid":
-            out.append(
-                (
-                    1,
-                    CommandIntent(
-                        seq=1,
-                        at=at,
-                        intent_id=iid,
-                        call_id=call_id,
-                        command=json.loads(inv["attempted_command"]),
-                    ),
+            try:
+                intent_event = CommandIntent(
+                    seq=1,
+                    at=at,
+                    intent_id=iid,
+                    call_id=call_id,
+                    command=json.loads(inv["attempted_command"]),
                 )
-            )
+            except ValidationError as exc:
+                # a committed command outside the trace vocabulary: admission and the codec now
+                # refuse these before any row exists (an `advance` with event `refund` once
+                # slipped through); a journal written before that fix is named, not crashed on
+                raise DerivationError(
+                    f"invocation {seq}: committed command is outside the trace vocabulary and"
+                    f" this journal cannot be derived; {exc.error_count()} field error(s) at"
+                    f" {[e['loc'] for e in exc.errors()]}"
+                ) from exc
+            out.append((1, intent_event))
 
         # 2: resolution
         out.append(

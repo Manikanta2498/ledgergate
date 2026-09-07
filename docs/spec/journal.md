@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Spec: the journal
 
 Normative specification for the M2b persistence layer decided in
@@ -116,7 +121,7 @@ Three distinct things, kept distinct because conflating them was a review findin
 
 ## Tables
 
-All strictly append-only. No row is ever updated or deleted.
+All strictly append-only. No row is ever updated or deleted: `BEFORE UPDATE` and `BEFORE DELETE` triggers refuse both, and a `BEFORE INSERT` trigger per table refuses an insert that would *replace* a row (SQLite's `INSERT OR REPLACE` deletes the conflicting row implicitly and fires no `DELETE` trigger for it on a connection without recursive triggers, so the guarantee cannot rest on a connection pragma a stranger's connection need not set); the clauses enumerate every `UNIQUE` constraint of every table.
 
 | Table | Holds |
 | :--- | :--- |
@@ -362,6 +367,17 @@ milestones replace an implementation, never the protocol:
   (`ledgergate journal dump`) but derives no trace; the M2a replayer is not run against
   a journal in M2b. The roadmap says so.
 
+### Commands outside the trace vocabulary
+
+Every command the journal commits must be one the trace grammar can carry: `advance` takes the
+non-refund lifecycle events only (`LifecycleEvent` in `trace-v2.md`; a refund is the `refund`
+command, whose destination depends on money an `advance` does not carry), and both the codec
+and the core's `Advance` constructor refuse `event: refund`, so the call is `invalid:
+malformed_command` at admission and no row exists. Before this rule the journal committed a
+*rejected* row for such a call and the whole journal became non-derivable; `derive` names a
+journal written that way (`DerivationError`, the invocation and the field) rather than
+crashing on it, and the remedy is a new journal.
+
 ### Admission cause vocabulary (schema 7)
 
 The closed set of `invalid` causes, each the `error.type` of the call's `tool_result` from
@@ -484,7 +500,7 @@ fault of this process's injected effects (an id generator that repeats an id the
 already holds or produces an invalid one, a clock that returns a naive datetime; these are
 not verdicts on the command and must never spend its key), a transport-level I-JSON
 violation (a number outside the JCS-safe range, a non-finite
-double, an unpaired surrogate, a duplicate member name, nesting deeper than 64 levels or more than 200,000 nodes never reaches admission, and the MCP transport refuses a wire line over 16 MiB before decoding it; these transport-class bounds are what let every later stage recurse safely), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, a policy set that raises (from `evaluate`, `subject_of`, `aggregates_for` or, schema 7, `approvers_for`; the exception is wrapped as a configuration fault), a policy set returning a rule or reason over 1,024 characters, a subject that is not an identifier or aggregates outside the `applied.<kind>.<CCY>.<W>s -> decimal string` grammar (`W` at most ten digits, the most a `ThresholdPolicySet` window of 1..10^9 seconds can have; a custom set writing a longer window is refused here so recomputation arithmetic can never overflow), an error message over 1,024 characters (a bug in whoever built it), the journal at capacity (`CapacityError`, M4: immediately after the binding re-assertion at the start of every transaction, under the write lock, so a full and misbound journal reports the binding fault, for a write tool, an audited read or a message alike, the journal evaluates `9 * count(invocations) + count(events WHERE invocation IS NULL) + count(principal_events) + count(approver_events) + cost <= 5,000,000` with `cost` 9 for an invocation and 1 for a message or a registry event (schema 7 adds the registry terms), and refuses a transaction that would fail it, so a journal written under the check is always derivable, and since `open` and `derive` refuse a journal of an earlier schema, every journal an M4 build opens or derives was written under it; the remedy is a new journal, see [mcp-runtime](mcp-runtime.md) *Segmentation*), or a
+double, an unpaired surrogate, a duplicate member name, nesting deeper than 64 levels or more than 200,000 nodes never reaches admission, and the MCP transport refuses a wire line over 16 MiB before decoding it; these transport-class bounds are what let every later stage recurse safely), a policy set returning `approval_required` against a consumed approval or for a read intent, a policy set naming a rule in the reserved `runtime.` namespace, a policy set that raises (from `evaluate`, `subject_of`, `aggregates_for` or, schema 7, `approvers_for`; the exception is wrapped as a configuration fault), a policy set returning a rule or reason over 1,024 characters, a subject that is not an identifier or aggregates outside the `applied.<kind>.<CCY>.<W>s -> decimal string` grammar (`W` at most ten digits, the most a `ThresholdPolicySet` window of 1..10^9 seconds can have; a custom set writing a longer window is refused here so recomputation arithmetic can never overflow), an error message over 1,024 characters *after* bounding (a rendered ledger error is truncated to the bound with a marker before it is recorded, since a 256-character identifier renders, escaped, past it, and caller input is never reported as corruption; the replayer compares through the same function; a message still over the bound is a bug in whoever built it), the journal at capacity (`CapacityError`, M4: immediately after the binding re-assertion at the start of every transaction, under the write lock, so a full and misbound journal reports the binding fault, for a write tool, an audited read or a message alike, the journal evaluates `9 * count(invocations) + count(events WHERE invocation IS NULL) + count(principal_events) + count(approver_events) + cost <= 5,000,000` with `cost` 9 for an invocation and 1 for a message or a registry event (schema 7 adds the registry terms), and refuses a transaction that would fail it, so a journal written under the check is always derivable, and since `open` and `derive` refuse a journal of an earlier schema, every journal an M4 build opens or derives was written under it; the remedy is a new journal, see [mcp-runtime](mcp-runtime.md) *Segmentation*), or a
 non-`LedgerError` exception from the core (a bug): the transaction is rolled back, nothing
 is written, the caller receives an MCP error: `-32000` for a `JournalError`, the server continuing except after an `IntegrityError`; `-32603` for the core bug, after which the server exits (see [mcp-runtime](mcp-runtime.md)). This is the one class of call with no
 journal row, stated rather than hidden: the journal was unavailable, so it could not be the

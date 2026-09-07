@@ -22,7 +22,7 @@ and it is testable end to end over stdio.
 
 ## Schema 7, not a migration
 
-M8a is journal **schema 7**. As for every earlier bump (`journal.md`, *Binding*; `trace-v2.md`,
+M8a is journal **schema 7**. As for every earlier bump (`journal.md`, *Tables*, `definition`; `mcp-runtime.md`,
 *Segmentation*), `open` and `derive` refuse a schema-6 journal; a journal is re-created, never
 migrated (no row is ever updated). There is therefore no "legacy" mode inside a journal: every
 schema-7 journal has both registries, seeded at `create`, and the rules below hold from its

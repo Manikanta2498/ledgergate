@@ -420,18 +420,51 @@ class TestSecondPass:
                 str(tmp_path / "j.journal"), clock=SteppingClock(EPOCH), ids=SequentialIds()
             )
 
-    def test_a_combined_policy_message_is_bounded_not_corruption(self, tmp_path: Path) -> None:
+    def test_a_combined_policy_message_over_the_bound_is_a_configuration_fault(
+        self, tmp_path: Path
+    ) -> None:
+        """The served denial message *is* `rule: reason`, verbatim, and the verifier recomputes
+        it; so the bound applies to the rendered pair (each part alone under it is not
+        enough), as an unrecorded configuration fault, never a truncation the verifier would
+        then contradict."""
+        from ledgergate.journal import ConfigurationError
         from ledgergate.journal.policy import Decision
 
         class Verbose(ThresholdPolicySet):
             def evaluate(self, context: Any) -> Decision:
-                return Decision("deny", "v1." + "r" * 1000, "w" * 1000)
+                return Decision("deny", "v1." + "r" * 600, "w" * 600)
+
+        class AtTheBound(ThresholdPolicySet):
+            def evaluate(self, context: Any) -> Decision:
+                rule = "v1." + "r" * 500
+                return Decision("deny", rule, "w" * (1024 - len(rule) - 2))
 
         j = _journal(tmp_path, policy=Verbose(version="v1"))
+        try:
+            with pytest.raises(ConfigurationError, match="rule and reason whose message"):
+                j.handle(_post("k1"))
+            assert sqlite3.connect(j.path).execute(
+                "SELECT COUNT(*) FROM invocations"
+            ).fetchone() == (0,)
+        finally:
+            j.close()
+        j = Journal.create(
+            str(tmp_path / "b.journal"),
+            CHART,
+            clock=SteppingClock(EPOCH),
+            ids=SequentialIds(),
+            policy=AtTheBound(version="v1"),
+        )
         try:
             r = j.handle(_post("k1"))
             assert (r.response, r.error_type) == ("denied", "PolicyDenied")
             assert r.error_message is not None and len(r.error_message) == 1024
+            card = verify(derive_trace(j.path))
+            assert card.status == "pass", [
+                (x.name, [f.message[:80] for f in x.findings])
+                for x in card.results
+                if x.status == "fail"
+            ]
         finally:
             j.close()
 

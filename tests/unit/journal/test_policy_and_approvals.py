@@ -866,24 +866,48 @@ class TestNoPolicyCodeOnFailedVerdict:
             (pres,) = [r for r in rows(conn, "approvals") if r[14] == "checks_passed"]
             (dec,) = [d for d in rows(conn, "decisions") if d[9] == "approval_valid"]
             inv = pres[1]
-            # (a) a valid verdict without a consumption reference is refused by the schema:
-            # the no-replace trigger speaks first here (the invocation already has its
-            # decision), the CHECK behind it says the same; either is the schema refusing
+            # (a) a valid verdict without a consumption reference is refused by the CHECK:
+            # a fresh invocation with its own checks_passed presentation, so nothing else
+            # (no-replace, own-presentation) speaks before the CHECK does
             conn.execute("BEGIN")
+            fresh_inv = conn.execute("INSERT INTO journal (kind) VALUES ('invocations')").lastrowid
+            conn.execute(
+                "INSERT INTO invocations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    fresh_inv,
+                    next(r[1] for r in rows(conn, "invocations") if r[0] == inv),
+                    "2026-01-01T00:00:00+00:00",
+                    "local",
+                    "transport",
+                    None,
+                    None,
+                    None,
+                    "approval",
+                    "0" * 64,
+                    "{}",
+                    "0" * 64,
+                    "fresh-a",
+                ),
+            )
+            fresh_pres = conn.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
+            conn.execute(
+                "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (fresh_pres, fresh_inv, *pres[2:14], "checks_passed"),
+            )
             seq = conn.execute("INSERT INTO journal (kind) VALUES ('decisions')").lastrowid
-            with pytest.raises(sqlite3.IntegrityError, match=r"CHECK|constraint|append-only"):
+            with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
                 conn.execute(
                     "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         seq,
-                        inv,
+                        fresh_inv,
                         dec[2],
                         "{}",
                         "v",
                         "allow",
                         "r",
                         "why",
-                        pres[0],
+                        fresh_pres,
                         "approval_valid",
                         None,
                     ),

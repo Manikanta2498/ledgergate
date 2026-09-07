@@ -329,8 +329,9 @@ the payload bound (10,000 nodes, depth 32) on tool arguments, 1,000 postings per
 characters per message; `create` refuses a chart whose trial balance would not fit the
 payload bound, an account name over 1,024 characters, or a policy set whose version label
 is not an identifier (checked when the journal object is built, before any file exists); and before any row is written the
-journal refuses, as unrecorded configuration faults, an error message, rule or reason over
-1,024 characters and a policy set's subject or aggregates outside the grammars the context
+journal refuses, as unrecorded configuration faults, a policy set whose rendered `rule: reason`
+message exceeds 1,024 characters (a ledger error's rendered message is bounded by truncation
+at recording, and the replayer compares through the same bound) and a policy set's subject or aggregates outside the grammars the context
 carries. So every admitted input, every served result and every persisted context is
 representable here; `events` is bounded at 5,000,000 and derivation is
 whole-journal. A journal is kept within the bound by the journal's own per-transaction capacity

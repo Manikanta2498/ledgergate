@@ -74,7 +74,8 @@ COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
     ".cfg": ("#",),
     ".sh": ("#",),
     # Markdown carries its header inside an HTML comment block; the identifier line itself
-    # has no prefix, so bare lines within the header window are accepted, as for a sidecar.
+    # has no prefix, so any line in the header window beginning with the marker is accepted
+    # (a prose mention would count too), the same rule as a sidecar.
     ".md": ("",),
 }
 

@@ -885,7 +885,10 @@ class Journal:
         if failed_verdict:
             # A failed verdict: the runtime decides; the policy set never sees it.
             assert verdict is not None
-            decision = Decision("deny", "runtime.approval_rejected", verdict)
+            decision = self._guarded(lambda: Decision("deny", "runtime.approval_rejected", verdict))
+            # through the same bound as a policy's decision, so "every served rule: reason is
+            # within the text bound" rests on one mechanism (a closed-vocabulary verdict
+            # cannot trip it; the route is the point)
         else:
             decision = self._guarded(lambda: self.policy.evaluate(context))
             self._refuse_runtime_namespace(decision)

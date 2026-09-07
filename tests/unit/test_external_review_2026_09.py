@@ -49,6 +49,16 @@ def _journal(tmp_path: Path, **kw: Any) -> Journal:
     )
 
 
+def _one(path: str, sql: str) -> Any:
+    """One row of a read-only query over a connection that is closed again: an unclosed
+    connection is a ResourceWarning, which this suite treats as a failure."""
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute(sql).fetchone()
+    finally:
+        conn.close()
+
+
 def _post(key: str, call_id: str = "c1") -> dict[str, Any]:
     return {
         "tool": "post",
@@ -93,9 +103,7 @@ class TestP1AdvanceRefund:
                 "malformed_command",
                 "arguments.event",
             )
-            assert sqlite3.connect(j.path).execute(
-                "SELECT COUNT(*) FROM operations"
-            ).fetchone() == (0,)
+            assert _one(j.path, "SELECT COUNT(*) FROM operations") == (0,)
             assert j.handle(_post("k2")).ok
             assert verify(derive_trace(j.path)).status == "pass"
         finally:
@@ -274,19 +282,12 @@ class TestCli:
         canonical = verification_key_text(private)
         padded = canonical + "=" * (-len(canonical) % 4) + "\n"
         j = _journal(tmp_path, approvers={"cfo": padded})
-        stored = (
-            sqlite3.connect(j.path)
-            .execute("SELECT verification_key FROM approver_events WHERE name = 'cfo'")
-            .fetchone()[0]
-        )
-        assert stored == canonical
+        stored = _one(j.path, "SELECT verification_key FROM approver_events WHERE name = 'cfo'")
+        assert stored == (canonical,)
         j.add_approver("controller", padded.replace("\n", ""))
-        rows = (
-            sqlite3.connect(j.path)
-            .execute("SELECT verification_key FROM approver_events WHERE name = 'controller'")
-            .fetchall()
-        )
-        assert rows == [(canonical,)]
+        assert _one(
+            j.path, "SELECT verification_key FROM approver_events WHERE name = 'controller'"
+        ) == (canonical,)
         j.close()
         keyfile = tmp_path / "k.pub"
         keyfile.write_text("not a key\n")
@@ -443,9 +444,7 @@ class TestSecondPass:
         try:
             with pytest.raises(ConfigurationError, match="rule and reason whose message"):
                 j.handle(_post("k1"))
-            assert sqlite3.connect(j.path).execute(
-                "SELECT COUNT(*) FROM invocations"
-            ).fetchone() == (0,)
+            assert _one(j.path, "SELECT COUNT(*) FROM invocations") == (0,)
         finally:
             j.close()
         j = Journal.create(

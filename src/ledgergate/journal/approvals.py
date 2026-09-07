@@ -206,6 +206,14 @@ def verification_key(text: str) -> Ed25519PublicKey:
     return Ed25519PublicKey.from_public_bytes(_unb64(text))
 
 
+def verification_key_text_of(public: Ed25519PublicKey) -> str:
+    """The canonical text of a public key (unpadded base64url of the raw bytes), the one
+    spelling the registries store and `approve` compares against."""
+    from cryptography.hazmat.primitives import serialization
+
+    return _b64(public.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
+
+
 # ------------------------------------------------------------------- issuing
 
 

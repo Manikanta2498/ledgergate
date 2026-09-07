@@ -21,11 +21,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, JsonValue, StrictBool, StrictInt, model_validator
 
-from ledgergate.codec import MAX_TRACE_EVENTS, digest
+from ledgergate.codec import MAX_SAFE_INTEGER, MAX_TRACE_EVENTS, digest
 from ledgergate.ledger import CURRENCIES, ChartOfAccounts
 from ledgergate.trace.models import (
     AccountDoc,
     AgentDoc,
+    AnyCommandDoc,
     CommandDoc,
     CurrencyCode,
     CurrencyDoc,
@@ -128,6 +129,50 @@ ConsumptionRef = Annotated[str, Field(pattern=r"^consumption-[1-9][0-9]*$")]
 
 def _ref_number(ref: str) -> int:
     return int(ref.rsplit("-", 1)[1])
+
+
+def _decimal_outside_ijson(value: Any) -> Any:
+    """Render every integer outside the I-JSON safe range as its decimal string.
+
+    v1's frozen schema bounds only *payloads* (tool arguments and results) to the safe
+    range: a ``Money.amount`` is an unbounded integer there, and the ledger applies such a
+    command and records the result. JCS has no serialization for one, so a lifted document's
+    digest input is the command document with those integers rendered as decimal strings.
+    Lossless, and injective over valid v1 command documents: every position that may hold a
+    large integer is typed as an integer by the model, so the string form is not a document
+    the same position could have carried."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return str(value) if abs(value) > MAX_SAFE_INTEGER else value
+    if isinstance(value, dict):
+        return {k: _decimal_outside_ijson(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_decimal_outside_ijson(v) for v in value]
+    return value
+
+
+def read_request_digest(intent: ReadIntent, principal: str) -> str:
+    """A read's ``request_digest`` recomputed from the trace: SHA-256 over the canonical
+    ``{tool, arguments, call_id, principal}`` of the admitted request, exactly as
+    ``ledgergate.journal.admission.Request.request_digest`` computes it (a read has no
+    idempotency key, so the ``key`` member is absent; the artefact and the ``auth`` envelope
+    are excluded there and so are absent here). Both sides are over the *admitted* values,
+    which are the tokenized ones a trace carries, so the recomputation is exact."""
+    return digest(
+        {
+            "tool": intent.tool,
+            "arguments": intent.arguments,
+            "call_id": intent.call_id,
+            "principal": principal,
+        }
+    )
+
+
+def legacy_command_digest(command: AnyCommandDoc) -> str:
+    """The lifted ``attempted_digest``: the JCS digest of the command document, not the core
+    fingerprint, since a v1 document may record a command the core refused to construct."""
+    return digest(_decimal_outside_ijson(command.model_dump(mode="json", exclude_none=True)))
 
 
 class InvocationResolution(_V2Event):
@@ -362,6 +407,8 @@ class TraceV2(_Strict):
     is its attempted_digest, matches the operation's for new, replay and approval and
     differs for conflict, and equals its
     ledger_command's, whose command_id is the operation and whose call_id is the intent's;
+    an attributed read's attempted_digest is its request digest recomputed over the tool,
+    arguments, call_id and principal;
     in a derived document every boundary event brackets an intent; a document is derived iff
     it carries a journal_id, and then has no legacy resolution, or lifted, and then has no
     journal_id and only legacy resolutions; derived
@@ -681,10 +728,7 @@ class TraceV2(_Strict):
             if isinstance(intent, LegacyIntent):
                 # A lifted command may be one the core refuses to construct (v1 records the
                 # rejection); its digest is over the document, which is always computable.
-                if (
-                    digest(intent.command.model_dump(mode="json", exclude_none=True))
-                    != r.attempted_digest
-                ):
+                if legacy_command_digest(intent.command) != r.attempted_digest:
                     raise ValueError(f"{r.intent_id}: attempted_digest is not the command's digest")
             else:
                 fp = command_fingerprint(intent.command.to_command(registry))
@@ -772,7 +816,9 @@ class TraceV2(_Strict):
     ) -> None:
         """The boundary call is the intent: an invalid call carries the empty arguments, no
         key and no tool the journal admitted; a read call carries the read's tool and
-        arguments; a write call decodes, with its idempotency key, to the intent's command."""
+        arguments, and where the row is attributed its ``attempted_digest`` is the request
+        digest recomputed over them; a write call decodes, with its idempotency key, to the
+        intent's command."""
         if r.disposition == "invalid":
             if call.arguments or call.idempotency_key is not None:
                 raise ValueError(f"{r.intent_id}: an invalid call carries no arguments or key")
@@ -783,6 +829,15 @@ class TraceV2(_Strict):
                 raise ValueError(f"{r.intent_id}: tool_call differs from the read intent")
             if call.idempotency_key is not None:
                 raise ValueError(f"{r.intent_id}: a read carries no idempotency key")
+            if r.principal is not None and r.attempted_digest != read_request_digest(
+                intent, r.principal
+            ):
+                # A read's attempted_digest *is* its request_digest, and that covers the
+                # principal (journal/admission.py, Request.request_digest), so a read
+                # reassigned to another principal is a document whose own digest denies it.
+                raise ValueError(
+                    f"{r.intent_id}: attempted_digest is not the read's request digest"
+                )
             return
         assert isinstance(intent, CommandIntent)
         if call.idempotency_key is None:
@@ -825,6 +880,16 @@ class TraceV2(_Strict):
             raise ValueError("command_id must be unique across ledger_command events")
         if sorted(results) != sorted(commands):
             raise ValueError("every ledger_command has exactly one ledger_result")
+        # v1's rule, which the replay view used to inherit from the v1 model it built: a
+        # currency the pairs or the chart name and the document does not declare is not a
+        # currency this trace can resolve, and a lookup failure at replay is not a finding.
+        known = set(self.registry())
+        used = {a.currency for a in self.chart or ()}
+        for e in self.events:
+            if isinstance(e, LedgerCommandEvent):
+                used.update(e.command.currencies())
+        if unknown := sorted(used - known):
+            raise ValueError(f"currencies used but not declared and not bundled: {unknown}")
 
     # ------------------------------------------------------------ helpers
 
@@ -846,13 +911,23 @@ class TraceV2(_Strict):
 
     def ledger_view(self) -> Trace:
         """The ledger pairs alone as a v1 document, so v1's replayer re-executes them.
-        Nothing else of v2 is representable in v1, and nothing else replays."""
+        Nothing else of v2 is representable in v1, and nothing else replays.
+
+        It is *constructed*, not validated. The v1 model's document rules belong to the
+        frozen v1 ingest format, and one of them, the 100,000-event bound, is a limit on v1
+        *documents*, not on how many pairs a replayer may re-execute: a v2 document derived
+        from a journal within the journal's own capacity can exceed it (50,001 pairs are
+        100,002 v1 events), and replay must not fail for a reason about a format the document
+        was never in. Every v1 rule that is about the pairs themselves this model has already
+        enforced on them: unique command ids, exactly one result per command, results after
+        their commands, strictly increasing ``seq``, and every currency they name declared or
+        bundled."""
         pairs = tuple(
             e.model_copy(update={"call_id": None}) if isinstance(e, LedgerCommandEvent) else e
             for e in self.events
             if isinstance(e, LedgerCommandEvent | LedgerResultEvent)
         )  # call references point at boundary events this view deliberately omits
-        return Trace(
+        return Trace.model_construct(
             trace_id=self.trace_id,
             agent=self.agent or AgentDoc(name="derived"),
             started_at=self.started_at,
@@ -893,9 +968,7 @@ def lift(trace: Trace) -> TraceV2:
                         intent_id=intent_id,
                         disposition="legacy",
                         operation_id=e.command_id,
-                        attempted_digest=digest(
-                            e.command.model_dump(mode="json", exclude_none=True)
-                        ),
+                        attempted_digest=legacy_command_digest(e.command),
                     ),
                 )
             )
@@ -964,5 +1037,7 @@ __all__ = [
     "TraceV2",
     "V2Event",
     "json_schema",
+    "legacy_command_digest",
     "lift",
+    "read_request_digest",
 ]

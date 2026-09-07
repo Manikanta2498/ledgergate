@@ -10,9 +10,15 @@ positional renumbering, and compares the unkilled set with ``.mutation-baseline.
             mutant (vanished); warn if a baselined key is killed this run (stale: the runner
             flaps on some mutants, so a stale entry is regenerated away, never a red night) or
             changed bucket.
-  baseline  write the baseline from this run, keeping (marked `flaky`) every previously
-            baselined entry the run killed, and every `equivalent` entry whose key still exists
-            and is unkilled; print what it kept and dropped.
+  baseline  write the baseline from this run and record the source digest (sha256 over the
+            mutated sources and the test tree). A previously baselined entry the run killed is
+            kept (marked `flaky`) when the digest is unchanged (a flap), and dropped when it
+            moved (a new test killed it); an entry already marked `flaky` keeps that mark
+            whatever this run did, until `retire-flaky` removes it. `--source DIGEST`
+            overrides the computed digest.
+  retire-flaky KEY
+            drop one `flaky` entry from the baseline, for when its test has been made
+            deterministic. The only way a flaky entry leaves the file.
   count     print the baseline's total (the number the README states).
 
 ``baseline --from-results FILE`` takes the statuses from a ``mutmut results --all true``
@@ -29,6 +35,7 @@ import hashlib
 import json
 import re
 import sys
+import tomllib
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -152,21 +159,79 @@ def gate(current: dict[str, dict[str, Any]]) -> int:
     return 1 if failures else 0
 
 
-def write_baseline(current: dict[str, dict[str, Any]]) -> int:
+def _mutated_globs() -> list[str]:
+    pyproject = Path("pyproject.toml")
+    if not pyproject.exists():
+        return []
+    cfg = tomllib.loads(pyproject.read_text()).get("tool", {}).get("mutmut", {})
+    globs = cfg.get("only_mutate") or cfg.get("source_paths") or []
+    return [str(g) for g in globs]
+
+
+def _digest_inputs() -> list[Path]:
+    """Every file whose content can change a mutant's status: what mutmut mutates, and the
+    tests that do the killing."""
+    roots: list[Path] = []
+    for pattern in _mutated_globs():
+        roots.extend(sorted(Path().glob(pattern)))
+    roots.append(Path("tests"))
+    files: set[Path] = set()
+    for root in roots:
+        candidates = [root] if root.is_file() else sorted(root.rglob("*"))
+        for path in candidates:
+            parts = set(path.parts)
+            if not path.is_file() or path.suffix == ".pyc":
+                continue
+            if "__pycache__" in parts or ".hypothesis" in parts:
+                continue
+            files.add(path)
+    return sorted(files)
+
+
+def _source_digest() -> str:
+    """A commit is the wrong identity for "the same source": a docs-only commit moves it while
+    nothing mutmut sees changed. Digest what mutmut sees instead."""
+    h = hashlib.sha256()
+    for path in _digest_inputs():
+        h.update(path.as_posix().encode())
+        h.update(b"\0")
+        h.update(hashlib.sha256(path.read_bytes()).hexdigest().encode())
+        h.update(b"\0")
+    return f"sha256:{h.hexdigest()}"
+
+
+def write_baseline(current: dict[str, dict[str, Any]], source: str | None = None) -> int:
     old = load_baseline()
+    source = source or _source_digest()
+    # a baseline written before the digest existed carries a commit sha here, which is never
+    # equal to a digest, so it reads as "the source moved": fail-safe, not a crash
+    same_source = old.get("source") == source
     unkilled = {
         key: {"function": info["function"], "bucket": info["bucket"], "example": info["names"][0]}
         for key, info in sorted(current.items())
         if info["bucket"] != "killed" and key not in old["equivalent"]
     }
     preserved = []
+    dropped_killed = []
     for key, entry in old["unkilled"].items():
-        if key in current and key not in unkilled:
-            # baselined before, killed in this run: a mutant killed on one run and not another
-            # is unkilled *sometimes*, which is not proven; it stays, marked flaky, and leaves
-            # only by hand (the baseline file is the memory the nightly has none of)
+        if key not in current:
+            continue
+        if key in unkilled:
+            if entry.get("flaky"):
+                # known flakiness is not forgotten by a run that happened to see it unkilled;
+                # only `retire-flaky` clears the mark
+                unkilled[key] = {**unkilled[key], "flaky": True}
+            continue
+        if entry.get("flaky") or same_source:
+            # baselined before, killed in a run over the *same* source: a mutant killed on
+            # one run and not another is unkilled *sometimes*, which is not proven; it
+            # stays, marked flaky, and leaves only by `retire-flaky` (the baseline is the
+            # memory the nightly has none of)
             unkilled[key] = {**entry, "flaky": True}
             preserved.append(key)
+        else:
+            # the source moved: a new or stronger test killed it, which is progress
+            dropped_killed.append(key)
     equivalent = {
         k: v
         for k, v in old["equivalent"].items()
@@ -175,6 +240,7 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     dropped = sorted(set(old["equivalent"]) - set(equivalent))
     doc = {
         "_": "docs/spec/assurance.md, the mutation gate; regenerate with `make mutation-baseline`",
+        "source": source,
         "unkilled": dict(sorted(unkilled.items())),
         "equivalent": dict(sorted(equivalent.items())),
     }
@@ -185,7 +251,9 @@ def write_baseline(current: dict[str, dict[str, Any]]) -> int:
     summary = f"{len(unkilled)} unkilled ({dict(by_bucket)}), {len(equivalent)} equivalent"
     print(f"baseline written: {summary}")
     for key in preserved:
-        print(f"kept as flaky (baselined, killed this run): {key}")
+        print(f"kept as flaky (baselined, killed this run; retire it by hand when fixed): {key}")
+    if dropped_killed:
+        print(f"dropped {len(dropped_killed)} baselined entries killed by the moved source")
     for key in dropped:
         print(f"dropped equivalent (its key vanished or it is now killed): {key}")
     return 0
@@ -196,22 +264,51 @@ def count() -> int:
     return 0
 
 
+def retire_flaky(key: str) -> int:
+    doc = load_baseline()
+    entry = doc["unkilled"].get(key)
+    if entry is None:
+        print(f"no baselined unkilled entry {key}", file=sys.stderr)
+        return 2
+    if not entry.get("flaky"):
+        print(f"entry {key} is not marked flaky; regenerate the baseline instead", file=sys.stderr)
+        return 2
+    del doc["unkilled"][key]
+    BASELINE.write_text(json.dumps(doc, indent=2, ensure_ascii=False, sort_keys=False) + "\n")
+    print(f"retired flaky entry {key}; {len(doc['unkilled'])} unkilled remain")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     mode = argv[0] if argv else "gate"
     if mode == "count":
         return count()
+    if mode == "retire-flaky":
+        if len(argv) != 2:
+            print("usage: mutation_gate.py retire-flaky KEY", file=sys.stderr)
+            return 2
+        return retire_flaky(argv[1])
     if not Path("mutants").is_dir():
         print("no mutants/ directory: run `mutmut run` first", file=sys.stderr)
         return 2
     statuses = None
-    if len(argv) == 3 and argv[1] == "--from-results":
-        statuses = _parse_results(Path(argv[2]).read_text())
+    source = None
+    rest = list(argv[1:])
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--from-results" and rest:
+            statuses = _parse_results(Path(rest.pop(0)).read_text())
+        elif flag == "--source" and rest:
+            source = rest.pop(0)  # overrides the digest of the source the results are over
+        else:
+            print(f"unknown argument {flag!r}", file=sys.stderr)
+            return 2
     current = collect(statuses)
     if mode == "baseline":
-        return write_baseline(current)
+        return write_baseline(current, source)
     if mode == "gate":
         return gate(current)
-    print(f"unknown mode {mode!r}: gate | baseline | count", file=sys.stderr)
+    print(f"unknown mode {mode!r}: gate | baseline | count | retire-flaky", file=sys.stderr)
     return 2
 
 

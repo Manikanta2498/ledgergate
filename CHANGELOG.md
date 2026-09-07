@@ -17,6 +17,26 @@ the package's `__version__`. The trace and result schemas carry their own versio
   (`approval_wrong_approver`), attribution on every invocation, admission cause codes as the
   served error type, `attributions_are_registered` (M8a).
 
+### Fixed (external whole-repository review, 2026-09-06)
+- `advance` with event `refund` is refused at the codec and the core; it used to commit a
+  rejected row that made the journal non-derivable.
+- Corpus setup binding compares each setup step's whole behaviour and the starting balances,
+  not the attempted fingerprint alone.
+- Release: production publication only on a tag *push*; the already-published check fails
+  closed; the build backend is pinned and locked; an installed-wheel gate runs on every PR.
+- Verifier: approval evidence transitions and logical approval-id uniqueness, the
+  cause/authentication matrix, reads bound to their principal, replay not bounded by the v1
+  document limit, lossless legacy digests, codec bounds as a replay finding, calendar-edge
+  timestamps as validation errors.
+- Journal (schema 8): `INSERT OR REPLACE` refused by a trigger on every connection, a schema-7 journal refused like every earlier one; rendered ledger error
+  messages bounded rather than classified as corruption; verification keys stored canonically.
+- CLI: `verify --emit-trace` refuses to alias its source; `sign` reads bounded I-JSON;
+  `journal pending` reports `unknown` for a custom set; `approve` bounds `--valid-hours` and
+  never echoes a seed.
+- Mutation baseline regeneration keeps known flakiness (source digest, `retire-flaky`).
+- Licensing: `docs/` and `scripts/` are Apache-2.0, `tests/` BUSL-1.1, stated; the package
+  metadata declares `license = "BUSL-1.1"`.
+
 ### Changed
 - `ledgergate serve --approval-key` is `--approver NAME=KEYFILE`; `ledgergate approve
   --signing-key` is `--seed-file`; a schema-6 journal is refused (re-create).

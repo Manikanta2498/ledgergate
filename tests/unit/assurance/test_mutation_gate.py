@@ -96,20 +96,17 @@ class TestRatchet:
     def test_baseline_regeneration_keeps_killed_entries_as_flaky_and_drops_vanished_equivalents(
         self, in_tmp: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        gate_mod.BASELINE.write_text(
-            json.dumps(
-                {
-                    "unkilled": {"m.h:d": {"function": "m.h", "bucket": "timeout", "example": "x"}},
-                    "equivalent": {
-                        "m.e:z": {"reason": "renames a local"},
-                        "m.gone:q": {"reason": "old"},
-                    },
-                }
-            )
-        )
+        old = {
+            "source": "abc",
+            "unkilled": {"m.h:d": {"function": "m.h", "bucket": "timeout", "example": "x"}},
+            "equivalent": {"m.e:z": {"reason": "renames a local"}, "m.gone:q": {"reason": "old"}},
+        }
+        gate_mod.BASELINE.write_text(json.dumps(old))
         run = _current(("m.h:d", "killed"), ("m.e:z", "survived"), ("m.f:a", "survived"))
-        assert gate_mod.write_baseline(run) == 0
+        # the same source: a killed baselined entry is a flap and stays, marked flaky
+        assert gate_mod.write_baseline(run, source="abc") == 0
         base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["source"] == "abc"
         assert (
             base["unkilled"]["m.h:d"]["bucket"] == "timeout" and base["unkilled"]["m.h:d"]["flaky"]
         )
@@ -117,6 +114,173 @@ class TestRatchet:
         out = capsys.readouterr().out
         assert "kept as flaky" in out and "dropped equivalent" in out
         assert gate_mod.gate(run) == 0
+        # a moved source: the kill is a new test's doing and the entry is dropped
+        gate_mod.BASELINE.write_text(json.dumps(old))
+        assert gate_mod.write_baseline(run, source="def") == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["source"] == "def" and "m.h:d" not in base["unkilled"]
+        assert "dropped 1 baselined entries killed by the moved source" in capsys.readouterr().out
+
+
+def _fake_project(
+    root: Path, *, source: str = "x = 1\n", test: str = "def test_x(): ...\n"
+) -> None:
+    (root / "src" / "pkg").mkdir(parents=True, exist_ok=True)
+    (root / "tests").mkdir(exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        '[tool.mutmut]\nsource_paths = ["src"]\nonly_mutate = ["src/pkg/*"]\n'
+    )
+    (root / "src" / "pkg" / "core.py").write_text(source)
+    (root / "src" / "other.py").write_text("# not mutated\n")
+    (root / "tests" / "test_core.py").write_text(test)
+    (root / "docs.md").write_text("prose\n")
+
+
+class TestSourceDigest:
+    """The identity of "the same source" is what mutmut sees, not the commit: a docs-only
+    commit moves the commit and nothing the gate depends on."""
+
+    def test_the_digest_covers_the_mutated_sources_and_the_tests_and_nothing_else(
+        self, in_tmp: Path
+    ) -> None:
+        _fake_project(in_tmp)
+        base = gate_mod._source_digest()
+        assert base.startswith("sha256:")
+        (in_tmp / "docs.md").write_text("different prose\n")
+        (in_tmp / "src" / "other.py").write_text("# still not mutated\nchanged = True\n")
+        assert gate_mod._source_digest() == base, "unmutated files must not move the digest"
+        (in_tmp / "tests" / "test_core.py").write_text("def test_x(): assert True\n")
+        moved = gate_mod._source_digest()
+        assert moved != base, "a test change can kill a mutant, so it moves the digest"
+        (in_tmp / "src" / "pkg" / "core.py").write_text("x = 2\n")
+        assert gate_mod._source_digest() not in {base, moved}
+
+    def test_caches_and_compiled_files_do_not_move_the_digest(self, in_tmp: Path) -> None:
+        _fake_project(in_tmp)
+        base = gate_mod._source_digest()
+        (in_tmp / "src" / "pkg" / "__pycache__").mkdir()
+        (in_tmp / "src" / "pkg" / "__pycache__" / "core.pyc").write_bytes(b"\x00")
+        (in_tmp / "tests" / ".hypothesis").mkdir()
+        (in_tmp / "tests" / ".hypothesis" / "db").write_text("example")
+        assert gate_mod._source_digest() == base
+
+
+class TestFlakinessIsRemembered:
+    def test_a_docs_only_change_keeps_a_killed_flaky_entry(self, in_tmp: Path) -> None:
+        """The defect this replaces: the commit moved, so the entry was dropped as "killed by a
+        new test", although no mutated source and no test had changed."""
+        _fake_project(in_tmp)
+        run = _current(("m.h:d", "survived"))
+        assert gate_mod.write_baseline(run) == 0
+        (in_tmp / "docs.md").write_text("a docs-only commit\n")
+        assert gate_mod.write_baseline(_current(("m.h:d", "killed"))) == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["unkilled"]["m.h:d"]["flaky"] is True
+
+    def test_a_test_change_that_kills_a_baselined_entry_drops_it(self, in_tmp: Path) -> None:
+        _fake_project(in_tmp)
+        assert gate_mod.write_baseline(_current(("m.h:d", "survived"))) == 0
+        (in_tmp / "tests" / "test_core.py").write_text("def test_x(): assert True\n")
+        assert gate_mod.write_baseline(_current(("m.h:d", "killed"))) == 0
+        assert "m.h:d" not in json.loads(gate_mod.BASELINE.read_text())["unkilled"]
+
+    def test_the_flaky_mark_survives_a_run_that_finds_the_mutant_unkilled(
+        self, in_tmp: Path
+    ) -> None:
+        """Flakiness is a property of the pair (mutant, suite), not of one run's verdict: a run
+        that sees it unkilled is exactly what "unkilled sometimes" predicts."""
+        gate_mod.BASELINE.write_text(
+            json.dumps(
+                {
+                    "source": "sha256:whatever",
+                    "unkilled": {
+                        "m.h:d": {
+                            "function": "m.h",
+                            "bucket": "timeout",
+                            "example": "x",
+                            "flaky": True,
+                        }
+                    },
+                    "equivalent": {},
+                }
+            )
+        )
+        assert gate_mod.write_baseline(_current(("m.h:d", "survived"))) == 0
+        entry = json.loads(gate_mod.BASELINE.read_text())["unkilled"]["m.h:d"]
+        assert entry["flaky"] is True and entry["bucket"] == "survived"
+
+    def test_a_flaky_entry_killed_over_a_moved_source_still_stays(self, in_tmp: Path) -> None:
+        gate_mod.BASELINE.write_text(
+            json.dumps(
+                {
+                    "source": "abc",
+                    "unkilled": {
+                        "m.h:d": {"function": "m.h", "bucket": "timeout", "flaky": True},
+                        "m.f:a": {"function": "m.f", "bucket": "survived"},
+                    },
+                    "equivalent": {},
+                }
+            )
+        )
+        assert gate_mod.write_baseline(_current(("m.h:d", "killed"), ("m.f:a", "killed"))) == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert set(base["unkilled"]) == {"m.h:d"}, "only the entry never known to flap is dropped"
+
+    def test_a_baseline_written_before_the_digest_reads_as_a_moved_source(
+        self, in_tmp: Path
+    ) -> None:
+        """`.mutation-baseline.json` still carries a commit sha; it is never a digest, so the
+        old value reads as "the source moved" rather than crashing the regeneration."""
+        _fake_project(in_tmp)
+        gate_mod.BASELINE.write_text(
+            json.dumps(
+                {
+                    "source": "43647fd9ba194b2c52be3983da0e87d82fee575d",
+                    "unkilled": {"m.h:d": {"function": "m.h", "bucket": "survived"}},
+                    "equivalent": {},
+                }
+            )
+        )
+        assert gate_mod.write_baseline(_current(("m.h:d", "killed"))) == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert base["source"].startswith("sha256:") and base["unkilled"] == {}
+
+
+class TestRetireFlaky:
+    def test_retiring_removes_the_entry_and_nothing_else(
+        self, in_tmp: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        gate_mod.BASELINE.write_text(
+            json.dumps(
+                {
+                    "source": "sha256:x",
+                    "unkilled": {
+                        "m.h:d": {"function": "m.h", "bucket": "timeout", "flaky": True},
+                        "m.f:a": {"function": "m.f", "bucket": "survived"},
+                    },
+                    "equivalent": {"m.e:z": {"reason": "renames a local"}},
+                }
+            )
+        )
+        assert gate_mod.main(["retire-flaky", "m.h:d"]) == 0
+        base = json.loads(gate_mod.BASELINE.read_text())
+        assert set(base["unkilled"]) == {"m.f:a"} and set(base["equivalent"]) == {"m.e:z"}
+        assert "retired flaky entry m.h:d" in capsys.readouterr().out
+
+    def test_retiring_refuses_an_unknown_or_a_non_flaky_key(self, in_tmp: Path) -> None:
+        gate_mod.BASELINE.write_text(
+            json.dumps(
+                {
+                    "source": "sha256:x",
+                    "unkilled": {"m.f:a": {"function": "m.f", "bucket": "survived"}},
+                    "equivalent": {},
+                }
+            )
+        )
+        assert gate_mod.main(["retire-flaky", "m.nope:1"]) == 2
+        assert gate_mod.main(["retire-flaky", "m.f:a"]) == 2
+        assert gate_mod.main(["retire-flaky"]) == 2
+        assert set(json.loads(gate_mod.BASELINE.read_text())["unkilled"]) == {"m.f:a"}
 
 
 class TestCheckedInBaseline:
@@ -130,7 +294,7 @@ class TestCheckedInBaseline:
 
     def test_baseline_shape(self) -> None:
         baseline = json.loads((ROOT / ".mutation-baseline.json").read_text())
-        assert set(baseline) == {"_", "unkilled", "equivalent"}
+        assert set(baseline) == {"_", "source", "unkilled", "equivalent"}
         for key, entry in baseline["unkilled"].items():
             assert entry["bucket"] in gate_mod.BUCKETS and key.startswith(entry["function"] + ":")
         for entry in baseline["equivalent"].values():

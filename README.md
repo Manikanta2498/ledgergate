@@ -283,8 +283,8 @@ by a positional prefix rule, ordering is total and decided in nanoseconds, and e
 cassette under `corpus/cassettes/otel/` reproduces byte for byte.
 
 **The MCP runtime (M4).** `ledgergate serve --journal PATH` exposes one journal as seven
-MCP tools over stdio to one client as one local principal. It is a transport and nothing
-more: every line is decoded by the project's I-JSON decoder before anything else looks at
+MCP tools over stdio to one client as one *transport* principal (and, since M8a, any number of
+signed principals through it). It is a transport and nothing more: every line is decoded by the project's I-JSON decoder before anything else looks at
 it, a `tools/call` becomes exactly one value handed to `Journal.handle` (the idempotency key
 and any approval artefact lifted out of the arguments, the JSON-RPC id rendered as the call
 id), and the response is the journal's committed result with `isError` for every
@@ -470,8 +470,8 @@ These are enforced by CI gates, not by convention:
 | No accidental network in tests | `pytest --disable-socket` by default |
 | The license boundary is unambiguous per file | `scripts/check_licenses.py` requires a matching `SPDX-License-Identifier`, inline or in a `.license` sidecar, on every source and package-data file under `src/ledgergate/`, `corpus/` and `schema/` |
 | Secrets stay out of the tree and the history | `gitleaks` on staged changes in the pre-commit hook, then on the full working tree *and* the full git history in CI |
-| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows; a baselined one the runner kills is a warning (the runner flaps on some mutants) and stays in the baseline marked `flaky`; unkilled sometimes is not proven. Current baseline: **615 unkilled mutants** of 1,697 distinct mutations (all `survived`; none `no tests`). The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
-| A release is what the repository built (workflow unrehearsed until the first TestPyPI dispatch) | tag-driven workflow: the CI gates run whole, then `uv build`, a SLSA provenance attestation per artefact, trusted publishing to PyPI (no token exists), a GitHub release with the Apache-2.0 corpus tarball and every provenance bundle beside it. Verify: `gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml` |
+| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows; a baselined one the runner kills is a warning (the runner flaps on some mutants) and stays in the baseline marked `flaky`, kept there by a digest of the mutated sources and the test tree rather than by a commit, and retired only by hand; unkilled sometimes is not proven. Current baseline: **760 unkilled mutants** of 2,059 distinct mutations (all `survived`; none `no tests`; M8a added 362 mutants and 145 unkilled, most in the invariant registry, a number the next milestone should lower with killing tests rather than record). The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
+| A release is what the repository built (workflow unrehearsed until the first TestPyPI dispatch) | tag-driven workflow: production publication happens only on a tag *push* (a `workflow_dispatch` is a rehearsal to TestPyPI, allowed only from `main`); the CI gates run whole, including a job that installs the built wheel outside the checkout and runs the corpus from it, then `uv build --no-build-isolation` with the build backend pinned and taken from `uv.lock`, a SLSA provenance attestation per artefact, trusted publishing to PyPI (no token exists), a GitHub release with the Apache-2.0 corpus tarball and every provenance bundle beside it. Verify: `gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml` |
 | Money is never a float | `Money` rejects a `float` amount at construction, and `scripts/check_determinism.py` fails on any float literal, `float()` call or `float` annotation in `src/ledgergate/ledger/` |
 
 ## Roadmap
@@ -488,7 +488,7 @@ These are enforced by CI gates, not by convention:
 | M5 | OpenTelemetry GenAI *observational* adapter with completeness validation and synthesized cassettes ([docs/spec/otel-adapter.md](docs/spec/otel-adapter.md)); thin framework wrappers are future conveniences over it | **done** |
 | M6 | Scenario corpus and **red-team corpus**; `run` scoring scripted or supplied traces; `result.json`; SARIF/JUnit; drift table between two results (which model produced which is the adopter's label) ([docs/spec/corpus.md](docs/spec/corpus.md)) | **done** |
 | M7 | Conformance levels (L1 operational, L2 contained, L3 stable) rendered from `result.json`; ratcheting mutation gate over the core and the registry; CodeQL and OpenSSF Scorecard; trusted-publishing releases with provenance ([docs/spec/assurance.md](docs/spec/assurance.md)) | **done**, release pipeline unrehearsed: nothing is tagged until it has run against TestPyPI |
-| M8a | Authenticated principals (registry + signed requests, verified in admission) and named approvers (registry; policy may require a named approver) ([docs/spec/principals.md](docs/spec/principals.md)) | **done** (journal schema 7) |
+| M8a | Authenticated principals (registry + signed requests, verified in admission) and named approvers (registry; policy may require a named approver) ([docs/spec/principals.md](docs/spec/principals.md)) | **done** (journal schema 7; schema 8 after the 2026-09-06 review) |
 | M8b | Network transport: a thin MCP listener over signed requests | |
 | M8c | External execution via outbox and reconciliation; the cross-clone approval consumption authority | |
 
@@ -499,7 +499,9 @@ milestones are built to are in [`docs/spec/`](docs/spec/).
 ## Install
 
 Nothing is on PyPI yet: the release workflow exists and is rehearsed against TestPyPI before
-the first tag. When `0.1.0a1` ships, a release is three artefacts, each with a SLSA
+the first tag. A `workflow_dispatch` run is always a rehearsal and may run only from `main`;
+publication to PyPI happens only on a tag push, and the workflow refuses any other
+combination of event and ref rather than inferring the target from the ref. When `0.1.0a1` ships, a release is three artefacts, each with a SLSA
 provenance bundle beside it as a release asset (`<artefact>.intoto.jsonl`):
 
 | Artefact | License | Contents |

@@ -10,9 +10,10 @@ the trace is internally consistent; a divergence means either the trace or the s
 that produced it is lying about something.
 
 Converting a command document into a runtime command can itself fail with a ledger error
-(an unbalanced entry, a zero posting, an unknown account currency). That failure *is* the
-ledger's verdict on the command and is compared against the recorded result like any
-other; replay never crashes on a schema-valid trace.
+(an unbalanced entry, a zero posting, an unknown account currency) or with a codec error
+(v1's frozen schema does not bound a tag key's length; the codec does). That failure *is*
+the verdict on the command and is compared against the recorded result like any other;
+replay never crashes on a schema-valid trace.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 
+from ledgergate.codec import CodecError, bounded_text
 from ledgergate.ledger import EPOCH, Applied, Ledger, LedgerError
 from ledgergate.trace.models import LedgerCommandEvent, LedgerResultEvent, Trace
 
@@ -104,10 +106,10 @@ def replay_trace(trace: Trace) -> ReplayReport:
         effects.feed(recorded)
 
         applied: Applied | None = None
-        error: LedgerError | None = None
+        error: CodecError | LedgerError | None = None
         try:
             applied = ledger.execute(event.command.to_command(registry), clock=effects, ids=effects)
-        except LedgerError as exc:
+        except (CodecError, LedgerError) as exc:
             error = exc
 
         divergences.extend(_compare(event, recorded, applied, error, ledger))
@@ -121,7 +123,7 @@ def _compare(
     event: LedgerCommandEvent,
     recorded: LedgerResultEvent,
     applied: Applied | None,
-    error: LedgerError | None,
+    error: CodecError | LedgerError | None,
     before: Ledger,
 ) -> list[Divergence]:
     """Every field of the recorded result, against the recomputed outcome. Nothing is skipped.
@@ -134,6 +136,12 @@ def _compare(
         return Divergence(event.command_id, event.seq, name, rec, got)
 
     out: list[Divergence] = []
+    if isinstance(error, CodecError):
+        # The document's command is not one the codec will decode, so there is no ledger
+        # verdict to compare it against: the refusal itself is the divergence, and reporting
+        # it as a shape mismatch alone would hide why. v1's frozen schema admits such a
+        # command (it bounds the tag count, not a tag key's length); the codec does not.
+        return [diff("command", "decodable", f"{type(error).__name__}: {error}")]
     ok = applied is not None
     if recorded.ok != ok:
         out.append(diff("ok", recorded.ok, ok))
@@ -141,11 +149,11 @@ def _compare(
 
     if applied is None:
         # Both failed. The ledger is unchanged, and the recorded error must be this one.
-        assert error is not None and recorded.error is not None
+        assert isinstance(error, LedgerError) and recorded.error is not None
         if recorded.error.type != type(error).__name__:
             out.append(diff("error.type", recorded.error.type, type(error).__name__))
-        if recorded.error.message != str(error):
-            out.append(diff("error.message", recorded.error.message, str(error)))
+        if recorded.error.message != bounded_text(str(error)):
+            out.append(diff("error.message", recorded.error.message, bounded_text(str(error))))
         if recorded.head != before.head:
             out.append(diff("head", recorded.head, before.head))
         if recorded.sequence != before.sequence:

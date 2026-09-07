@@ -1,5 +1,7 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned exactly and mirrored by the `build` dependency group, so the backend that builds the
+# artefacts is in uv.lock and audited like everything else (docs/spec/assurance.md, Releases).
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,6 +9,8 @@ name = "ledgergate"
 dynamic = ["version"]
 description = "Financial correctness and release-control runtime for autonomous money-moving agents"
 readme = "README.md"
+license = "BUSL-1.1"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Venkata Sai Manikanta Yatam" }]
 keywords = ["ledger", "double-entry", "llm", "agents", "eval", "fintech", "conformance"]
@@ -14,7 +18,6 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Intended Audience :: Financial and Insurance Industry",
-  "License :: Other/Proprietary License",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -53,6 +56,10 @@ dev = [
   "mutmut>=3.6,<4",
   "packaging>=24",
 ]
+# The build backend, locked and audited. It is a group rather than a dev dependency so the
+# release build can install it alone (`uv sync --only-group build`) and build with
+# `--no-build-isolation`, i.e. from the lock rather than from a fresh PyPI resolution.
+build = ["hatchling==1.32.0"]
 
 [tool.hatch.version]
 # One source of the version: __version__ (docs/spec/assurance.md, Releases). --version, the

@@ -1258,7 +1258,10 @@ class TestFifthReviewFindings:
         ).fetchall()
         conn.execute("BEGIN")
         seq = conn.execute("INSERT INTO journal (kind) VALUES ('approvals')").lastrowid
-        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+        # either spelling is the schema refusing it: the UNIQUE on `invocation`, or the
+        # append-only trigger that runs before conflict resolution and sees the row it would
+        # replace
+        with pytest.raises(sqlite3.IntegrityError, match=r"UNIQUE|append-only"):
             conn.execute(
                 "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (seq, *pres[1:])
             )

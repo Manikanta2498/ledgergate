@@ -145,6 +145,18 @@ def _decode_money(doc: Any, registry: Registry, *, where: str) -> Money:
 
 MAX_POSTINGS = 1000
 MAX_TEXT = 1024
+
+
+def bounded_text(text: str) -> str:
+    """``text`` within ``MAX_TEXT``, truncated with a marker. The journal records a ledger
+    error message through this (a 256-character identifier renders, escaped, several times its
+    own length), and the replayer compares through it, so the two agree by construction."""
+    if len(text) <= MAX_TEXT:
+        return text
+    marker = " [truncated]"
+    return text[: MAX_TEXT - len(marker)] + marker
+
+
 MAX_TAGS = 100
 """The trace schema's bounds on an entry's postings, on any short text (descriptions, tag
 keys and values) and on the tag count; admission refuses beyond them so every admitted
@@ -222,6 +234,11 @@ def decode_command(doc: Any, registry: Registry) -> Command:
                 event = TransactionEvent(event_raw)
             except ValueError as exc:
                 raise CodecError(f"{where}.event", f"{event_raw!r}") from exc
+            if event is TransactionEvent.REFUND:
+                # `Advance` is the non-refund events; a refund is its own command. The trace
+                # vocabulary (`LifecycleEvent`) excludes it, so admitting it here would commit
+                # a row the derived trace cannot carry.
+                raise CodecError(f"{where}.event", "refund is the refund command, not an advance")
             entry = (
                 None
                 if "entry" not in c

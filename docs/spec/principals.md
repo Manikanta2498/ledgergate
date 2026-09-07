@@ -5,6 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Authenticated principals and named approvers (M8a)
 
+> Schema note: M8a shipped as journal schema 7; the no-replace triggers of the 2026-09-06
+> review made the current schema 8 (`journal.md`, *Tables*). Everything here holds unchanged.
+
 ADR-0002 §3: "a mandate without an authenticated principal is not a mandate; the server
 refuses a network transport until then." Today every invocation is attributed to one
 transport-trusted principal (`--principal`, default `local`), and an approval artefact's
@@ -19,7 +22,7 @@ and it is testable end to end over stdio.
 
 ## Schema 7, not a migration
 
-M8a is journal **schema 7**. As for every earlier bump (`journal.md`, *Binding*; `trace-v2.md`,
+M8a is journal **schema 7**. As for every earlier bump (`journal.md`, *Tables*, `definition`; `mcp-runtime.md`,
 *Segmentation*), `open` and `derive` refuse a schema-6 journal; a journal is re-created, never
 migrated (no row is ever updated). There is therefore no "legacy" mode inside a journal: every
 schema-7 journal has both registries, seeded at `create`, and the rules below hold from its
@@ -156,7 +159,7 @@ and `expires_at` is covered. A client learns `journal_id` from `initialize`'s
 **Envelope fields.** As for an artefact (`identifiers-and-redaction.md`, *Approval artefact
 fields*), every field is bounded before anything is stored: `principal` an identifier (at most
 256 characters, one line), `expires_at` RFC 3339 in the extended form with an offset
-(`YYYY-MM-DDThh:mm:ss[.f]Z|±hh:mm`, at most 64 characters; a fixed grammar, not what a parser
+(`YYYY-MM-DDThh:mm:ss[.f]Z|±hh:mm`, the offset itself within `00:00`..`23:59`, at most 64 characters; a fixed grammar, not what a parser
 tolerates, since the signature covers the text), `signature` exactly 86 base64url characters in
 canonical spelling (a non-canonical padding bit is `authentication_malformed`, so one signature
 has one spelling); an envelope outside these is

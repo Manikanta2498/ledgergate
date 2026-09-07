@@ -66,6 +66,56 @@ jobs:
       - name: Tests
         run: uv run pytest --cov --cov-report=term-missing --cov-fail-under=90
 
+  # The editable install the matrix tests is not the artefact users get. This job gates the
+  # *installed wheel*: built from the locked backend, installed with runtime dependencies only
+  # into an environment outside the checkout, and run from a different working directory, so a
+  # missing package, a missing entry point or an import that only resolves from the source tree
+  # fails here rather than after publication (docs/spec/assurance.md, Releases).
+  wheel:
+    name: installed wheel runs the corpus
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Build the wheel with the locked build backend
+        run: |
+          set -euo pipefail
+          uv sync --locked --only-group build
+          uv build --wheel --no-build-isolation
+
+      - name: Install the wheel into a fresh environment outside the checkout
+        run: |
+          set -euo pipefail
+          uv venv /tmp/wheelenv
+          uv pip install --python /tmp/wheelenv dist/*.whl
+
+      - name: Run the corpus from another working directory
+        run: |
+          set -euo pipefail
+          corpus="$GITHUB_WORKSPACE/corpus"
+          expected="$(find "$corpus/scenarios" -name '*.yaml' | wc -l)"
+          mkdir -p /tmp/wheelsmoke && cd /tmp/wheelsmoke
+          /tmp/wheelenv/bin/ledgergate --version
+          /tmp/wheelenv/bin/ledgergate run --corpus "$corpus" --out result.json
+          python3 - "$expected" <<'PY'
+          import json, sys
+          expected = int(sys.argv[1])
+          s = json.load(open("result.json"))["summary"]
+          assert s["scenarios"] == expected, (s["scenarios"], expected)
+          assert s["pass"] == expected, s
+          assert s["fail"] == s["error"] == s["skipped"] == 0, s
+          print(f"installed wheel: {s['pass']}/{s['scenarios']} scenarios pass")
+          PY
+          /tmp/wheelenv/bin/ledgergate report --conformance result.json --require L2
+
   # Supply-chain and secret gates. Split out of the matrix because they are
   # version-independent; running them three times would only cost minutes.
   security:

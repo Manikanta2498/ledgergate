@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+# SPDX-License-Identifier: Apache-2.0
 """Fail if the ledger core reaches for a non-deterministic source.
 
 Reproducible replay is the foundation of LedgerGate's `$0 CI` claim and of every

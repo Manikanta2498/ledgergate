@@ -138,7 +138,9 @@ def sign_request(
     return {"principal": principal, "expires_at": stamp, "signature": signature}
 
 
-_RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})")
+_RFC3339 = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)"
+)  # the offset's own grammar too: `+00:60` is not an offset, whatever a parser normalises
 
 
 def _parse_expires_at(text: Any) -> datetime:

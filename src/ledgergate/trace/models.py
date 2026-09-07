@@ -92,7 +92,13 @@ def _to_utc(value: datetime) -> datetime:
     already refused a naive value by the time this runs. The ledger applies the same
     normalization to every ``posted_at`` it hashes, so a recorded effect fed back on
     replay reproduces the recorded digest exactly."""
-    return value.astimezone(UTC)
+    try:
+        return value.astimezone(UTC)
+    except (OverflowError, OSError) as exc:
+        # A stamp at either end of the calendar with an offset that carries it out of
+        # `datetime`'s range: a value no clock produced, and a validation result, not a
+        # crash a caller of `load_any` has to defend against.
+        raise ValueError(f"timestamp {value.isoformat()} has no UTC normalization") from exc
 
 
 Timestamp = Annotated[AwareDatetime, AfterValidator(_to_utc)]

@@ -6,11 +6,13 @@ LedgerGate is **source-available, not open source**. The split is deliberate.
 | :--- | :--- | :--- |
 | `corpus/`, `schema/` | **Apache-2.0** (OSI approved) | Anything, including production and commercial use. These are the scenario corpus and the trace schema, and they are meant to be adopted, redistributed and cited freely. |
 | `src/ledgergate/` (the runtime) | **BUSL-1.1** (not OSI) | Read, copy, modify, redistribute, and use **non-production**: evaluation, development, testing, research, education, personal use. Production use requires a commercial license. |
+| `docs/`, `scripts/` | **Apache-2.0** | The specifications, ADRs and the repository's own tooling carry Apache-2.0 SPDX headers and may be used freely; a specification is meant to be implemented by others. |
+| `tests/` | **BUSL-1.1** | The tests exercise the runtime and are part of the Licensed Work; the same non-production grant applies. |
 
-The Licensed Work named in [LICENSE](LICENSE) is the runtime under `src/ledgergate/`;
-that file is the controlling text. Tests, scripts, tooling and documentation support the
-runtime and are provided for use alongside it; they are not separately licensed for
-production use.
+The Licensed Work named in [LICENSE](LICENSE) is the runtime under `src/ledgergate/`
+together with its tests; that file is the controlling text. The package metadata declares
+the runtime's license explicitly (`license = "BUSL-1.1"` in `pyproject.toml`), not only
+through a classifier.
 
 **Change Date: 2030-08-31.** On that date the runtime converts automatically to
 Apache-2.0. This applies per version, so each release carries its own four-year clock.
@@ -42,7 +44,7 @@ offering it to third parties as part of a product or service, is production. See
   compatible with GPL-3.0, satisfying "GPL Version 2.0 or a later version".
 - Per-file `SPDX-License-Identifier` declarations are enforced in CI by
   `scripts/check_licenses.py`, covering every file under `src/ledgergate/` (BUSL-1.1),
-  `corpus/` and `schema/` (Apache-2.0). Formats with no comment syntax, such as the JSON
+  `corpus/`, `schema/`, `docs/` and `scripts/` (Apache-2.0). Formats with no comment syntax, such as the JSON
   schema and the PEP 561 `py.typed` marker, carry an adjacent `<filename>.license`
   sidecar instead. That is the REUSE convention for uncommentable files; a
   directory-level `LICENSE` is not, because it does not travel with the file.

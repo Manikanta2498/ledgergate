@@ -27,6 +27,7 @@ from ledgergate.journal.approvals import (
     signing_key_from_bytes,
     verification_key,
     verification_key_text,
+    verification_key_text_of,
 )
 from ledgergate.journal.policy import (
     Decision,
@@ -92,4 +93,5 @@ __all__ = [
     "signing_key_from_bytes",
     "verification_key",
     "verification_key_text",
+    "verification_key_text_of",
 ]

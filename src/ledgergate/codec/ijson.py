@@ -75,7 +75,9 @@ def _pairs(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in pairs:
         if k in out:
-            raise IJsonError(f"duplicate member name {k!r}")
+            # the name is caller content, possibly long or sensitive: the diagnostic names the
+            # fault, not the member
+            raise IJsonError(f"duplicate member name ({len(k)} characters)")
         out[k] = v
     return out
 
@@ -101,18 +103,27 @@ def require_ijson(
             except UnicodeEncodeError as exc:
                 raise IJsonError("string contains an unpaired surrogate") from exc
         elif isinstance(v, dict):
+            if nodes + 2 * len(v) > max_nodes:
+                raise IJsonError(f"value exceeds {max_nodes} nodes")
             for k, item in v.items():
                 if not isinstance(k, str):
                     raise IJsonError("object keys must be strings")
                 stack.append((k, depth + 1))
                 stack.append((item, depth + 1))
         elif isinstance(v, list):
+            if nodes + len(v) > max_nodes:
+                # refuse before materialising a second traversal frame per element
+                raise IJsonError(f"value exceeds {max_nodes} nodes")
             stack.extend((item, depth + 1) for item in v)
         elif isinstance(v, bool) or v is None:
             pass
         elif isinstance(v, int):
             if abs(v) > MAX_SAFE_INTEGER:
-                raise IJsonRangeError(f"integer {v} is outside the I-JSON safe range")
+                # rendered by size, not value: str() of a huge int is itself bounded by the
+                # interpreter and would raise a different error class
+                raise IJsonRangeError(
+                    f"integer of {v.bit_length()} bits is outside the I-JSON safe range"
+                )
         elif isinstance(v, float):
             if not math.isfinite(v):
                 raise IJsonError("number is not a finite double")

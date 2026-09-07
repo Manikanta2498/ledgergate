@@ -404,16 +404,18 @@ class TestSecondPass:
         j = _journal(tmp_path)
         j.close()
         conn = sqlite3.connect(tmp_path / "j.journal")
-        for (name,) in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_no_replace'"
-        ).fetchall():
-            conn.execute(f"DROP TRIGGER {name}")
-        # the definition row is append-only, so write the schema-7 state as SQLite allows a
-        # schema-7 build would have: through the schema table, not through the row
-        conn.execute("DROP TRIGGER definition_no_update")
-        conn.execute("UPDATE definition SET schema_version = 7")
-        conn.commit()
-        conn.close()
+        try:
+            for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_no_replace'"
+            ).fetchall():
+                conn.execute(f"DROP TRIGGER {name}")
+            # the definition row is append-only, so write the schema-7 state as SQLite allows
+            # a schema-7 build would have: through the schema table, not through the row
+            conn.execute("DROP TRIGGER definition_no_update")
+            conn.execute("UPDATE definition SET schema_version = 7")
+            conn.commit()
+        finally:
+            conn.close()
         with pytest.raises(
             ConfigurationError, match="journal is schema 7; this process is schema 8"
         ):

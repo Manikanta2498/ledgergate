@@ -1413,6 +1413,9 @@ class Journal:
         try:
             result = call()
         except Exception as exc:
+            # the caller is the policy set on every route but the runtime-written verdict,
+            # whose Decision cannot raise or exceed the bound (closed vocabulary), so the
+            # attribution below cannot misname it today; it would if that vocabulary grew
             raise ConfigurationError(f"policy set {self.policy.version!r} raised: {exc}") from exc
         if isinstance(result, Decision) and (
             len(f"{result.matched_rule}: {result.reason}") > MAX_TEXT

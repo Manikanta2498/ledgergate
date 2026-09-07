@@ -65,9 +65,11 @@ class TestTargetSelection:
         assert PRODUCTION in environment
         assert "'pypi'" in environment and "'testpypi'" in environment
         (step,) = [s for s in publish["steps"] if "repository-url" in str(s.get("with", ""))]
-        url = step["with"]["repository-url"]
-        assert PRODUCTION in url
-        assert "upload.pypi.org" in url and "test.pypi.org" in url
+        # the whole expression, exactly: production URL only under the event+ref conjunction
+        assert step["with"]["repository-url"] == (
+            "${{ " + PRODUCTION + " && 'https://upload.pypi.org/legacy/'"
+            " || 'https://test.pypi.org/legacy/' }}"
+        )
 
     def test_the_testpypi_smoke_job_runs_on_every_run_that_is_not_a_tag_push(
         self, release: dict[Any, Any]

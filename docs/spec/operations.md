@@ -84,14 +84,17 @@ a consistent snapshot while a `serve` process keeps writing, includes everything
 committed at the snapshot, and never copies the `-wal`/`-shm` files. The copy is written to a temporary name and renamed into
 place, so `DEST` is either absent or complete. After the copy, the command:
 
-1. opens `DEST` read-only, verifies `schema_version`, and asserts `probe()` (table set);
+1. opens `DEST` with `?immutable=1` (nothing else can have it open: it was just written, and
+   SQLite then neither needs nor creates `-wal`/`-shm`; a plain read-only open of a WAL-header
+   file with no `-shm` is not portable across SQLite builds, 3.51 refuses it where 3.53 does
+   not, so the minimum SQLite version is stated in `pyproject.toml`'s metadata and pinned by a
+   meta test), verifies `schema_version`, and asserts `probe()` (table set);
 2. derives and verifies the trace of `DEST` (`derive` + `invariants.check`), refusing to
    report success on any `fail` (a backup that does not verify is not a backup);
 3. writes the backup's **lineage record** to `DEST.lineage.json` and prints its path:
    `journal_id`, the head sequence (max `journal_sequence`), the ledger head hash, the counts of
-   `approval_consumptions` and `signed_calls`, and the SHA-256 of the main file `DEST` alone
-   (the read-only verification in step 2 leaves `DEST-wal`/`DEST-shm` beside it; they hold
-   nothing and are not part of the backup) — the facts a later restore is checked against;
+   `approval_consumptions` and `signed_calls`, and the SHA-256 of the main file `DEST` — the
+   facts a later restore is checked against;
 4. marks `DEST` read-only on the filesystem (`0o444`) so it cannot be written by accident.
 
 A file copy of `PATH` while `serve` is running is **not** a supported backup (the WAL may hold
@@ -111,7 +114,8 @@ every backup shares) and enters the procedure at the step that state names; the 
 the absence of a `PATH` that now exists with `SRC`'s id) are suspended for that state and every
 other check runs. In order for a fresh run:
 
-0. **Check everything, change nothing.** Open `SRC` read-only; verify `schema_version` and
+0. **Check everything, change nothing.** Open `SRC` with `?immutable=1` (it is `0o444` and
+   nothing writes it); verify `schema_version` and
    `probe()`; derive and `invariants.check` (any `fail` refuses); recompute its SHA-256 and
    compare every field of the lineage record written at backup time (`--lineage-record`, the
    file `backup` wrote; the comparison is the mechanism, a substituted backup with a valid
@@ -138,27 +142,39 @@ other check runs. In order for a fresh run:
    leisure; the restore is re-run, resuming at step 1). Otherwise rename `ORIGINAL` to
    `ORIGINAL.retired-<utc>` and mark it `0o444`. The retired file is then the complete record
    of what happened after the snapshot: its own head, checkpointed into it.
-3. **Copy and record.** Copy `SRC` to a temporary name beside `PATH` and **link** it into place
-   (`os.link(tmp, PATH)`, which fails with `EEXIST` if `PATH` appeared meanwhile, then unlink
-   `tmp`): two restores racing past step 1 cannot both create `PATH`, and a shared `PATH-wal`
-   between two inodes, the hazard of §1, cannot arise. Clear the read-only bit and append to the
-   *restored* journal `lineage(restored_from, backup_sha256, backup_head_sequence,
-   backup_head_hash, original_head_sequence, original_head_hash, retired=<path or lost>, by,
-   at)` (the original's head is what the command just sealed, so the extent of the loss is in
-   the restored journal itself, not only behind a filesystem path). Every lineage row is a
-   trace-v2 event (`lineage_change`, additive); `verify` checks that a `restored_from`'s backup
-   head hash equals the ledger head at that sequence. Finally **seal `SRC`** itself (clearing
-   its read-only bit for the write, `sealed, restored_to=<PATH's SHA-256 and journal record>`,
-   then restoring the bit), so a backup is promotable once: a second promotion from the same
-   file would be a second writable lineage, and the seal is what refuses it. The `retired`
-   field holds a fixed marker (`retired` | `lost`) and the retired file's SHA-256, never a path
-   (a path is operator free text and would enter the trace).
+3. **Copy, record, then link.** Copy `SRC` to a temporary name beside `PATH` and, on the
+   temporary file, append the restored journal's lineage rows *before it becomes `PATH`*, so no
+   moment exists in which `PATH` is a valid journal without them (a supervisor-started `serve`
+   would otherwise honour window artefacts against a journal that does not yet know the
+   window): `lineage(restored_from, backup_sha256, backup_head_sequence, backup_head_hash,
+   original_head_sequence, original_head_hash, retired=<'retired' | 'lost'>,
+   retired_sha256, by, at)`, and, when the original was retired, one `lineage(lost_consumption,
+   approval_id)` row per `approval_consumptions` row of the retired file with
+   `journal_sequence > backup_head_sequence` and one `lineage(lost_spend, principal, call_id)`
+   row per `signed_calls` row likewise — the exact set of what was spent in the window, read
+   from the file that recorded it, no clock involved. Then `PRAGMA wal_checkpoint(TRUNCATE)`,
+   close, assert `tmp-wal`/`tmp-shm` absent (a WAL is bound by path; frames left beside `tmp`
+   would be lost at the link), and **link** into place (`os.link(tmp, PATH)`, which fails with
+   `EEXIST` if `PATH` appeared meanwhile, then unlink `tmp`): two restores racing past step 1
+   cannot both create `PATH`, and a shared `PATH-wal` between two inodes, the hazard of §1,
+   cannot arise. Every lineage row is a trace-v2 event (`lineage_change`, additive); `verify`
+   checks that a `restored_from`'s backup head hash equals the ledger head at that sequence.
+   Finally **seal `SRC`** itself (clearing its read-only bit for the write, `sealed,
+   restored_to=<backup_sha256, restore_at>`, the `restored_from` row's own identity, which
+   unlike `PATH`'s bytes never changes, then restoring the bit), so a backup is promotable once:
+   a second promotion from the same file would be a second writable lineage, and the seal is
+   what refuses it. The `retired` field is a fixed marker and a SHA, never a path (a path is
+   operator free text and would enter the trace).
 
-**Resume states**, each recognisable, each continuing at the named step: `ORIGINAL` sealed with
-this `restored_to` → step 2; `ORIGINAL` absent and a retired file whose seal names this record
-→ step 3, with that file's head as the original head; `PATH` present with `SRC`'s id and no
-`restored_from` row → append the row, then seal `SRC`; `PATH` present *with* its row and `SRC`
-unsealed → seal `SRC`; `SRC` sealed with `restored_to` naming `PATH` → done. The lineage record
+**Resume states**, each recognisable, each continuing at the named step, **earliest step
+first** (so in the in-place case a sealed `ORIGINAL` that is also `PATH` is step 2, not a
+`PATH` awaiting its row; `PATH`-present rules apply only once `ORIGINAL` is renamed or
+absent): `ORIGINAL` sealed with this `restored_to` → step 2; `ORIGINAL` absent and a retired
+file whose seal names this record → step 3, with that file as the source of the original head
+and the lost rows; `PATH` present with `SRC`'s id (its rows were written before the link, so it
+has them) and `SRC` unsealed → seal `SRC`; `SRC` sealed with this `restored_from` identity →
+done. Two restores racing past step 1 both see "sealed with this record" and continue; only
+one can link `PATH` (step 3), and the other refuses there. The lineage record
 is an unsigned JSON file: the comparison refuses a substituted backup presented *with the
 original record*; a forger who replaces both is outside what the record can detect, stated.
 
@@ -176,26 +192,37 @@ the window is replayable until its `expires_at` (at most a day, `principals.md`)
 permanent (`principals.md`: a revoked name is never re-added, and a policy line naming it is
 stranded, its journal then needing a new definition), so "revoke everyone live in the window"
 would leave every approval-gated operation of a restored journal permanently unapprovable and
-§3's rollover refused; that is not a remedy. Instead the `restored_from` row carries the window
-`(backup_head_at, restore_at)` and the journal enforces it:
+§3's rollover refused; that is not a remedy. The mechanism is the lineage rows of step 3, which
+the journal consults exactly where the lost `UNIQUE`s would have spoken:
 
-- **Approvals**: check 1 gains a clause: an artefact whose `issued_at` lies in a recorded lost
-  window is `approval_invalid` (issued against a state this journal does not hold), decidable
-  from the row and the artefact alone; the approver's key stays live, and a fresh artefact
-  issued after `restore_at` verifies. The presentation row's `verified` still records whether
-  the signature verified; the check result says the artefact is not one this journal honours.
-- **Signed requests**: an envelope carries no issue time, but `expires_at <= issue + 86,400 s`,
-  so any envelope with `expires_at <= restore_at + 86,400 s` may have been issued before the
-  restore: such envelopes are refused with a new cause, `request_in_lost_window`, for the day
-  after a restore, a stated one-day quarantine that a client meets by re-signing with a later
-  expiry.
+- **Approvals** (`--retire`): check 4 consults `lost_consumption` rows alongside
+  `approval_consumptions`; an artefact whose `approval_id` was consumed in the window is
+  `approval_already_used`, the existing verdict for exactly this fact, whenever it was issued
+  (an artefact issued *before* the backup head and consumed inside the window is the case an
+  `issued_at` window would miss, since artefact validity is unbounded). An artefact issued in
+  the window and *never* presented stays honourable: the approver approved that fingerprint,
+  and honouring it once is the product's promise.
+- **Signed requests** (`--retire`): the replay check consults `lost_spend` rows alongside
+  `signed_calls`; a pair spent in the window is `replayed_call`. No quarantine is needed, since
+  the set is exact.
+- **`--original-lost`**: there is no file to read the sets from, so the journal cannot know
+  what was consumed, and it says so with a clock-bounded refusal instead: the `restored_from`
+  row records `restore_at` (the restore command's clock, stated); an artefact whose `issued_at`
+  precedes `restore_at` is refused with a new closed-vocabulary value, `approval_lost_window`
+  (on `approvals.check_result`, `decisions.approval_verdict`, v2 `Verdict` and `check_result`;
+  `approval_invalid` cannot be reused, since the signature verifies and the model requires
+  `verified = false` for that result), and every envelope with `expires_at <= restore_at +
+  86,400 s` is refused as `request_in_lost_window` (envelope validity is bounded, so this covers
+  every envelope that could have been spent before the restore; for the first minute after a
+  restore no envelope can satisfy it, given `sign`'s 86,340 s cap, and for some hours only
+  near-maximal expiries can, stated). The clock assumption is stated: an approver clock ahead
+  of the restore command's by more than its skew lets a pre-restore artefact through, and the
+  operator re-issues approvals for pending operations after a lost-original restore.
 
-Both are decidable from the lineage row, need no operator action, and the trace invariant
-`attributions_are_registered` gains the corresponding clause (no `approval_valid` on an
-artefact whose `issued_at` is inside a recorded window). Under `--original-lost` the window has
-no right edge: the row records `restore_at` alone, every artefact issued before `restore_at` is
-refused, and the operator re-issues approvals; the original is not sealed (it is gone), and the
-single-writable-lineage rule then rests on the operator, stated under *does not claim*.
+The trace invariant `attributions_are_registered` gains the corresponding clauses (no
+`approval_valid` on an `approval_id` a `lost_consumption` row names; no `approval_valid` on an
+artefact issued before a `restore_at` without a retired original). The single-writable-lineage
+rule under `--original-lost` rests on the operator, stated under *does not claim*.
 
 ### 2.3 Rehearsal (a test, not a promise)
 
@@ -207,11 +234,15 @@ lineage record: verification passes, the original is sealed (its writer's next c
 restore *refuses* while the writer's connection is still open (`-shm` present) and deletes
 nothing, then succeeds after the writer closes (resuming at the seal), the retired file is
 read-only and holds the original head, the restored journal carries its `restored_from` row
-with both heads, and both artefacts, issued inside the window, are `approval_invalid`
-against the restored journal while a fresh artefact for the pending operation is
-`approval_valid`; a signed request with `expires_at` inside the quarantine is
-`request_in_lost_window` and one re-signed past it is applied — the loss is closed by the
-mechanism, and the test says so. Further tests: `restore` refused when `SRC` fails
+with both heads, and: the pending operation's artefact, issued *before* the backup and
+consumed inside the window, is `approval_already_used` against the restored journal (the
+`lost_consumption` row), while a fresh artefact for it is `approval_valid`; the post-snapshot
+operation's artefact is `approval_not_applicable` then, after the intent is re-issued,
+`approval_already_used` if it was consumed in the window and `approval_valid` if it was not; a
+signed pair spent in the window is `replayed_call`. A second test restores with
+`--original-lost` and asserts `approval_lost_window` on a pre-restore artefact and
+`request_in_lost_window` on an envelope inside the quarantine — the loss is closed by the
+mechanism, and the tests say which mechanism. Further tests: `restore` refused when `SRC` fails
 verification (nothing sealed, asserted); refused when the lineage record differs; refused when
 `ORIGINAL`'s `journal_id` differs; refused when the checkpoint reports `busy`; a sealed journal
 refuses every write on every path (registry-only opens included) and still derives.
@@ -225,8 +256,10 @@ schema 9 onward**: the schema-9 bump itself sends every schema-8 journal through
 earlier-schema procedure (README), since a schema-9 build cannot open one and cannot write a
 predecessor record into a file it may not open. From schema 9:
 
-0. **Check everything, change nothing.** Before the seal: the operator's principal is live in
-   `OLD` (the seal's `by`); `NEW`, `NEW-wal`, `NEW-shm` absent; every refusal `create` could
+0. **Check everything, change nothing.** Before the seal: `OLD` derives and verifies (a
+   journal that fails an invariant is not sealed; the digest recorded later is recomputed after
+   the seal, the pass/fail is known now); the operator's principal is live in `OLD` (the seal's
+   `by`); `NEW`, `NEW-wal`, `NEW-shm` absent; every refusal `create` could
    make is checked now (token key readable and matching `OLD`'s check value, currencies decode,
    approver keys canonical, every policy-named approver live in `OLD`); `OLD` unsealed or sealed
    with this successor and no `NEW`. The seal is then the first irreversible step and nothing
@@ -239,16 +272,22 @@ predecessor record into a file it may not open. From schema 9:
    this commit `OLD` is frozen; a running `serve` on it is refused at its next transaction.
    An `OLD` sealed with *this* successor and no `NEW` file is a crashed rollover and resumes at
    step 2, creating `NEW` with the sealed id (`create` gains a `journal_id=` parameter for
-   exactly this; `currencies=` it already has, the CLI gains the flag).
+   exactly this). Resume judges `NEW`'s absence at the path the operator names, and a sealed
+   `OLD` cannot record where `NEW` went: two resumes with two `NEW` paths would be two
+   journals under one id. Resume therefore requires an explicit `--resume`, and the rule that
+   the operator issues it once rests on the operator, stated under *does not claim*.
 2. **Then derive the frozen journal** and verify it; the trace now includes the seal, so its
    digest is the one `verify --chain` will recompute.
 3. Creates `NEW` in **one transaction** with the sealed `journal_id` (`journal.md`'s
    definition text, "128 random bits generated at creation", is amended for this one path), `OLD`'s
-   chart, `OLD`'s definition currency registry (not the running build's bundled table), the
+   chart, `OLD`'s definition currency registry as the whole registry (`create` gains
+   `registry=`, replacing rather than merging over the running build's bundled table, so `NEW`
+   accepts exactly what `OLD` did), the
    policy set and token key from the flags, `approvers=` the approvers live in `OLD` at the
    sealed head as `create` seeds, and the `lineage(predecessor, journal_id=OLD's, head_sequence,
-   head_hash, trace_digest, by=bootstrap, at)` row written by `create` itself, so `NEW` exists
-   only with its predecessor named. The operator's own name is `create`'s bootstrap principal;
+   head_hash, trace_digest, by=<the bootstrap principal's name>, at)` row written by `create`
+   itself after the bootstrap `principal_events` row (the trigger requires a live transport
+   `by`), so `NEW` exists only with its predecessor named. The operator's own name is `create`'s bootstrap principal;
    the other live transport and signed principals are then added, each `add` attributed to the
    operator and idempotent on re-run (a name already live is skipped), so `NEW`'s trace says who
    carried them over and from where. **Resume**: `OLD` sealed with successor *S* and a `NEW`
@@ -292,9 +331,8 @@ is what an operator's log shipper matches; there is no built-in pager integratio
 
 ## 5. Load and crash-recovery testing
 
-- **Load** (`tests/integration/test_load.py`, marked `slow`, run nightly): one `serve` process,
-  four client threads over a shared stdio pipe? No — stdio has one client (`mcp-runtime.md`).
-  Load is therefore a single client issuing 20,000 mixed calls (posts, reads, approvals,
+- **Load** (`tests/integration/test_load.py`, marked `slow`, run nightly): stdio has one
+  client (`mcp-runtime.md`), so load is a single client issuing 20,000 mixed calls (posts, reads, approvals,
   signed requests, replays) against one journal with the tokenizing admitter; assertions:
   the derived trace verifies, throughput is *printed* (not asserted; the number is information), the WAL stays
   under the threshold with checkpoints on, and `status` at the end matches the trace.
@@ -390,6 +428,9 @@ green rehearsal and the §7 `pypi` prerequisites; it is not part of this milesto
 ## What this document does not claim
 
 - Cross-clone or cross-journal replay and consumption protection (M8c).
+- Single writable lineage across a rollover `--resume`: a sealed `OLD` cannot record where
+  `NEW` was created, so a second `--resume` at another path would be a second journal under the
+  successor id; the flag is explicit and the rule rests on the operator.
 - Single writable lineage under `--original-lost`: the original is not sealed (it is gone), so
   a second backup of the lost lineage is a second promotable file, and only the operator's
   discipline (and the seal each promotion puts on its own `SRC`) stands between them.

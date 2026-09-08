@@ -48,13 +48,24 @@ would keep appending. Two mechanisms, one against writes and one against a live 
   `BEGIN IMMEDIATE` and before any insert, on every path including registry-only opens, to refuse
   with its own cause (`JournalSealed`) rather than an `IntegrityError`. The seal is written in
   the same `BEGIN IMMEDIATE` that reads the head it records, so the recorded head is the head.
-  A seal costs one event under the capacity formula, and a journal at capacity accepts it
-  safely: the formula charges 9 per invocation while a write derives at most 8 events, so the
-  actual event count plus one never exceeds the trace bound.
+  **The seal bypasses the capacity formula** (rollover exists for the full journal, and the
+  formula can sit exactly at the bound), and relies on this invariant instead: the formula
+  charges 9 per invocation while an invocation derives at most 8 events, so the actual event
+  count is at most `total - invocations`, and `actual + 1 <= 5,000,000` whenever there is at
+  least one invocation; with none, every counted row derives exactly one event, so the seal
+  checks the actual count against the bound directly and is refused only if the journal holds
+  5,000,000 events without a single invocation. The check order inside every transaction is
+  fixed once, here and in `journal.md`/`mcp-runtime.md` at implementation: binding, then seal,
+  then capacity, so a sealed-and-misbound or sealed-and-full journal reports one stated cause.
 - **The live-descriptor signal.** A WAL-mode connection holds the `-shm` file for its lifetime,
-  and SQLite removes `PATH-wal` and `PATH-shm` only when the *last* connection closes. So after
-  the command's own connection has closed, `ORIGINAL-wal` or `ORIGINAL-shm` still existing is a
-  decidable fact: another connection is open. Every procedure that renames or replaces a main
+  and SQLite removes `PATH-wal` and `PATH-shm` when the last connection closes *if that
+  connection is read-write* (a read-only connection closing last leaves them, and a connection
+  that has opened but run no statement is not counted). So the command closes its read-only
+  handles first, keeps one read-write connection, checkpoints with `busy = 0`, closes it, and
+  then `ORIGINAL-wal` or `ORIGINAL-shm` still existing is a decidable fact: another connection
+  is open. Between that check and the rename there is a window in which a fresh open (a
+  supervisor restarting `serve`) recreates the files under the path; the seal makes the
+  consequence a refused writer rather than stray frames, which is the honest claim. Every procedure that renames or replaces a main
   file refuses in that case and never deletes those files (SQLite binds a WAL to its main file
   by *path*; a deleted-and-recreated pair under one path would be shared between the stale
   connection's inode and the new journal, and frames the stale connection writes would be
@@ -74,9 +85,11 @@ place, so `DEST` is either absent or complete. After the copy, the command:
 1. opens `DEST` read-only, verifies `schema_version`, and asserts `probe()` (table set);
 2. derives and verifies the trace of `DEST` (`derive` + `invariants.check`), refusing to
    report success on any `fail` (a backup that does not verify is not a backup);
-3. prints the backup's **lineage record**: `journal_id`, the head sequence (max
-   `journal_sequence`), the ledger head hash, the counts of `approval_consumptions` and
-   `signed_calls`, and the SHA-256 of `DEST` — the facts a later restore is checked against;
+3. writes the backup's **lineage record** to `DEST.lineage.json` and prints its path:
+   `journal_id`, the head sequence (max `journal_sequence`), the ledger head hash, the counts of
+   `approval_consumptions` and `signed_calls`, and the SHA-256 of the main file `DEST` alone
+   (the read-only verification in step 2 leaves `DEST-wal`/`DEST-shm` beside it; they hold
+   nothing and are not part of the backup) — the facts a later restore is checked against;
 4. marks `DEST` read-only on the filesystem (`0o444`) so it cannot be written by accident.
 
 A file copy of `PATH` while `serve` is running is **not** a supported backup (the WAL may hold
@@ -96,8 +109,14 @@ precedes every check that could refuse the restore.** In order:
    file `backup` wrote; the comparison is the mechanism, a substituted backup with a valid
    internal structure is refused); when `--retire ORIGINAL`, open `ORIGINAL` read-only and
    require its `journal_id` to equal `SRC`'s (a retire pointed at another journal seals an
-   unrelated lineage); refuse an existing `PATH` (or, when `PATH != ORIGINAL`, an existing
-   `PATH-wal`/`PATH-shm`). Only when every check passes does anything below run.
+   unrelated lineage); when `PATH != ORIGINAL`, refuse an existing `PATH`, `PATH-wal` or
+   `PATH-shm` (when `PATH == ORIGINAL`, the in-place case, `PATH` is the original and is
+   retired in step 2). And check that the `restored_from` row of step 3 **can be inserted**,
+   since that insert is the last step and must not be the one that refuses: the operator's
+   principal is live in `SRC`'s registry (the row's `by` is trigger-checked against *SRC's*
+   registry, which may predate the operator's add), `SRC` carries no `sealed` row (a backup of a
+   rolled-over or already-promoted journal is not promotable), and `SRC` admits one more event
+   under the capacity formula. Only when every check passes does anything below run.
 1. **Seal the original** (when it exists): `BEGIN IMMEDIATE`, read the head, append
    `lineage(sealed, restored_to=<SRC record>, at_sequence=head, by, at)`, commit. From this
    commit every writer of `ORIGINAL` is refused (`JournalSealed`; the trigger behind it). An
@@ -111,13 +130,22 @@ precedes every check that could refuse the restore.** In order:
    leisure; the restore is re-run, resuming at step 1). Otherwise rename `ORIGINAL` to
    `ORIGINAL.retired-<utc>` and mark it `0o444`. The retired file is then the complete record
    of what happened after the snapshot: its own head, checkpointed into it.
-3. **Copy and record.** Copy `SRC` to `PATH`, clear the read-only bit, and append to the
-   *restored* journal `lineage(restored_from, backup_sha256, backup_head_sequence,
+3. **Copy and record.** Copy `SRC` to a temporary name beside `PATH` and rename it into place
+   (so `PATH` is absent or complete), clear the read-only bit, and append to the *restored*
+   journal `lineage(restored_from, backup_sha256, backup_head_sequence,
    backup_head_hash, original_head_sequence, original_head_hash, retired=<path or lost>, by,
    at)` (the original's head is what the command just sealed, so the extent of the loss is in
    the restored journal itself, not only behind a filesystem path). Every lineage row is a
    trace-v2 event (`lineage_change`, additive); `verify` checks that a `restored_from`'s backup
-   head hash equals the ledger head at that sequence.
+   head hash equals the ledger head at that sequence. Finally **seal `SRC`** itself
+   (`sealed, restored_to=PATH`), so a backup is promotable once: a second promotion from the
+   same file would be a second writable lineage, and the seal is what refuses it.
+
+**Resume.** Each state a crash can leave is recognisable and the command continues from it:
+`ORIGINAL` sealed with this `restored_to` → step 2; `ORIGINAL` absent and
+`ORIGINAL.retired-*` present with `SRC`'s `journal_id` → step 3, with the retired file's head
+as the original head; `PATH` present with `SRC`'s `journal_id` and no `restored_from` row →
+append the row and seal `SRC`; `SRC` sealed with `restored_to=PATH` → done.
 
 What is lost by a restore is thereby recorded: every invocation between the backup head and
 the original head, every approval consumed and every signed call spent in that window. The
@@ -127,10 +155,14 @@ operation the restored journal does not know is `approval_not_applicable` on pre
 the honest client then re-issues the intent, which recreates the operation with the same
 fingerprint, tokenized key and `journal_id`, and the old artefact then passes every check. A
 signed request spent in the window is replayable until its `expires_at` (at most a day,
-`principals.md`). The remedy is operational and stated: before reopening the journal to agents,
-the operator revokes **every approver active in the window** (the retired file lists them) and,
-for the day the bound allows, the signed principals active in it; a revoked approver's artefacts
-are `approval_invalid` from then on.
+`principals.md`). The remedy is operational and stated. Issuance is out of band (`ledgergate approve`), so an
+artefact issued in the window and never presented is in no file; what the retired file does
+list is the registry, so the rule is: before reopening the journal to agents, the operator
+revokes **every approver live at any point in the window** and, for the day the bound allows,
+every signed principal live in it; a revoked approver's artefacts are `approval_invalid` from
+then on. Under `--original-lost` the window has no right edge and nothing is sealed: the rule
+is *revoke all*, and the single-writable-lineage rule then rests on the operator alone, which
+is stated under *does not claim*.
 
 ### 2.3 Rehearsal (a test, not a promise)
 
@@ -171,16 +203,22 @@ predecessor record into a file it may not open. From schema 9:
    for exactly this).
 2. **Then derive the frozen journal** and verify it; the trace now includes the seal, so its
    digest is the one `verify --chain` will recompute.
-3. Creates `NEW` with the sealed `journal_id`, `OLD`'s chart, `OLD`'s definition currency
-   registry (not the running build's bundled table), the policy set and token key from the
-   flags, and `approvers=` the approvers live in `OLD` at the sealed head as `create` seeds; the
-   operator's own name is `create`'s bootstrap principal, and the other live transport and
-   signed principals are added after `create`, each `add` attributed to the operator, so `NEW`'s
-   trace says who carried them over and from where.
-4. Writes `NEW`'s `lineage(predecessor, journal_id=OLD's, head_sequence, head_hash,
-   trace_digest, by, at)` row. `ledgergate verify --chain OLD.json NEW.json` checks that `NEW`'s
-   predecessor row names `OLD`'s id, head and trace digest, that `OLD` verifies, and that
-   `OLD`'s last lineage row is the seal naming `NEW`'s id.
+3. Creates `NEW` in **one transaction** with the sealed `journal_id` (`create` gains
+   `journal_id=` and `currencies=` paths; `journal.md`'s definition text is amended), `OLD`'s
+   chart, `OLD`'s definition currency registry (not the running build's bundled table), the
+   policy set and token key from the flags, `approvers=` the approvers live in `OLD` at the
+   sealed head as `create` seeds, and the `lineage(predecessor, journal_id=OLD's, head_sequence,
+   head_hash, trace_digest, by=bootstrap, at)` row written by `create` itself, so `NEW` exists
+   only with its predecessor named. The operator's own name is `create`'s bootstrap principal;
+   the other live transport and signed principals are then added, each `add` attributed to the
+   operator and idempotent on re-run (a name already live is skipped), so `NEW`'s trace says who
+   carried them over and from where. **Resume**: `OLD` sealed with successor *S* and a `NEW`
+   whose `journal_id` is *S* → add the missing principals; without `NEW` → create it.
+4. `ledgergate verify --chain OLD.json NEW.json` checks that `NEW`'s predecessor row names
+   `OLD`'s id, head and trace digest, that `OLD` verifies, and that `OLD`'s last lineage row is
+   the seal naming `NEW`'s id. The **trace digest** of a whole-journal derivation is defined in
+   `trace-v2.md` at implementation as the JCS digest of the v2 document with `trace_id` removed
+   (derivation is deterministic; `trace_id` is the one caller-chosen field).
 
 Pending operations in `OLD` stay pending there (an operation is a fact of one journal); their
 artefacts cannot be presented to `NEW` (`journal_id` binding); the operator re-issues intents
@@ -199,7 +237,7 @@ once per N calls and at every threshold crossing:
 | derived-event count vs capacity | the capacity formula (`journal.md`) | 80 % and 95 % of 5,000,000 |
 | WAL size | `PATH-wal` bytes | 64 MiB (a reader pinning the WAL, or a checkpoint not happening) |
 | main file size, free pages | `PRAGMA page_count`, `freelist_count` | informational |
-| write-lock wait | time to acquire `BEGIN IMMEDIATE` | any wait over `BUSY_TIMEOUT_SECONDS / 2`; a `SQLITE_BUSY` refusal is logged as an unrecorded failure with its call id |
+| write-lock wait | time to acquire `BEGIN IMMEDIATE` | any wait over `BUSY_TIMEOUT_SECONDS / 2`; a `SQLITE_BUSY` refusal is logged as an unrecorded failure by error class and id *kind* only, never the caller's id (`mcp-runtime.md`, the stderr rule: stderr sits outside the redactor) |
 | integrity | `PRAGMA quick_check` on `status`; any `IntegrityError` under `serve` | any |
 | registry | live principals/approvers, pending operations, stranded lines (`journal pending`) | any stranded operation |
 | clock | `requested_at` monotonicity across the last N invocations | a step backwards |
@@ -209,7 +247,7 @@ once per N calls and at every threshold crossing:
 invocations** (a checkpoint inside `BEGIN IMMEDIATE` is refused by SQLite with
 `SQLITE_LOCKED`), logging the returned `(busy, log, checkpointed)` triple; the WAL alert fires
 when `busy = 1` on consecutive checkpoints (a reader pinning the WAL) or the WAL exceeds the
-size threshold. The clock alert is per process (two servers on two hosts have two clocks). Alerts are
+size threshold. The clock alert is over the process's *own* clock readings (its last N `requested_at` values), not the journal's mixed history. Alerts are
 lines on stderr in one fixed grammar (`ledgergate alert <name> <value> <threshold>`), which
 is what an operator's log shipper matches; there is no built-in pager integration, stated.
 
@@ -225,14 +263,15 @@ is what an operator's log shipper matches; there is no built-in pager integratio
   `SIGKILL` at a random point in a scripted sequence, ten times; the harness issues calls
   strictly one in flight; after each kill the journal opens, `PRAGMA integrity_check` is `ok`,
   the derived trace verifies, every served response's `call_id` is present as a committed
-  invocation, and the committed invocations are exactly the served ones plus at most the one
+  invocation (the harness runs the identity admitter, so call ids are not tokenized), and the committed invocations are exactly the served ones plus at most the one
   call in flight at the kill (nothing beyond it) — the durability claim `journal.md` makes,
   exercised. Power loss is **not** simulated (a stated limit; SQLite's `synchronous = FULL`
   is the mechanism relied on, and the test proves process death only).
 - **Concurrency** (extends the existing concurrent-writer tests): two `serve` processes on
-  one journal with the busy timeout, interleaved approvals of one pending operation: exactly
-  one `approval_valid`, the other `approval_already_used`, and one `signed_calls` spend per
-  verified envelope.
+  one journal with the busy timeout, interleaved presentations of one artefact for one pending
+  operation: exactly one `approval_valid`, the other `replay` with verdict
+  `approval_not_applicable` (consumption leaves the operation terminal, `journal.md`), exactly
+  one `approval_consumptions` row, and one `signed_calls` spend per verified envelope.
 
 ## 6. Policies (documents, each short, each with a mechanism)
 
@@ -312,6 +351,9 @@ green rehearsal and the §7 `pypi` prerequisites; it is not part of this milesto
 ## What this document does not claim
 
 - Cross-clone or cross-journal replay and consumption protection (M8c).
+- Single writable lineage under `--original-lost`: with no original to seal, a second backup of
+  the lost lineage is a second promotable file, and only the operator's discipline (and the
+  seal each promotion puts on its own `SRC`) stands between them.
 - Power-loss durability beyond what `synchronous = FULL` provides; only process death is
   tested.
 - Pager or metrics-system integration; alerts are log lines in a fixed grammar.

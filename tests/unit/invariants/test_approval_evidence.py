@@ -150,6 +150,12 @@ class TestLogicalApprovalIdIsSpentOnce:
         # UNIQUE on the logical id forbids, and what checking the rows alone missed
         presentations[1]["approval_id"] = presentations[0]["approval_id"]
         assert _statuses(doc)["approval_evidence_is_consistent"] == "fail"
+        row = next(
+            r
+            for r in check(TraceV2.model_validate(doc)).results
+            if r.name == "approval_evidence_is_consistent"
+        )
+        assert any("was already consumed by" in f.message for f in row.findings)
 
 
 class TestVerifiedPresentationsNameTheirApprover:
@@ -177,3 +183,52 @@ class TestVerifiedPresentationsNameTheirApprover:
 
     def test_a_derived_trace_passes_the_row(self, approved: dict[str, Any]) -> None:
         assert _statuses(approved)["approval_evidence_is_consistent"] == "pass"
+
+
+class TestReachableBranchesTheFirstPassCalledEquivalent:
+    """The second review showed these branches reachable; each test asserts the finding text
+    of the branch, so the mutants that blank or reword it, and the operator mutants inside its
+    condition, die here rather than being recorded as equivalent."""
+
+    def _row(self, doc: dict[str, Any]) -> list[str]:
+        card = check(TraceV2.model_validate(doc))
+        return [
+            f.message
+            for r in card.results
+            if r.name == "approval_evidence_is_consistent"
+            for f in r.findings
+        ]
+
+    def test_a_verdict_against_a_missing_presentation_is_named_and_every_intent_is_judged(
+        self, approved: dict[str, Any]
+    ) -> None:
+        doc = copy.deepcopy(approved)
+        for e in doc["events"]:
+            if e["type"] == "policy_decision" and e.get("approval"):
+                e["approval"]["presentation_ref"] = "presentation-999"
+                e["context"]["approval"]["presentation"] = 999
+        messages = self._row(doc)
+        assert messages == [
+            "intent-11: verdict against presentation-999, which carries no presentation"
+        ]
+
+    def test_two_missing_presentations_yield_two_findings(self, tmp_path: Path) -> None:
+        # `continue` -> `break` after the first missing presentation would report one
+        doc = derive(_journal(tmp_path, second=True)).model_dump(mode="json", exclude_none=True)
+        for e in doc["events"]:
+            if e["type"] == "policy_decision" and e.get("approval"):
+                e["approval"]["presentation_ref"] = "presentation-999"
+                e["context"]["approval"]["presentation"] = 999
+        messages = self._row(doc)
+        assert len([m for m in messages if "carries no presentation" in m]) == 2
+
+    def test_an_expired_presentation_with_a_valid_verdict_trips_both_branches(
+        self, approved: dict[str, Any]
+    ) -> None:
+        doc = copy.deepcopy(approved)
+        p = next(e for e in doc["events"] if e["type"] == "approval_presentation")
+        p["check_result"] = "approval_expired"
+        assert self._row(doc) == [
+            "intent-11: check result approval_expired cannot reach verdict approval_valid",
+            "intent-11: approval_valid on a presentation that is not verified with checks_passed",
+        ]

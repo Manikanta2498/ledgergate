@@ -18,6 +18,7 @@ checked; the validator is one of the mechanisms.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -46,10 +47,33 @@ Status = Literal["pass", "fail", "no_evidence"]
 
 @dataclass(frozen=True, slots=True)
 class Finding:
+    """One thing a row found. The shape is a contract, checked at construction: a finding
+    names its row (lowercase identifier), carries a severity from the closed set and a
+    non-empty message, and an `intent_id` that is an identifier when given; attribution is that
+    field, never inferred from the message."""
+
     invariant: str
     severity: Severity
     message: str
     intent_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.invariant, str) or not _ROW_NAME.fullmatch(self.invariant):
+            raise TypeError(f"finding names no row: {self.invariant!r}")
+        if self.severity not in ("error", "warning"):
+            raise TypeError(f"finding severity outside the closed set: {self.severity!r}")
+        if not isinstance(self.message, str) or not self.message:
+            raise TypeError("finding without a message")
+        if self.intent_id is not None and (
+            not isinstance(self.intent_id, str) or not self.intent_id
+        ):
+            raise TypeError("finding intent_id is not an identifier")
+        # attribution is the `intent_id` field alone, never inferred from the message: a legacy
+        # command id such as "intent-9: external command" is content, and a row may attribute
+        # a finding about a ledger command to the intent that produced it
+
+
+_ROW_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1360,6 +1384,11 @@ def check(trace: TraceV2, registry: Sequence[Invariant] = REGISTRY) -> Scorecard
             results.append(InvariantResult(inv.name, "no_evidence"))
             continue
         findings = tuple(inv.check(trace))
+        for f in findings:
+            # a row's findings are its own: a Finding of another name (or not a Finding) is a
+            # bug in the registry, refused rather than scored
+            if not isinstance(f, Finding) or f.invariant != inv.name:
+                raise TypeError(f"{inv.name} produced a finding it does not own: {f!r}")
         status: Status = "fail" if any(f.severity == "error" for f in findings) else "pass"
         results.append(InvariantResult(inv.name, status, findings))
     return Scorecard(

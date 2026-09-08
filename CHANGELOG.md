@@ -37,6 +37,13 @@ the package's `__version__`. The trace and result schemas carry their own versio
 - Licensing: `docs/` and `scripts/` are Apache-2.0, `tests/` BUSL-1.1, stated; the package
   metadata declares `license = "BUSL-1.1"`.
 
+- Verifier findings are a checked contract (`Finding`: row name, closed severity, non-empty
+  message, identifier `intent_id` when given; `check` refuses a row's finding it does not own);
+  the mutation baseline is regenerated from the runner's results (516 unkilled of 2,165, two
+  equivalents with reasons, one flaky).
+- README states the supported procedure for a journal of an earlier schema, including the
+  journals no build can derive (`journal dump` is their row-level export).
+
 ### Changed
 - `ledgergate serve --approval-key` is `--approver NAME=KEYFILE`; `ledgergate approve
   --signing-key` is `--seed-file`; a schema-6 journal is refused (re-create).

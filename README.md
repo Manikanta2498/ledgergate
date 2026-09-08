@@ -215,6 +215,32 @@ their codec version, and v1 traces recorded before it report head divergences on
 which is the format change and not tampering. Nothing has been released, so nothing is
 migrated.
 
+**A journal of an earlier schema (the supported procedure).** A schema bump is never a
+migration: `open`, `serve`, `derive`, `verify` and `approve` refuse a journal whose
+`schema_version` is not the build's, by number, before any pragma touches the file. The
+procedure, in order:
+
+1. **Keep the original database file.** It is the record; nothing below replaces it, and the
+   append-only file is what a later dispute is settled against.
+2. Under the last build that wrote that schema (schema 7: commit `43647fd`), run
+   `ledgergate verify PATH --emit-trace PATH.json`. When it succeeds, the derived v2 trace is a
+   portable, independently verifiable copy of the history: every later build's `verify` loads
+   it (v2 fields are additive).
+3. **Not every schema-7 journal can be exported this way.** A schema-7 journal that committed
+   an `advance` with `event: refund` (accepted by that build, refused since 2026-09-06) cannot
+   be derived by *any* build, the old one included; `derive` under the current build names the
+   invocation. For such a journal the row-level export is `ledgergate journal dump PATH` under
+   the old build, which prints every row of every table; the original file stays the record.
+   No trace can be produced from it, and none is promised.
+4. Create a new journal under the current build for new activity; re-seed principals and
+   approvers as the operator (`--principal`, `--approver`, `journal principal add`).
+
+What does not carry over, stated: pending (`awaiting_approval`) operations stay with the old
+journal; its approval artefacts cannot be re-presented against the new one (an artefact binds
+its `journal_id`, so they are `approval_scope_mismatch`); its spent signed calls do not carry
+(a signed request binds its `journal_id`); a registry is the history of one journal. Schema 7
+(M8a, 2026-09-06) became schema 8 the same day when the no-replace triggers were added.
+
 **Known limit.** Approval single use is enforced within one writable journal file; a byte
 copy of a journal enforces it separately, so operators keep exactly one writable copy until
 an external consumption authority lands (M8c).
@@ -470,7 +496,7 @@ These are enforced by CI gates, not by convention:
 | No accidental network in tests | `pytest --disable-socket` by default |
 | The license boundary is unambiguous per file | `scripts/check_licenses.py` requires a matching `SPDX-License-Identifier`, inline or in a `.license` sidecar, on every source and package-data file under `src/ledgergate/`, `corpus/` and `schema/` |
 | Secrets stay out of the tree and the history | `gitleaks` on staged changes in the pre-commit hook, then on the full working tree *and* the full git history in CI |
-| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows; a baselined one the runner kills is a warning (the runner flaps on some mutants) and stays in the baseline marked `flaky`, kept there by a digest of the mutated sources and the test tree rather than by a commit, and retired only by hand; unkilled sometimes is not proven. Current baseline: **760 unkilled mutants** of 2,059 distinct mutations (all `survived`; none `no tests`; M8a added 362 mutants and 145 unkilled, most in the invariant registry, a number the next milestone should lower with killing tests rather than record). The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
+| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows; a baselined one the runner kills is a warning (the runner flaps on some mutants) and stays in the baseline marked `flaky`, kept there by a digest of the mutated sources and the test tree rather than by a commit, and retired only by hand; unkilled sometimes is not proven. Current baseline: **516 unkilled mutants** of 2,165 distinct mutations (all `survived`; none `no tests`; 2 more recorded as equivalent with their reasons; one marked `flaky`), from the runner's own results over commit `09b3d15` (run 34191475375), not a local run. The number fell from 760 on 2026-09-07 by one mechanism, a `Finding` shape contract (a finding names its row, carries a closed severity and a non-empty message, and its `intent_id`, when given, is an identifier), plus tests written against the survivors in the two rows the review added; a first version of the contract that inferred attribution from message text reached 445 locally but misread a legacy command id as an intent reference and was withdrawn, so the mutants that drop a finding's `intent_id` are counted, not inferred away. The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
 | A release is what the repository built (workflow unrehearsed until the first TestPyPI dispatch) | tag-driven workflow: production publication happens only on a tag *push* (a `workflow_dispatch` is a rehearsal to TestPyPI, allowed only from `main`); the CI gates run whole, including a job that installs the built wheel outside the checkout and runs the corpus from it, then `uv build --no-build-isolation` with the build backend pinned and taken from `uv.lock`, a SLSA provenance attestation per artefact, trusted publishing to PyPI (no token exists), a GitHub release with the Apache-2.0 corpus tarball and every provenance bundle beside it. Verify: `gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml` |
 | Money is never a float | `Money` rejects a `float` amount at construction, and `scripts/check_determinism.py` fails on any float literal, `float()` call or `float` annotation in `src/ledgergate/ledger/` |
 

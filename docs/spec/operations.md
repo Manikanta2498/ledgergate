@@ -121,15 +121,20 @@ detect a "foreign" WAL; the claim is not made.
 `ledgergate journal restore SRC PATH --lineage-record FILE (--retire ORIGINAL | --original-lost)`
 promotes a backup and retires the lineage it came from. **Invariant: no irreversible step
 precedes every check that could refuse the restore.** The whole procedure runs under
-exclusive locks on **every file it touches**: `SRC.lock`, `ORIGINAL.lock` (when given) and
-`PATH.promoting.lock`, each taken with `flock(LOCK_EX | LOCK_NB)` for the run, in that fixed
-order; failure to acquire any refuses at entry ("a restore is in progress"). Two restores of one
-`SRC` to two `PATH`s, or of two backups over one `ORIGINAL`, are therefore refused at entry, and
-every statement below about races is replaced by this one. Before any `immutable=1` open of
-`SRC` or of a retired file, `X-wal` and `X-shm` must be absent, else the command refuses and
-deletes nothing: an immutable open reads the main file alone, and a sidecar WAL left by a
-previous run's death between `COMMIT` and close would hold rows (a seal among them) the main
-file does not show. Resume recognition
+exclusive locks on **every lineage it touches**, all placed in `PATH`'s directory (a backup may
+sit on read-only media): `<dir>/.ledgergate-lock-<backup_sha256>` for `SRC`,
+`<dir>/.ledgergate-lock-<ORIGINAL's journal_id>` for the original, and `PATH.promoting.lock`,
+each taken with `flock(LOCK_EX | LOCK_NB)` for the run, in that fixed order; failure to acquire
+any refuses at entry ("a restore is in progress"). Two restores of one `SRC` to two `PATH`s, or
+of two backups over one `ORIGINAL`, are therefore refused at entry, and every statement below
+about races is replaced by this one; `flock` is a local-filesystem mechanism, and the claim is
+scoped to one. Before any `immutable=1` open of `SRC` or of a retired file, its `-wal` and
+`-shm` sidecars are examined: an immutable open reads the main file alone, so a sidecar WAL
+holding frames would hide rows (a seal among them). A `-wal` of at most 32 bytes (header only)
+holds no frames and, with its `-shm`, is removed under the lock (today's `verify`/`derive` of a
+`0o444` file leaves exactly this pair behind; both gain an `immutable` open for any `0o444`
+file, so the common cause disappears); a longer one refuses with the remedy printed: clear the
+read-only bit, open read-write, `PRAGMA wal_checkpoint(TRUNCATE)`, close, re-run. Resume recognition
 comes next: the
 command reads the state of `SRC`, `ORIGINAL`, `PATH` and any `ORIGINAL.retired-*` (identified
 by a `sealed` row whose `restored_to` equals the lineage record, never by `journal_id`, which
@@ -201,7 +206,11 @@ other check runs. In order for a fresh run:
    the registry-only binding (a lineage row runs neither policy nor admitter), append `sealed,
    restored_to=<backup_sha256, restore_at>` (the `restored_from` row's own identity, which unlike
    `PATH`'s bytes never changes), `wal_checkpoint(TRUNCATE)`, close, assert `SRC-wal`/`SRC-shm`
-   gone, restore `0o444`. From this point `SRC` is promotable to **this run's `PATH` only**: a
+   gone, restore `0o444`. **`restore_at` is defined once and is recoverable**: with `--retire` it
+   is the `at` of `ORIGINAL`'s step-1 seal (read from the retired file); with `--original-lost`
+   it is the command's clock at step 3 on a first run and, on a resumed run, the `restore_at`
+   of `SRC`'s own seal. So a rebuilt temporary carries the same row as the one a crash destroyed,
+   and identities re-match. From this point `SRC` is promotable to **this run's `PATH` only**: a
    re-run naming another `PATH` refuses at step 0 on `SRC`'s seal, and a crash between this seal
    and the link is a resume state (below), not a second lineage. A backup is thus promotable
    once, and the seal is what refuses the second time. Then the link, as above. The `retired`
@@ -211,15 +220,18 @@ other check runs. In order for a fresh run:
 **Resume states**, each recognisable, each continuing at the named step, **earliest step
 first**; before any of them, under the lock, a leftover `PATH.promoting` is dealt with: if it
 is the same inode as `PATH` (`os.path.samefile`, a crash between link and unlink) it is
-unlinked, otherwise (a crash before the link) it is a valid unsealed journal beside `PATH` and
-is removed, since it holds nothing `SRC` does not; the fixed name and the lock are what make it
-recognisable and safe to remove (so in the in-place case a sealed `ORIGINAL` that is also `PATH` is step 2, not a
+unlinked; otherwise, while `SRC` is *unsealed* it is removed (the run had not reached the point
+of no return and everything it held is rebuilt); once `SRC` is sealed to this record, a
+temporary carrying the matching `restored_from` row is kept and linked, and one carrying no such
+row is rebuilt from `SRC` (and the retired file) with the recovered `restore_at` (so in the in-place case a sealed `ORIGINAL` that is also `PATH` is step 2, not a
 `PATH` awaiting its row; `PATH`-present rules apply only once `ORIGINAL` is renamed or
 absent): `ORIGINAL` sealed with this `restored_to` → step 2; `ORIGINAL` absent and a retired
 file whose seal names this record → step 3, with that file as the source of the original head
-and the lost rows; `SRC` sealed with this identity and `PATH.promoting` present carrying the
-matching `restored_from` row, `PATH` absent → link; `SRC` sealed with this identity and `PATH`
-present carrying the matching row → done (identity is the record, never `journal_id`). A
+and the lost rows; `SRC` sealed to this record and `PATH.promoting` present carrying the
+matching `restored_from` row, `PATH` absent → link; `SRC` sealed to this record, `PATH` and
+`PATH.promoting` absent → rebuild the temporary with the recovered `restore_at`, then link;
+`SRC` sealed to this record and `PATH` present carrying the matching row → done (identity is the
+record, never `journal_id`). A
 `PATH` present with a *different* record is another restore's journal and refuses; a `SRC`
 sealed to a *different* identity refuses at step 0. The lineage record
 is an unsigned JSON file: the comparison refuses a substituted backup presented *with the
@@ -243,14 +255,18 @@ would leave every approval-gated operation of a restored journal permanently una
 the journal consults exactly where the lost `UNIQUE`s would have spoken:
 
 - **Approvals** (`--retire`): check 4 consults `lost_consumption` rows alongside
-  `approval_consumptions`; an artefact whose `approval_id` was consumed in the window is
+  `approval_consumptions`, and a `BEFORE INSERT` trigger on `approval_consumptions` refuses an
+  `approval_id` a `lost_consumption` row names, so the database holds the invariant and the
+  `SELECT` is again the optimisation (`journal.md`'s own rule for check 4); an artefact whose `approval_id` was consumed in the window is
   `approval_already_used`, the existing verdict for exactly this fact, whenever it was issued
   (an artefact issued *before* the backup head and consumed inside the window is the case an
   `issued_at` window would miss, since artefact validity is unbounded). An artefact issued in
   the window and *never* presented stays honourable: the approver approved that fingerprint,
   and honouring it once is the product's promise.
 - **Signed requests** (`--retire`): the replay check consults `lost_spend` rows alongside
-  `signed_calls`; a pair spent in the window is `replayed_call`. No quarantine is needed, since
+  `signed_calls`, with the same `BEFORE INSERT` trigger on `signed_calls` behind it; a pair
+  spent in the window is `replayed_call` (the pair is stored tokenized, as `signed_calls` is, so
+  no raw caller id enters the lineage). No quarantine is needed, since
   the set is exact.
 - **`--original-lost`**: there is no file to read the sets from, so the journal cannot know
   what was consumed, and it says so with a clock-bounded refusal instead: the `restored_from`
@@ -483,9 +499,11 @@ green rehearsal and the §7 `pypi` prerequisites; it is not part of this milesto
 ## What this document does not claim
 
 - Cross-clone or cross-journal replay and consumption protection (M8c).
-- Detection of a foreign SQLite connection that opened the original before a restore and ran
-  its first statement after the rename: it creates `PATH-wal`/`PATH-shm` after the link check
-  and can write into the promoted file. A ledgergate connection cannot be in that state.
+- Detection of a connection that opened the original before a restore and ran its first
+  statement after the rename: it creates `PATH-wal`/`PATH-shm` after the link check and can
+  write into the promoted file. A foreign connection can be idle indefinitely; a ledgergate
+  `open` makes three connections and is preempted across the rename only in one of three
+  connect-to-first-statement instants, the same door, unclaimed.
 - Single writable lineage across a rollover `--resume`: a sealed `OLD` cannot record where
   `NEW` was created, so a second `--resume` at another path would be a second journal under the
   successor id; the flag is explicit and the rule rests on the operator.

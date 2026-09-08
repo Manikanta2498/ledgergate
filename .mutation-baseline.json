@@ -1,6 +1,6 @@
 {
   "_": "docs/spec/assurance.md, the mutation gate; regenerate with `make mutation-baseline`",
-  "source": "sha256:e5b564456137639c125176ea70bb3e4f745b9566f934909af87d2d1a1d5fb409",
+  "source": "sha256:fc542d4625d0799f861c21501fba3ef48544176c27d3f2924aa179ded50c7ebd",
   "unkilled": {
     "ledgergate.invariants.x__check_approver_line:0123df1598fbbd84": {
       "function": "ledgergate.invariants.x__check_approver_line",
@@ -252,11 +252,6 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x__live_at__mutmut_14"
     },
-    "ledgergate.invariants.x__owner_of:3c7e4a7e4ab54376": {
-      "function": "ledgergate.invariants.x__owner_of",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x__owner_of__mutmut_7"
-    },
     "ledgergate.invariants.x__owner_of:6ddb7158329923a4": {
       "function": "ledgergate.invariants.x__owner_of",
       "bucket": "survived",
@@ -318,10 +313,50 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x__witnessed_aggregates__mutmut_22"
     },
+    "ledgergate.invariants.x_approval_evidence_is_consistent:48b8cb736cf99e2a": {
+      "function": "ledgergate.invariants.x_approval_evidence_is_consistent",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_approval_evidence_is_consistent__mutmut_15"
+    },
     "ledgergate.invariants.x_approval_evidence_is_consistent:5bf9ec603de5eef8": {
       "function": "ledgergate.invariants.x_approval_evidence_is_consistent",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_approval_evidence_is_consistent__mutmut_49"
+    },
+    "ledgergate.invariants.x_approval_evidence_is_consistent:fd167ee2dc2cecf4": {
+      "function": "ledgergate.invariants.x_approval_evidence_is_consistent",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_approval_evidence_is_consistent__mutmut_11"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:066ce5c6b49fe298": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_124"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:119e9d273b6216ff": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_304"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:1f58f496fcd47b74": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_142"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:28089480347df923": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_39"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:292b8c7c48ccaa12": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_227"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:310e6add55a969d9": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_59"
     },
     "ledgergate.invariants.x_attributions_are_registered:3301bbf26246e36d": {
       "function": "ledgergate.invariants.x_attributions_are_registered",
@@ -333,10 +368,40 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_31"
     },
+    "ledgergate.invariants.x_attributions_are_registered:4096458a8414dbe3": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_205"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:41096364655f8954": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_300"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:580b4f24e29986cc": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_43"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:5cf7b42b8739a291": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_279"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:6173fa2a0921fa2f": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_259"
+    },
     "ledgergate.invariants.x_attributions_are_registered:6b5a07098d1caca5": {
       "function": "ledgergate.invariants.x_attributions_are_registered",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_262"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:71471a483b690140": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_63"
     },
     "ledgergate.invariants.x_attributions_are_registered:7aa6bfd912f32327": {
       "function": "ledgergate.invariants.x_attributions_are_registered",
@@ -348,10 +413,50 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_4"
     },
+    "ledgergate.invariants.x_attributions_are_registered:823f5254b210e3f7": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_263"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:8a68ded66811aeaa": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_120"
+    },
     "ledgergate.invariants.x_attributions_are_registered:91f0cbc0168cba4f": {
       "function": "ledgergate.invariants.x_attributions_are_registered",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_5"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:aa56a5bc1376216d": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_283"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:b89bc4c71c6073dd": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_223"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:d0ecdeba2c718325": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_162"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:d7d2961f63dd82e1": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_209"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:ded3f7603cafbcf9": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_138"
+    },
+    "ledgergate.invariants.x_attributions_are_registered:ea50aaee9cbd15b8": {
+      "function": "ledgergate.invariants.x_attributions_are_registered",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_attributions_are_registered__mutmut_166"
     },
     "ledgergate.invariants.x_attributions_are_registered:ec64aa5f3a114e56": {
       "function": "ledgergate.invariants.x_attributions_are_registered",
@@ -538,6 +643,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_142"
     },
+    "ledgergate.invariants.x_committed_response_matches_journal:1a1eded7cfb7093a": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_129"
+    },
     "ledgergate.invariants.x_committed_response_matches_journal:28ca27b51322c571": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -598,6 +708,16 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_193"
     },
+    "ledgergate.invariants.x_committed_response_matches_journal:4e8b4d94074e49a5": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_273"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:52064beceac804eb": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_269"
+    },
     "ledgergate.invariants.x_committed_response_matches_journal:5261b07cd01ae77a": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -617,6 +737,11 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_145"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:57fd8875460e0296": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_73"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:5e35bb8ad79dd328": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -668,6 +793,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_40"
     },
+    "ledgergate.invariants.x_committed_response_matches_journal:80e4c99575d440a7": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_221"
+    },
     "ledgergate.invariants.x_committed_response_matches_journal:82b3cf6dbd39a972": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -677,6 +807,11 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_29"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:855ae43667959486": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_177"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:86621cd5a0013dde": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -697,6 +832,11 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_144"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:9765b1dde82d3116": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_77"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:9ad42548b819d1dc": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -732,6 +872,11 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_82"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:a5a1d55676ac9214": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_181"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:aae04dc51a31552d": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -803,6 +948,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_194"
     },
+    "ledgergate.invariants.x_committed_response_matches_journal:d5b33ed2f9c47b88": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_225"
+    },
     "ledgergate.invariants.x_committed_response_matches_journal:d6fd2ec42e7dcb12": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -828,6 +978,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_262"
     },
+    "ledgergate.invariants.x_committed_response_matches_journal:e23e915d3e0366c6": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_106"
+    },
     "ledgergate.invariants.x_committed_response_matches_journal:e584829d3cb97e64": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
@@ -852,6 +1007,21 @@
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_272"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f229954a61765007": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_133"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f4ef228e241b9cf6": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_253"
+    },
+    "ledgergate.invariants.x_committed_response_matches_journal:f6014241696c1ef0": {
+      "function": "ledgergate.invariants.x_committed_response_matches_journal",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_committed_response_matches_journal__mutmut_249"
     },
     "ledgergate.invariants.x_committed_response_matches_journal:f6b568aa8c0a21e3": {
       "function": "ledgergate.invariants.x_committed_response_matches_journal",
@@ -948,6 +1118,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_context_matches_decision__mutmut_37"
     },
+    "ledgergate.invariants.x_context_matches_decision:c5c224c37707bc85": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_11"
+    },
     "ledgergate.invariants.x_context_matches_decision:cdff7fa8f305ee0b": {
       "function": "ledgergate.invariants.x_context_matches_decision",
       "bucket": "survived",
@@ -973,6 +1148,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_context_matches_decision__mutmut_66"
     },
+    "ledgergate.invariants.x_context_matches_decision:e2a70c7bdd045f8e": {
+      "function": "ledgergate.invariants.x_context_matches_decision",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_context_matches_decision__mutmut_15"
+    },
     "ledgergate.invariants.x_decision_recomputes:163550a71f096a68": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
@@ -982,6 +1162,11 @@
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_70"
+    },
+    "ledgergate.invariants.x_decision_recomputes:17cc119018bde73f": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_100"
     },
     "ledgergate.invariants.x_decision_recomputes:1a60c1132b4e489e": {
       "function": "ledgergate.invariants.x_decision_recomputes",
@@ -1008,15 +1193,35 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_87"
     },
+    "ledgergate.invariants.x_decision_recomputes:2ab2e78ecb75b6b4": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_159"
+    },
     "ledgergate.invariants.x_decision_recomputes:31dcdf3b1ab2262a": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_48"
     },
+    "ledgergate.invariants.x_decision_recomputes:36e0eb0de7c67e57": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_38"
+    },
+    "ledgergate.invariants.x_decision_recomputes:428cc6163cc03c48": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_118"
+    },
     "ledgergate.invariants.x_decision_recomputes:485a5f7d67a7d6a9": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_68"
+    },
+    "ledgergate.invariants.x_decision_recomputes:552ec54644a49b7d": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_122"
     },
     "ledgergate.invariants.x_decision_recomputes:560178b5a7ccb0b9": {
       "function": "ledgergate.invariants.x_decision_recomputes",
@@ -1038,6 +1243,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_82"
     },
+    "ledgergate.invariants.x_decision_recomputes:6f72dc62f019e307": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_174"
+    },
     "ledgergate.invariants.x_decision_recomputes:727a09d27ca54b70": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
@@ -1047,6 +1257,11 @@
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_67"
+    },
+    "ledgergate.invariants.x_decision_recomputes:7d26265402edc51a": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_42"
     },
     "ledgergate.invariants.x_decision_recomputes:8880706466d4cf21": {
       "function": "ledgergate.invariants.x_decision_recomputes",
@@ -1068,6 +1283,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_177"
     },
+    "ledgergate.invariants.x_decision_recomputes:977aed5056604e02": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_66"
+    },
     "ledgergate.invariants.x_decision_recomputes:9b0c17617846b88a": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
@@ -1082,6 +1302,11 @@
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_162"
+    },
+    "ledgergate.invariants.x_decision_recomputes:a043277f3951aae8": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_163"
     },
     "ledgergate.invariants.x_decision_recomputes:a5bff3d8d54b18ab": {
       "function": "ledgergate.invariants.x_decision_recomputes",
@@ -1113,10 +1338,30 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_51"
     },
+    "ledgergate.invariants.x_decision_recomputes:c5b8c7439fae377f": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_178"
+    },
+    "ledgergate.invariants.x_decision_recomputes:c88b64d2be9f7998": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_104"
+    },
+    "ledgergate.invariants.x_decision_recomputes:d0454299810a9721": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_142"
+    },
     "ledgergate.invariants.x_decision_recomputes:d421126a5a1514fd": {
       "function": "ledgergate.invariants.x_decision_recomputes",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_decision_recomputes__mutmut_56"
+    },
+    "ledgergate.invariants.x_decision_recomputes:d94427ad224357ba": {
+      "function": "ledgergate.invariants.x_decision_recomputes",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_decision_recomputes__mutmut_146"
     },
     "ledgergate.invariants.x_decision_recomputes:f6a67864e1dcbcaf": {
       "function": "ledgergate.invariants.x_decision_recomputes",
@@ -1313,25 +1558,10 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_23"
     },
-    "ledgergate.invariants.x_ledger_pairs_replay:2175df41574b5e84": {
-      "function": "ledgergate.invariants.x_ledger_pairs_replay",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_22"
-    },
     "ledgergate.invariants.x_ledger_pairs_replay:333452e3bcb0bd40": {
       "function": "ledgergate.invariants.x_ledger_pairs_replay",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_20"
-    },
-    "ledgergate.invariants.x_ledger_pairs_replay:4a26d08cee1d427c": {
-      "function": "ledgergate.invariants.x_ledger_pairs_replay",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_12"
-    },
-    "ledgergate.invariants.x_ledger_pairs_replay:613cbc92e4671b78": {
-      "function": "ledgergate.invariants.x_ledger_pairs_replay",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_8"
     },
     "ledgergate.invariants.x_ledger_pairs_replay:82022bbf87e88872": {
       "function": "ledgergate.invariants.x_ledger_pairs_replay",
@@ -1342,11 +1572,6 @@
       "function": "ledgergate.invariants.x_ledger_pairs_replay",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_3"
-    },
-    "ledgergate.invariants.x_ledger_pairs_replay:de97e25ab4015a80": {
-      "function": "ledgergate.invariants.x_ledger_pairs_replay",
-      "bucket": "survived",
-      "example": "ledgergate.invariants.x_ledger_pairs_replay__mutmut_19"
     },
     "ledgergate.invariants.x_legacy_carries_no_policy_evidence:097d9b654fdcc545": {
       "function": "ledgergate.invariants.x_legacy_carries_no_policy_evidence",
@@ -1423,6 +1648,16 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_legacy_carries_no_policy_evidence__mutmut_8"
     },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:2a8bed0148f673a0": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_37"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:371fc557c76fa0f1": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_25"
+    },
     "ledgergate.invariants.x_read_observed_the_recorded_head:3ec3c9fa94eb84c7": {
       "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
       "bucket": "survived",
@@ -1432,6 +1667,11 @@
       "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_30"
+    },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:906925ba20409bdf": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_21"
     },
     "ledgergate.invariants.x_read_observed_the_recorded_head:9478c5e5dc79ed97": {
       "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
@@ -1443,10 +1683,25 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_31"
     },
+    "ledgergate.invariants.x_read_observed_the_recorded_head:9b8f43bbdf72e6f1": {
+      "function": "ledgergate.invariants.x_read_observed_the_recorded_head",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_observed_the_recorded_head__mutmut_41"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:5c90714b443098bb": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_20"
+    },
     "ledgergate.invariants.x_read_result_binds_the_served_value:9d09ee63d4335e58": {
       "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_19"
+    },
+    "ledgergate.invariants.x_read_result_binds_the_served_value:dbc329f538c5ac7d": {
+      "function": "ledgergate.invariants.x_read_result_binds_the_served_value",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_read_result_binds_the_served_value__mutmut_16"
     },
     "ledgergate.invariants.x_replay_never_reevaluates:0f0a51a9be958065": {
       "function": "ledgergate.invariants.x_replay_never_reevaluates",
@@ -1467,6 +1722,11 @@
       "function": "ledgergate.invariants.x_replay_never_reevaluates",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_20"
+    },
+    "ledgergate.invariants.x_replay_never_reevaluates:520402f825717751": {
+      "function": "ledgergate.invariants.x_replay_never_reevaluates",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_11"
     },
     "ledgergate.invariants.x_replay_never_reevaluates:654edcba3e2ea6fe": {
       "function": "ledgergate.invariants.x_replay_never_reevaluates",
@@ -1533,6 +1793,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_replay_never_reevaluates__mutmut_15"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:01879c83a22710b7": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_116"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:04ac6dc3a371ae36": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
@@ -1542,6 +1807,11 @@
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_188"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:1309862c464101b3": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_70"
     },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:1acd8a48b1b28450": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
@@ -1573,6 +1843,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_5"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:389428986e1721b5": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_145"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:39354678c72de4da": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
@@ -1583,15 +1858,45 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_20"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:4dc93850372b4a0d": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_203"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:5202168da81fef45": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_112"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:5e266579fac5be5e": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_148"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:63d4f9b40507a46a": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_46"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:64c1061fbccc5445": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_92"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:66281729f5fd28b5": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_74"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:6a087e3a14a6cbfb": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_189"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:6c25e8e7b4fc822c": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_165"
     },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:6d99cdd03a373ff0": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
@@ -1607,6 +1912,11 @@
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_190"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:76e14b1dfbb21a74": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_199"
     },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:77f7e89d5f639ed0": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
@@ -1627,6 +1937,16 @@
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_95"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:931a12a7e6d21ee6": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_149"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:93ebca85ab55836b": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_127"
     },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:9fec7394aff6d6f5": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
@@ -1653,10 +1973,20 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_164"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:b939429de8ae7a06": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_33"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:be2f73fcbb8758b3": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_4"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:cb7c9dcc4abc0390": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_131"
     },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:d1c4b0aee3d6a230": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
@@ -1668,6 +1998,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_80"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:dfd9c071df009d1f": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_29"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:e10f7d717f6b1d95": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
@@ -1678,6 +2013,11 @@
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_8"
     },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:e53ee9df04d53a90": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_161"
+    },
     "ledgergate.invariants.x_runtime_decisions_are_verdicts:ee46254767bf5140": {
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
@@ -1687,6 +2027,16 @@
       "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
       "bucket": "survived",
       "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_191"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:f925c0964b95ce83": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_50"
+    },
+    "ledgergate.invariants.x_runtime_decisions_are_verdicts:fe26c905f4191ea1": {
+      "function": "ledgergate.invariants.x_runtime_decisions_are_verdicts",
+      "bucket": "survived",
+      "example": "ledgergate.invariants.x_runtime_decisions_are_verdicts__mutmut_96"
     },
     "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__:6da3492a322c7797": {
       "function": "ledgergate.ledger.accounts.xǁChartOfAccountsǁ__init__",
@@ -2227,6 +2577,11 @@
       "function": "ledgergate.ledger.state.x_command_fingerprint",
       "bucket": "survived",
       "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_61"
+    },
+    "ledgergate.ledger.state.x_command_fingerprint:ffd702be8d34b535": {
+      "function": "ledgergate.ledger.state.x_command_fingerprint",
+      "bucket": "survived",
+      "example": "ledgergate.ledger.state.x_command_fingerprint__mutmut_47"
     }
   },
   "equivalent": {

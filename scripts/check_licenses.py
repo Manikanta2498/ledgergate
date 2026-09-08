@@ -73,10 +73,11 @@ COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
     ".toml": ("#",),
     ".cfg": ("#",),
     ".sh": ("#",),
-    # Markdown carries its header inside an HTML comment block; the identifier line itself
-    # has no prefix, so any line in the header window beginning with the marker is accepted
-    # (a prose mention would count too), the same rule as a sidecar.
+    # Markdown and MDX carry their headers inside comment blocks; the identifier line
+    # itself has no prefix, so any line in the header window beginning with the marker is
+    # accepted (a prose mention would count too), the same rule as a sidecar.
     ".md": ("",),
+    ".mdx": ("",),
 }
 
 # Only build artefacts are skipped. Directory names such as LICENSES are *not* exempt

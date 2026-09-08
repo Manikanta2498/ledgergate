@@ -1,0 +1,92 @@
+---
+title: Quickstart
+description: Install LedgerGate from source and run your first journal-backed MCP server.
+---
+
+{/*
+SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+SPDX-License-Identifier: Apache-2.0
+*/}
+
+This guide installs LedgerGate from source, creates a tokenized journal, starts the stdio MCP server, posts one entry, and verifies it.
+
+You need `uv` (or any Python 3.11+ environment) and `git`.
+
+<Steps>
+  <Step title="Clone and install">
+    ```bash
+    git clone https://github.com/Manikanta2498/ledgergate.git
+    cd ledgergate
+    uv sync
+    uv run ledgergate --version
+    ```
+  </Step>
+
+  <Step title="Create a chart and a token key">
+    A chart declares the accounts. Save this as `chart.json`:
+
+    ```json
+    [
+      {"account_id": "cash", "kind": "asset", "currency": "USD"},
+      {"account_id": "revenue", "kind": "revenue", "currency": "USD"}
+    ]
+    ```
+
+    Generate a 32-byte token key. This key tokenizes caller identifiers and free text before they reach the journal; keep it secret and back it up.
+
+    ```bash
+    python3 -c "import os; open('token.key','wb').write(os.urandom(32))"
+    ```
+  </Step>
+
+  <Step title="Post an entry over stdio">
+    The MCP server reads one JSON-RPC request per line. Save the call sequence as `calls.json`:
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"post","arguments":{"idempotency_key":"initial-sale","draft":{"postings":[{"account":"cash","side":"debit","money":{"amount":1999,"currency":"USD"}},{"account":"revenue","side":"credit","money":{"amount":1999,"currency":"USD"}}]}}}}
+    {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"trial_balance","arguments":{}}}
+    ```
+
+    Run the server once:
+
+    ```bash
+    uv run ledgergate serve --create --chart chart.json --token-key-file token.key --journal ledger.journal < calls.json
+    ```
+
+    The server prints three JSON-RPC responses. The `trial_balance` response shows cash debited $19.99 and revenue credited $19.99.
+  </Step>
+
+  <Step title="Verify the journal">
+    ```bash
+    uv run ledgergate verify ledger.journal
+    ```
+
+    You should see a `PASS` scorecard and several `pass` invariant rows.
+  </Step>
+
+  <Step title="Inspect the journal">
+    ```bash
+    uv run ledgergate journal dump ledger.journal | head -n 10
+    ```
+
+    This prints every row of every table as JSON lines.
+  </Step>
+</Steps>
+
+## What happens under the hood
+
+- `ledgergate serve --create` builds a new SQLite journal in WAL mode, seeds it with your chart, and binds the token key in the definition.
+- The `post` tool is a write, so it requires an `idempotency_key`. A retry with the same key replays the same result instead of double-posting.
+- The tokenization key ensures caller-supplied identifiers and free text never reach disk; operator-defined account identifiers stay in the clear because they are the books.
+- `ledgergate verify` derives a trace v2 from the journal and runs the invariant registry.
+
+<Warning>
+  The `token.key` is required to open this journal later. If you lose it, the journal is still verifiable and replayable, but you cannot tokenize new calls consistently with the old ones. Keep it outside the repository and out of backups of the journal.
+</Warning>
+
+## Next steps
+
+- Read the [journal spec](/spec/journal) and the [MCP runtime spec](/spec/mcp-runtime) for the full contract.
+- Try the [corpus and conformance workflow](/spec/corpus) to evaluate an agent.
+- Read the operator runbooks (coming) for production setup, principals, approvers, and monitoring.

@@ -1,0 +1,30 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: mintlify build + links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate Mintlify build
+        working-directory: docs
+        run: npx mint@latest validate
+
+      - name: Check for broken internal links
+        working-directory: docs
+        run: npx mint@latest broken-links

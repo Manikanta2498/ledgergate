@@ -1,14 +1,14 @@
-<!--
+{/*
 SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Spec: trace schema v2 and journal derivation
 
 Normative specification for the M3 trace format decided in
-[ADR-0002](../adr/0002-runtime-surface-and-plan.md). Schema v1
-([`schema/trace/v1.json`](../../schema/trace/v1.json)) is frozen; it remains the offline
-ingest format. v2 is what the runtime derives from the [journal](journal.md).
+[ADR-0002](/adr/0002-runtime-surface-and-plan). Schema v1
+([`schema/trace/v1.json`](https://raw.githubusercontent.com/Manikanta2498/ledgergate/main/schema/trace/v1.json)) is frozen; it remains the offline
+ingest format. v2 is what the runtime derives from the [journal](/spec/journal).
 
 ## Units
 
@@ -109,7 +109,7 @@ carries the inputs, not a summary of them:
 | `approval` | presentation reference and the decision's `approval_verdict`, when one was presented (the verdict is taken from `decisions`, not from the presentation row, which holds only the pure-check result) |
 | `consumption` | consumption reference, when one was kept |
 
-Schema-7 derivations ([principals](principals.md)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal), `invocation_resolution.authentication` (`transport`, `signed`, `rejected`) and `invocation_resolution.error_type`, required iff `authentication` is present and the disposition is `invalid`, forbidden otherwise, and equal to the paired `tool_result.error.type` (the model requires all three), so the invariant and the corpus key on the resolution; `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `by`, `at`; `kind` on `principal_change` only), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
+Schema-7 derivations ([principals](/spec/principals)) add, all optional so earlier documents load unchanged: `invocation_resolution.principal` (the authenticated principal), `invocation_resolution.authentication` (`transport`, `signed`, `rejected`) and `invocation_resolution.error_type`, required iff `authentication` is present and the disposition is `invalid`, forbidden otherwise, and equal to the paired `tool_result.error.type` (the model requires all three), so the invariant and the corpus key on the resolution; `context.approval.approver` (the authenticated approver name when check 1 passed, else `null`); two standalone event types with no invocation anchor, `principal_change` and `approver_change` (`name`, `action` `add` | `revoke`, `by`, `at`; `kind` on `principal_change` only), at their `journal_sequence` position; and the value `approval_wrong_approver` in both `Verdict` and the presentation's `check_result` (1b is a check-1-to-3 result and the presentation row carries it).
 
 A consumer with the policy set at `policy_set_version` can recompute `decision` from
 `context` and compare. A consumer without it can verify only that the recorded evidence is

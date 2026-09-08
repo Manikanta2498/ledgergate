@@ -1,0 +1,38 @@
+---
+title: LedgerGate
+description: A correctness-enforcing ledger runtime for autonomous money-moving agents.
+---
+
+{/*
+SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
+SPDX-License-Identifier: Apache-2.0
+*/}
+
+LedgerGate is a correctness-enforcing ledger runtime for autonomous agents that move money, plus the invariant conformance suite that proves an agent respects financial state machines before deployment.
+
+It is not a payment processor. It keeps the books, decides whether a command is admissible, records the decision durably, and lets you replay and verify the result.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="play" href="/quickstart">
+    Install LedgerGate from source, create a journal, and serve it over stdio in minutes.
+  </Card>
+  <Card title="Specifications" icon="book-open" href="/spec/journal">
+    Read the normative specs that define the journal, trace, runtime, and security model.
+  </Card>
+</CardGroup>
+
+## What LedgerGate does
+
+- **Deterministic ledger core:** double-entry accounting with immutable state, hash-chained entries, and injected effects so replay is byte-stable.
+- **Trace schema v1 and v2:** a normalized, framework-agnostic record of what an agent said, called, and what the ledger answered.
+- **MCP runtime (`ledgergate serve`):** exposes the journal as MCP tools over stdio; every call is checked, logged, and derived into the trace.
+- **Invariant registry (`ledgergate verify`):** checks traces and journals for idempotency, balance, lifecycle correctness, policy compliance, and more.
+- **Corpus and conformance levels (`ledgergate run` / `report`):** score scripted or supplied agent traces against correct and red-team scenarios.
+
+## Status
+
+LedgerGate is pre-alpha. The ledger core, journal, trace v2, MCP runtime, redaction, policy/approvals, corpus, and assurance layer are implemented and tested. Operational readiness (backup, restore, rollover, monitoring) is a design draft under review.
+
+<Info>
+  The normative specifications in `docs/spec/` are the source of truth. Every guide links back to the spec it depends on.
+</Info>

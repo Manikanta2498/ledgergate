@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Assurance: conformance levels, the mutation gate, code scanning, and releases (M7)
 

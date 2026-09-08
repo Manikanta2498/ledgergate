@@ -1,9 +1,10 @@
-.PHONY: help install hooks check fmt lint types imports determinism licenses test cov audit secrets mutation mutation-baseline mutation-baseline-from-runner mutation-retire-flaky wheel-smoke clean
+.PHONY: help install hooks check fmt lint types imports determinism licenses test cov audit secrets mutation mutation-baseline mutation-baseline-from-runner mutation-retire-flaky wheel-smoke docs clean
 
 help:
 	@echo "install      install the project and dev dependencies"
 	@echo "hooks        install the pre-commit hooks into .git/hooks"
 	@echo "check        run every gate (CI also scans the full git history for secrets)"
+	@echo "docs         validate the Mintlify documentation build and links"
 	@echo "fmt          format the code"
 	@echo "lint         ruff lint"
 	@echo "types        mypy --strict"
@@ -87,6 +88,9 @@ mutation-retire-flaky:
 # The same gate ci.yml's `wheel` job runs: the installed artefact, not the editable install
 # (docs/spec/assurance.md, Releases). The environment and the working directory are outside
 # the checkout, so an import that only resolves from the source tree fails here.
+docs:
+	cd docs && npx mint@latest validate && npx mint@latest broken-links
+
 wheel-smoke:
 	set -eu; \
 	rm -rf /tmp/wheelenv /tmp/wheelsmoke; \

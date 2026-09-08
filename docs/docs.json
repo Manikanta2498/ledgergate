@@ -1,0 +1,40 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "LedgerGate",
+  "colors": {
+    "primary": "#059669"
+  },
+  "description": "A correctness-enforcing ledger runtime for autonomous money-moving agents.",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Overview",
+        "pages": [
+          "index",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Specifications",
+        "pages": [
+          "spec/journal",
+          "spec/mcp-runtime",
+          "spec/trace-v2",
+          "spec/principals",
+          "spec/identifiers-and-redaction",
+          "spec/corpus",
+          "spec/assurance",
+          "spec/otel-adapter"
+        ]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "adr/0001-architecture",
+          "adr/0002-runtime-surface-and-plan"
+        ]
+      }
+    ]
+  }
+}

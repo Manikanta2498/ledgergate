@@ -1,12 +1,12 @@
-<!--
+{/*
 SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Spec: identifiers, tokenization and redaction
 
 Normative specification for M2c, decided in
-[ADR-0002](../adr/0002-runtime-surface-and-plan.md). Everything here happens **at
+[ADR-0002](/adr/0002-runtime-surface-and-plan). Everything here happens **at
 admission, before the ledger hashes anything**, so every digest of admitted content is
 computed over the stored form and a trace replays exactly. The one digest of *rejected*
 content, the failure envelope's `input_digest`, is necessarily over the raw input; it is
@@ -146,7 +146,7 @@ the signature verified**; `approval_id`, `approver`, `key`, `subject`, `amount` 
 rather than the presenter's. Check 4 needs `approval_id` only after checks 1 to 3 passed,
 so nothing the protocol needs is lost.
 
-**Auth envelope fields (schema 7, [principals](principals.md)).** A signed request's `auth`
+**Auth envelope fields (schema 7, [principals](/spec/principals)).** A signed request's `auth`
 envelope is bounded at admission the same way: `principal` an identifier (at most 256
 characters, one line), `expires_at` RFC 3339 with an offset (at most 64 characters),
 `signature` exactly 86 base64url characters; outside these it is `authentication_malformed`

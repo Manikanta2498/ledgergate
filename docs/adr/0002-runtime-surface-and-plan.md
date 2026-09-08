@@ -1,15 +1,15 @@
-<!--
+{/*
 SPDX-FileCopyrightText: 2026 Venkata Sai Manikanta Yatam
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # ADR 0002: A runtime surface, a durable journal, and an authority layer
 
 - Status: Accepted
 - Date: 2026-09-03
-- Normative detail: [spec/journal.md](../spec/journal.md),
-  [spec/trace-v2.md](../spec/trace-v2.md),
-  [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md). This ADR
+- Normative detail: [spec/journal.md](/spec/journal),
+  [spec/trace-v2.md](/spec/trace-v2),
+  [spec/identifiers-and-redaction.md](/spec/identifiers-and-redaction). This ADR
   records the decisions and their trade-offs; the specs are what implementations and
   tests are held to.
 
@@ -49,7 +49,7 @@ attempt is an *invocation*. A retry is therefore visible in the trace as a retry
 invisible to the books as an effect, which is the property the README leads with.
 
 The invariants an implementation is held to are listed in
-[spec/journal.md, *Invariants*](../spec/journal.md#invariants); the protocol that
+[spec/journal.md, *Invariants*](/spec/journal#invariants); the protocol that
 maintains them follows. Two are worth naming here because they changed the design. The
 projection cursor is the journal sequence of the latest *outcome* folded in, not the
 entry-chain head (lifecycle commands change state without touching the chain) and not the
@@ -106,7 +106,7 @@ Approvals are signed artefacts bound to one pending operation and validated befo
 enter the context; single use is a database constraint within a journal and a signed journal identity across journals, not a flag. A validated approval
 is consumed whatever policy then decides, because every decision on a valid presentation
 leaves its operation terminal, so there is nothing left for the artefact to serve. Details
-in [spec/journal.md, *Approval artefacts*](../spec/journal.md#approval-artefacts).
+in [spec/journal.md, *Approval artefacts*](/spec/journal#approval-artefacts).
 
 ### 3. The runtime surface is a local MCP server (M4)
 
@@ -115,7 +115,7 @@ Write tools require an idempotency key and run the journal's write protocol; rea
 run the audited-read protocol and record the journal position they observed. What M4
 guarantees: within one local process, for a single local principal (M8a adds signed principals through the same session), the tools cannot
 double-apply, post an unbalanced entry, take an illegal lifecycle step, or exceed the
-configured policies. What M4 does not do: listen on a network. Authentication of principals and real approver identity arrive in M8a ([spec/principals.md](../spec/principals.md)), transport-independent, because a mandate without an authenticated principal is not a mandate; the network listener is M8b, and it forwards signed requests and adds nothing the journal trusts. Multi-tenancy is not claimed by any M8 row: one journal is one tenant.
+configured policies. What M4 does not do: listen on a network. Authentication of principals and real approver identity arrive in M8a ([spec/principals.md](/spec/principals)), transport-independent, because a mandate without an authenticated principal is not a mandate; the network listener is M8b, and it forwards signed requests and adds nothing the journal trusts. Multi-tenancy is not claimed by any M8 row: one journal is one tenant.
 
 ### 4. Trace schema v2 is built around intents and dispositions (M3)
 
@@ -167,14 +167,14 @@ suite's claim is that these are stopped; the red-team corpus is the evidence.
 
 | Milestone | Contents |
 | :--- | :--- |
-| M2b | The journal per [spec/journal.md](../spec/journal.md): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
-| M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](../spec/identifiers-and-redaction.md), replacing M2b's identity admitter behind the same interface |
-| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](../spec/trace-v2.md); real policy sets over the M2b `PolicyContext`, alongside the null policy; invariant registry; scorecard; `ledgergate verify` |
-| M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call. Designed in [docs/spec/mcp-runtime.md](../spec/mcp-runtime.md), which answers M4's first design questions before any transport code: the MCP mapping from `tools/call` to the journal's `Request` (call id, key and artefact extraction, malformed-call routing, `isError`), raw input through the project's I-JSON decoder before any generic decoder, one connection owner serializing calls, and segmentation of a journal whose whole-journal trace would outgrow the v2 event bound (answered as rollover: the journal refuses, under its write lock, any transaction that would take its derived trace past the bound, and `serve` reports that; cross-journal continuity is future work). |
-| M5 | OpenTelemetry GenAI observational adapter with completeness validation and cassettes, designed in [docs/spec/otel-adapter.md](../spec/otel-adapter.md); thin framework wrappers are conveniences over it and are not part of M5 |
-| M6 | Scenario corpus and red-team corpus, `ledgergate run` scoring scripted or supplied traces against closed-vocabulary expectations, `result.json` (schema `schema/result/v1.json`), `ledgergate report` to md/junit/sarif, and the drift table over two results; designed in [docs/spec/corpus.md](../spec/corpus.md) |
-| M7 | Conformance levels rendered from `result.json`, a ratcheting mutation gate over the core and the registry, CodeQL and OpenSSF Scorecard, and tag-driven trusted-publishing releases with provenance; designed in [docs/spec/assurance.md](../spec/assurance.md) |
-| M8a | Authenticated principals (a registry plus Ed25519-signed requests verified in admission, transport-independent) and named approvers (a registry; policy lines may require a named approver); designed in [docs/spec/principals.md](../spec/principals.md); done (journal schema 7, schema 8 after the 2026-09-06 review; six design and nine implementation review rounds) |
+| M2b | The journal per [spec/journal.md](/spec/journal): tables, write and audited-read protocols, projection with outcome cursor, approval machinery present and tested empty. Ships with the identity admitter and the null policy set so the protocol shape is complete; derives no trace |
+| M2c | The tokenizing, redacting admitter per [spec/identifiers-and-redaction.md](/spec/identifiers-and-redaction), replacing M2b's identity admitter behind the same interface |
+| M3 | Trace schema v2 and journal-to-v2 derivation per [spec/trace-v2.md](/spec/trace-v2); real policy sets over the M2b `PolicyContext`, alongside the null policy; invariant registry; scorecard; `ledgergate verify` |
+| M4 | `ledgergate serve`: stdio MCP, single local principal, journal protocol on every call. Designed in [docs/spec/mcp-runtime.md](/spec/mcp-runtime), which answers M4's first design questions before any transport code: the MCP mapping from `tools/call` to the journal's `Request` (call id, key and artefact extraction, malformed-call routing, `isError`), raw input through the project's I-JSON decoder before any generic decoder, one connection owner serializing calls, and segmentation of a journal whose whole-journal trace would outgrow the v2 event bound (answered as rollover: the journal refuses, under its write lock, any transaction that would take its derived trace past the bound, and `serve` reports that; cross-journal continuity is future work). |
+| M5 | OpenTelemetry GenAI observational adapter with completeness validation and cassettes, designed in [docs/spec/otel-adapter.md](/spec/otel-adapter); thin framework wrappers are conveniences over it and are not part of M5 |
+| M6 | Scenario corpus and red-team corpus, `ledgergate run` scoring scripted or supplied traces against closed-vocabulary expectations, `result.json` (schema `schema/result/v1.json`), `ledgergate report` to md/junit/sarif, and the drift table over two results; designed in [docs/spec/corpus.md](/spec/corpus) |
+| M7 | Conformance levels rendered from `result.json`, a ratcheting mutation gate over the core and the registry, CodeQL and OpenSSF Scorecard, and tag-driven trusted-publishing releases with provenance; designed in [docs/spec/assurance.md](/spec/assurance) |
+| M8a | Authenticated principals (a registry plus Ed25519-signed requests verified in admission, transport-independent) and named approvers (a registry; policy lines may require a named approver); designed in [docs/spec/principals.md](/spec/principals); done (journal schema 7, schema 8 after the 2026-09-06 review; six design and nine implementation review rounds) |
 | M8b | Network transport: a thin MCP listener that forwards signed requests and adds nothing the journal trusts |
 | M8c | External execution via outbox and reconciliation; the cross-clone approval consumption authority |
 

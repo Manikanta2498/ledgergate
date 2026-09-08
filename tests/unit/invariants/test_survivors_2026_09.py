@@ -111,8 +111,8 @@ class TestFindingContract:
             {"severity": None},
             {"message": None},
             {"message": ""},
-            {"message": "intent-3: wrong", "intent_id": None},
-            {"message": "intent-3: wrong", "intent_id": "intent-4"},
+            {"intent_id": ""},
+            {"intent_id": 3},
         ],
     )
     def test_a_mis_shaped_finding_is_refused(self, kwargs: dict[str, Any]) -> None:
@@ -125,6 +125,14 @@ class TestFindingContract:
         with pytest.raises(TypeError):
             Finding(**{**base, **kwargs})
         Finding(**base)  # the well-formed one is accepted
+        # attribution is structural: a message that merely mentions another intent, or a
+        # legacy command id shaped like one, is content and is not checked against it
+        Finding(
+            **{**base, "message": "intent-9: external command is content", "intent_id": "legacy-1"}
+        )
+        Finding(
+            **{**base, "message": "command-4: about a ledger command", "intent_id": "intent-11"}
+        )
 
     def test_check_refuses_a_row_that_emits_another_rows_finding(self, j: Journal) -> None:
         from ledgergate import invariants
@@ -431,3 +439,30 @@ class TestFindingMessagesSayWhy:
                     e["context"]["approval"]["approver"] = None
 
         self._forge_and_expect(doc, row, "names its approver", missing_approver)
+
+
+class TestAttributionIsStructural:
+    def test_a_legacy_command_id_shaped_like_an_intent_reference_verifies(self) -> None:
+        """The first Finding contract inferred attribution from the message's opening text
+        and mistook the v1 command id `intent-9: external command` for an intent reference,
+        raising TypeError out of `verify`; attribution is the field alone."""
+        from ledgergate.ledger import Money, OpenTransaction
+        from ledgergate.trace import AgentDoc, Recorder, dump_trace
+
+        rec = Recorder("t", AgentDoc(name="a"), CHART, SteppingClock(EPOCH), SequentialIds())
+        rec.tool_call("c1", "open", {"x": 1}, idempotency_key="o")
+        rec.execute(OpenTransaction("o", "t", Money(1, USD)), call_id="c1")
+        rec.tool_result("c1", True, {})
+        doc = json.loads(dump_trace(rec.trace()))
+        for e in doc["events"]:
+            if e["type"] in ("ledger_command", "ledger_result"):
+                e["command_id"] = "intent-9: external command"
+            if e["type"] == "ledger_result":
+                e["head"] = "f" * 64  # so a finding about that command actually fires
+        card = check(load_any(json.dumps(doc)))
+        assert card.status == "fail"
+        row = next(r for r in card.results if r.name == "ledger_pairs_replay")
+        assert row.findings and row.findings[0].message.startswith("intent-9: external command")
+        assert row.findings[0].intent_id is not None and row.findings[0].intent_id.startswith(
+            "legacy-"
+        )

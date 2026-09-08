@@ -260,7 +260,8 @@
     "ledgergate.invariants.x__owner_of:6ddb7158329923a4": {
       "function": "ledgergate.invariants.x__owner_of",
       "bucket": "survived",
-      "example": "ledgergate.invariants.x__owner_of__mutmut_6"
+      "example": "ledgergate.invariants.x__owner_of__mutmut_6",
+      "flaky": true
     },
     "ledgergate.invariants.x__pair_owners:d96ec5890d481ff9": {
       "function": "ledgergate.invariants.x__pair_owners",
@@ -2229,38 +2230,11 @@
     }
   },
   "equivalent": {
-    "ledgergate.invariants.x_approval_evidence_is_consistent:5328d907b6813b8d": {
-      "reason": "same clause: its message text is unreachable"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:5be411ce714deff5": {
-      "reason": "same clause: its message text is unreachable"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:64361053c7cc1c1e": {
-      "reason": "the `verified and checks_passed` clause is defence in depth behind the transition table and the model (an unverified presentation cannot carry checks_passed); `and`->`or` cannot change any judged document"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:74db08c7ffd297e1": {
-      "reason": "`continue`->`break` after a verdict with no presentation: the model requires every decision's presentation_ref to resolve, so the branch is unreachable"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:766f3244df13631e": {
-      "reason": "same clause: its message is unreachable"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:7c492cbaf28dc49e": {
-      "reason": "same clause: the verdict literal is unreachable behind the transition table"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:c2ce5ce4b06ae47c": {
-      "reason": "same clause: the verdict literal is unreachable behind the transition table"
-    },
-    "ledgergate.invariants.x_approval_evidence_is_consistent:cd11515733295cd0": {
-      "reason": "same unreachable branch: its message"
-    },
-    "ledgergate.invariants.x_attributions_are_registered:91bab88e7074d450": {
-      "reason": "drops an explicit `None` intent_id that is also the field's default: the same Finding"
-    },
     "ledgergate.invariants.x_attributions_are_registered:c733f7f193221680": {
-      "reason": "`<` vs `<=` on the revoke position: a revoke event and a resolution never share a position"
+      "reason": "`<` vs `<=` on the revoke position: a revoke event and a resolution never share a position in a document, so the two comparisons agree on every document"
     },
     "ledgergate.invariants.x_attributions_are_registered:e3cd0c347fe2cf55": {
-      "reason": "`error_type or \"\"` vs `or \"XXXX\"`: error_type is null only on non-invalid rows, and neither sentinel is a cause"
+      "reason": "`error_type or \"\"` vs `or \"XXXX\"`: error_type is null only on non-invalid rows, and neither sentinel is a cause, so the lookup misses either way"
     }
   }
 }

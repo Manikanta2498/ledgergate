@@ -216,17 +216,30 @@ which is the format change and not tampering. Nothing has been released, so noth
 migrated.
 
 **A journal of an earlier schema (the supported procedure).** A schema bump is never a
-migration: `open`, `serve`, `derive` and `verify` refuse a journal whose `schema_version` is
-not the build's, by number, before any pragma touches the file. The history is not lost. Under
-the last build that wrote that schema, run `ledgergate verify PATH --emit-trace PATH.json`: the
-derived v2 trace is the record, verifiable by any later build (v2 fields are additive), and it
-is what an auditor is handed. Then create a new journal under the current build for new
-activity. What does not carry over, stated: pending (`awaiting_approval`) operations in the old
-journal are left with it; its approval artefacts cannot be re-presented against the new journal
-(an artefact binds its `journal_id`, so they are `approval_scope_mismatch`); its registries are
-re-seeded at `create` (`--principal`, `--approver`) by the operator, since a registry is history
-of one journal. Schema 7 (M8a, 2026-09-06) became schema 8 the same day when the no-replace
-triggers were added; the schema-7 build is commit `43647fd`.
+migration: `open`, `serve`, `derive`, `verify` and `approve` refuse a journal whose
+`schema_version` is not the build's, by number, before any pragma touches the file. The
+procedure, in order:
+
+1. **Keep the original database file.** It is the record; nothing below replaces it, and the
+   append-only file is what a later dispute is settled against.
+2. Under the last build that wrote that schema (schema 7: commit `43647fd`), run
+   `ledgergate verify PATH --emit-trace PATH.json`. When it succeeds, the derived v2 trace is a
+   portable, independently verifiable copy of the history: every later build's `verify` loads
+   it (v2 fields are additive).
+3. **Not every schema-7 journal can be exported this way.** A schema-7 journal that committed
+   an `advance` with `event: refund` (accepted by that build, refused since 2026-09-06) cannot
+   be derived by *any* build, the old one included; `derive` under the current build names the
+   invocation. For such a journal the row-level export is `ledgergate journal dump PATH` under
+   the old build, which prints every row of every table; the original file stays the record.
+   No trace can be produced from it, and none is promised.
+4. Create a new journal under the current build for new activity; re-seed principals and
+   approvers as the operator (`--principal`, `--approver`, `journal principal add`).
+
+What does not carry over, stated: pending (`awaiting_approval`) operations stay with the old
+journal; its approval artefacts cannot be re-presented against the new one (an artefact binds
+its `journal_id`, so they are `approval_scope_mismatch`); its spent signed calls do not carry
+(a signed request binds its `journal_id`); a registry is the history of one journal. Schema 7
+(M8a, 2026-09-06) became schema 8 the same day when the no-replace triggers were added.
 
 **Known limit.** Approval single use is enforced within one writable journal file; a byte
 copy of a journal enforces it separately, so operators keep exactly one writable copy until

@@ -49,8 +49,8 @@ Status = Literal["pass", "fail", "no_evidence"]
 class Finding:
     """One thing a row found. The shape is a contract, checked at construction: a finding
     names its row (lowercase identifier), carries a severity from the closed set and a
-    non-empty message, and when the message opens with `<intent>: ` it is attributed to that
-    intent (an unattributed finding about an intent would be lost to a SARIF reader)."""
+    non-empty message, and an `intent_id` that is an identifier when given; attribution is that
+    field, never inferred from the message."""
 
     invariant: str
     severity: Severity
@@ -64,15 +64,16 @@ class Finding:
             raise TypeError(f"finding severity outside the closed set: {self.severity!r}")
         if not isinstance(self.message, str) or not self.message:
             raise TypeError("finding without a message")
-        m = _INTENT_PREFIX.match(self.message)
-        if m is not None and self.intent_id != m.group(1):
-            raise TypeError(f"finding about {m.group(1)} attributed to {self.intent_id!r}")
-        if self.intent_id is not None and not isinstance(self.intent_id, str):
+        if self.intent_id is not None and (
+            not isinstance(self.intent_id, str) or not self.intent_id
+        ):
             raise TypeError("finding intent_id is not an identifier")
+        # attribution is the `intent_id` field alone, never inferred from the message: a legacy
+        # command id such as "intent-9: external command" is content, and a row may attribute
+        # a finding about a ledger command to the intent that produced it
 
 
 _ROW_NAME = re.compile(r"[a-z][a-z0-9_]*")
-_INTENT_PREFIX = re.compile(r"(intent-\d+): ")
 
 
 @dataclass(frozen=True, slots=True)

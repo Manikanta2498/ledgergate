@@ -66,8 +66,15 @@ would keep appending. Two mechanisms, one against writes and one against a live 
   handles first, keeps one read-write connection, checkpoints with `busy = 0`, closes it, and
   then `ORIGINAL-wal` or `ORIGINAL-shm` still existing is a decidable fact: another connection
   is open. Between that check and the rename there is a window in which a fresh open (a
-  supervisor restarting `serve`) recreates the files under the path; the seal makes the
-  consequence a refused writer rather than stray frames, which is the honest claim. Every procedure that renames or replaces a main
+  supervisor restarting `serve`) recreates the files under the path. The seal does **not**
+  protect against that descriptor once a new file sits at the path: a stale connection's WAL
+  and shm live at `PATH-wal`/`PATH-shm`, the very files the new journal's connection opens, and
+  a page image mixed from two databases shows the stale connection no `sealed` row (reproduced
+  in review: the stale write committed into the promoted journal). So the consequence must be a
+  **refused link**: immediately before a replacement is linked at `PATH`, the presence of
+  `PATH-wal` or `PATH-shm` refuses the operation, deleting nothing; after the rename nothing
+  legitimate can create them under `PATH`, so their presence is decidable evidence of a live
+  descriptor on the retired inode. Every procedure that renames or replaces a main
   file refuses in that case and never deletes those files (SQLite binds a WAL to its main file
   by *path*; a deleted-and-recreated pair under one path would be shared between the stale
   connection's inode and the new journal, and frames the stale connection writes would be
@@ -85,10 +92,13 @@ committed at the snapshot, and never copies the `-wal`/`-shm` files. The copy is
 place, so `DEST` is either absent or complete. After the copy, the command:
 
 1. opens `DEST` with `?immutable=1` (nothing else can have it open: it was just written, and
-   SQLite then neither needs nor creates `-wal`/`-shm`; a plain read-only open of a WAL-header
-   file with no `-shm` is not portable across SQLite builds, 3.51 refuses it where 3.53 does
-   not, so the minimum SQLite version is stated in `pyproject.toml`'s metadata and pinned by a
-   meta test), verifies `schema_version`, and asserts `probe()` (table set);
+   an immutable open neither needs nor creates `-wal`/`-shm`; `probe()`, `tables_of()` and
+   `derive` today open with `mode=ro`, which on a WAL-header file creates and, closing last as
+   read-only, leaves those files, so they gain an `immutable` open for this use, and the backup
+   test asserts nothing sits beside `DEST` afterwards; a `mode=ro` open of such a file is also
+   not portable across SQLite builds, so the minimum SQLite version is stated in
+   `pyproject.toml`'s metadata and pinned by a meta test), verifies `schema_version`, and
+   asserts `probe()` (table set);
 2. derives and verifies the trace of `DEST` (`derive` + `invariants.check`), refusing to
    report success on any `fail` (a backup that does not verify is not a backup);
 3. writes the backup's **lineage record** to `DEST.lineage.json` and prints its path:
@@ -120,15 +130,19 @@ other check runs. In order for a fresh run:
    compare every field of the lineage record written at backup time (`--lineage-record`, the
    file `backup` wrote; the comparison is the mechanism, a substituted backup with a valid
    internal structure is refused); when `--retire ORIGINAL`, open `ORIGINAL` read-only and
-   require its `journal_id` to equal `SRC`'s (a retire pointed at another journal seals an
-   unrelated lineage); when `PATH != ORIGINAL`, refuse an existing `PATH`, `PATH-wal` or
+   require it to **descend from `SRC`'s snapshot**: derive both, and require `ORIGINAL`'s events
+   at `journal_sequence <= backup_head_sequence` to equal `SRC`'s derivation (decidable, and
+   independent of `journal_id`, which every backup of a lineage shares and which §3 makes
+   operator-settable; sequences in the two files are comparable only under this check); when `PATH != ORIGINAL`, refuse an existing `PATH`, `PATH-wal` or
    `PATH-shm` (when `PATH == ORIGINAL`, the in-place case, `PATH` is the original and is
    retired in step 2). And check that the `restored_from` row of step 3 **can be inserted**,
    since that insert is the last step and must not be the one that refuses: the operator's
    principal is live in `SRC`'s registry (the row's `by` is trigger-checked against *SRC's*
    registry, which may predate the operator's add), `SRC` carries no `sealed` row (a backup of a
-   rolled-over or already-promoted journal is not promotable), and `SRC` admits one more event
-   under the capacity formula. Only when every check passes does anything below run.
+   rolled-over or already-promoted journal is not promotable), and `SRC` admits every row step
+   3 will insert under the capacity formula: `1 + |lost_consumption| + |lost_spend|`, each lost
+   row corresponding to one window invocation charged 9, so the count is bounded by the
+   window's own charge whenever the window holds an invocation, and is checked as a count. Only when every check passes does anything below run.
 1. **Seal the original** (when it exists): `BEGIN IMMEDIATE`, read the head, append
    `lineage(sealed, restored_to=<SRC record>, at_sequence=head, by, at)`, commit. From this
    commit every writer of `ORIGINAL` is refused (`JournalSealed`; the trigger behind it). An
@@ -142,7 +156,7 @@ other check runs. In order for a fresh run:
    leisure; the restore is re-run, resuming at step 1). Otherwise rename `ORIGINAL` to
    `ORIGINAL.retired-<utc>` and mark it `0o444`. The retired file is then the complete record
    of what happened after the snapshot: its own head, checkpointed into it.
-3. **Copy, record, then link.** Copy `SRC` to a temporary name beside `PATH` and, on the
+3. **Copy, record, then link.** Copy `SRC` to the fixed temporary name `PATH.promoting` and, on the
    temporary file, append the restored journal's lineage rows *before it becomes `PATH`*, so no
    moment exists in which `PATH` is a valid journal without them (a supervisor-started `serve`
    would otherwise honour window artefacts against a journal that does not yet know the
@@ -151,13 +165,19 @@ other check runs. In order for a fresh run:
    retired_sha256, by, at)`, and, when the original was retired, one `lineage(lost_consumption,
    approval_id)` row per `approval_consumptions` row of the retired file with
    `journal_sequence > backup_head_sequence` and one `lineage(lost_spend, principal, call_id)`
-   row per `signed_calls` row likewise — the exact set of what was spent in the window, read
-   from the file that recorded it, no clock involved. Then `PRAGMA wal_checkpoint(TRUNCATE)`,
-   close, assert `tmp-wal`/`tmp-shm` absent (a WAL is bound by path; frames left beside `tmp`
-   would be lost at the link), and **link** into place (`os.link(tmp, PATH)`, which fails with
-   `EEXIST` if `PATH` appeared meanwhile, then unlink `tmp`): two restores racing past step 1
-   cannot both create `PATH`, and a shared `PATH-wal` between two inodes, the hazard of §1,
-   cannot arise. Every lineage row is a trace-v2 event (`lineage_change`, additive); `verify`
+   row per `signed_calls` row likewise, **plus every `lost_consumption` and `lost_spend` row the
+   retired file itself carries** (loss is transitive across restores: a lineage restored twice
+   has lost twice, and the earlier loss lives only in the earlier restored journal's lineage
+   rows; a duplicate is harmless, both resolve `approval_already_used`) — the exact set of what
+   was spent in the window and before it, read from the files that recorded it, no clock
+   involved. Then `PRAGMA wal_checkpoint(TRUNCATE)`,
+   close, assert `PATH.promoting-wal`/`-shm` absent (a WAL is bound by path; frames left beside
+   the temporary would be lost at the link), **refuse if `PATH-wal` or `PATH-shm` exists**
+   (§1: a live descriptor on the retired inode), and **link** into place (`os.link(tmp, PATH)`,
+   which fails with `EEXIST` if `PATH` appeared meanwhile, then unlink `PATH.promoting`): two
+   restores racing past step 1 cannot both create `PATH` (the loser fails at the link or, if the
+   winner has already unlinked the temporary, at its own rename with `ENOENT`, and either way
+   re-enters resume recognition), and a shared `PATH-wal` between two inodes cannot arise. Every lineage row is a trace-v2 event (`lineage_change`, additive); `verify`
    checks that a `restored_from`'s backup head hash equals the ledger head at that sequence.
    Finally **seal `SRC`** itself (clearing its read-only bit for the write, `sealed,
    restored_to=<backup_sha256, restore_at>`, the `restored_from` row's own identity, which
@@ -167,7 +187,10 @@ other check runs. In order for a fresh run:
    operator free text and would enter the trace).
 
 **Resume states**, each recognisable, each continuing at the named step, **earliest step
-first** (so in the in-place case a sealed `ORIGINAL` that is also `PATH` is step 2, not a
+first**; before any of them, a leftover `PATH.promoting` is dealt with: if it is the same inode
+as `PATH` (`os.path.samefile`, a crash between link and unlink) it is unlinked, otherwise (a
+crash before the link, or a racing loser) it is a valid unsealed journal beside `PATH` and is
+removed, since it holds nothing `SRC` does not; the fixed name is what makes it recognisable (so in the in-place case a sealed `ORIGINAL` that is also `PATH` is step 2, not a
 `PATH` awaiting its row; `PATH`-present rules apply only once `ORIGINAL` is renamed or
 absent): `ORIGINAL` sealed with this `restored_to` → step 2; `ORIGINAL` absent and a retired
 file whose seal names this record → step 3, with that file as the source of the original head
@@ -211,11 +234,16 @@ the journal consults exactly where the lost `UNIQUE`s would have spoken:
   precedes `restore_at` is refused with a new closed-vocabulary value, `approval_lost_window`
   (on `approvals.check_result`, `decisions.approval_verdict`, v2 `Verdict` and `check_result`;
   `approval_invalid` cannot be reused, since the signature verifies and the model requires
-  `verified = false` for that result), and every envelope with `expires_at <= restore_at +
-  86,400 s` is refused as `request_in_lost_window` (envelope validity is bounded, so this covers
-  every envelope that could have been spent before the restore; for the first minute after a
-  restore no envelope can satisfy it, given `sign`'s 86,340 s cap, and for some hours only
-  near-maximal expiries can, stated). The clock assumption is stated: an approver clock ahead
+  `verified = false` for that result), as a check **1c, immediately after 1b and before 2**, so
+  an artefact both pre-restore and expired records `approval_lost_window`, and a verifier
+  recomputes the order (`journal.md` gains the position; `CHECK_RESULT_VERDICTS` gains the
+  value mapping to itself); and every envelope with `expires_at <= restore_at + 86,400 s` is
+  refused as `request_in_lost_window`, a clockless check (both values are stored) at step 3
+  immediately after the replay check, added to `principals.md`'s cause vocabulary (envelope validity is bounded, so this covers
+  every envelope that could have been spent before the restore; an envelope of validity `E`
+  is accepted only from `restore_at + 86,400 s - E` on, so with `sign`'s 86,340 s cap nothing
+  passes for the first minute, and the corpus default of 300 s is refused for about 23.9 hours,
+  stated). The clock assumption is stated: an approver clock ahead
   of the restore command's by more than its skew lets a pre-restore artefact through, and the
   operator re-issues approvals for pending operations after a lost-original restore.
 

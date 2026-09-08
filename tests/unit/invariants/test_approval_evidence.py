@@ -150,6 +150,12 @@ class TestLogicalApprovalIdIsSpentOnce:
         # UNIQUE on the logical id forbids, and what checking the rows alone missed
         presentations[1]["approval_id"] = presentations[0]["approval_id"]
         assert _statuses(doc)["approval_evidence_is_consistent"] == "fail"
+        row = next(
+            r
+            for r in check(TraceV2.model_validate(doc)).results
+            if r.name == "approval_evidence_is_consistent"
+        )
+        assert any("was already consumed by" in f.message for f in row.findings)
 
 
 class TestVerifiedPresentationsNameTheirApprover:

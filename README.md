@@ -215,6 +215,19 @@ their codec version, and v1 traces recorded before it report head divergences on
 which is the format change and not tampering. Nothing has been released, so nothing is
 migrated.
 
+**A journal of an earlier schema (the supported procedure).** A schema bump is never a
+migration: `open`, `serve`, `derive` and `verify` refuse a journal whose `schema_version` is
+not the build's, by number, before any pragma touches the file. The history is not lost. Under
+the last build that wrote that schema, run `ledgergate verify PATH --emit-trace PATH.json`: the
+derived v2 trace is the record, verifiable by any later build (v2 fields are additive), and it
+is what an auditor is handed. Then create a new journal under the current build for new
+activity. What does not carry over, stated: pending (`awaiting_approval`) operations in the old
+journal are left with it; its approval artefacts cannot be re-presented against the new journal
+(an artefact binds its `journal_id`, so they are `approval_scope_mismatch`); its registries are
+re-seeded at `create` (`--principal`, `--approver`) by the operator, since a registry is history
+of one journal. Schema 7 (M8a, 2026-09-06) became schema 8 the same day when the no-replace
+triggers were added; the schema-7 build is commit `43647fd`.
+
 **Known limit.** Approval single use is enforced within one writable journal file; a byte
 copy of a journal enforces it separately, so operators keep exactly one writable copy until
 an external consumption authority lands (M8c).
@@ -470,7 +483,7 @@ These are enforced by CI gates, not by convention:
 | No accidental network in tests | `pytest --disable-socket` by default |
 | The license boundary is unambiguous per file | `scripts/check_licenses.py` requires a matching `SPDX-License-Identifier`, inline or in a `.license` sidecar, on every source and package-data file under `src/ledgergate/`, `corpus/` and `schema/` |
 | Secrets stay out of the tree and the history | `gitleaks` on staged changes in the pre-commit hook, then on the full working tree *and* the full git history in CI |
-| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows; a baselined one the runner kills is a warning (the runner flaps on some mutants) and stays in the baseline marked `flaky`, kept there by a digest of the mutated sources and the test tree rather than by a commit, and retired only by hand; unkilled sometimes is not proven. Current baseline: **760 unkilled mutants** of 2,059 distinct mutations (all `survived`; none `no tests`; M8a added 362 mutants and 145 unkilled, most in the invariant registry, a number the next milestone should lower with killing tests rather than record). The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
+| The tests would notice a broken mechanism | a nightly mutation run (`mutmut`) over the ledger core and the invariant registry, ratcheted against `.mutation-baseline.json`: the set of unkilled mutants never grows; a baselined one the runner kills is a warning (the runner flaps on some mutants) and stays in the baseline marked `flaky`, kept there by a digest of the mutated sources and the test tree rather than by a commit, and retired only by hand; unkilled sometimes is not proven. Current baseline: **445 unkilled mutants** of 2,165 distinct mutations (all `survived`; none `no tests`; 11 more are recorded as equivalent, each with its reason). The number fell from 760 on 2026-09-07 not by regeneration but by one mechanism, a `Finding` shape contract (a finding must name its row, carry a closed severity and a non-empty message, and be attributed to the intent its message names), which turned some 220 message-and-name mutants across every invariant row into refusals, plus tests written against the survivors in the two rows the review added; the survivors that remain are message-text mutants a status check cannot see. The honest claim is "does not get worse, and here is the number", not "zero" ([docs/spec/assurance.md](docs/spec/assurance.md)) |
 | A release is what the repository built (workflow unrehearsed until the first TestPyPI dispatch) | tag-driven workflow: production publication happens only on a tag *push* (a `workflow_dispatch` is a rehearsal to TestPyPI, allowed only from `main`); the CI gates run whole, including a job that installs the built wheel outside the checkout and runs the corpus from it, then `uv build --no-build-isolation` with the build backend pinned and taken from `uv.lock`, a SLSA provenance attestation per artefact, trusted publishing to PyPI (no token exists), a GitHub release with the Apache-2.0 corpus tarball and every provenance bundle beside it. Verify: `gh attestation verify ledgergate-<v>-py3-none-any.whl --repo Manikanta2498/ledgergate --signer-workflow Manikanta2498/ledgergate/.github/workflows/release.yml` |
 | Money is never a float | `Money` rejects a `float` amount at construction, and `scripts/check_determinism.py` fails on any float literal, `float()` call or `float` annotation in `src/ledgergate/ledger/` |
 

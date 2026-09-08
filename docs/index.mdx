@@ -36,3 +36,16 @@ LedgerGate is pre-alpha. The ledger core, journal, trace v2, MCP runtime, redact
 <Info>
   The normative specifications in `docs/spec/` are the source of truth. Every guide links back to the spec it depends on.
 </Info>
+
+## Roadmap and known gaps
+
+Phase 1 surfaces the existing specifications and ADRs and provides one end-to-end quickstart. Future phases should add:
+
+- **Operator runbooks:** backup and restore, journal rollover, capacity management, monitoring and alerting.
+- **User guides:** wiring the MCP server into an agent framework, writing policy sets, issuing and rotating approvers.
+- **API reference:** generated CLI and MCP tool reference.
+- **Changelog and migration notes.**
+
+## Hosting
+
+This site is configured for Mintlify's Starter (free) tier: the docs live in the same repository under `docs/`, with `docs/docs.json` as the configuration file. No custom domain, developer portal, or self-hosted deployment is needed in Phase 1. If the team or traffic grows, paid tiers add analytics, more seats, and private documentation.

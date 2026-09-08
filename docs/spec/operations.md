@@ -32,18 +32,33 @@ procedure below is therefore constrained by one rule, stated first:
 > and nothing in the product reconciles them until M8c.
 
 The rule needs a mechanism inside the journal, because nothing outside it can hold: SQLite's
-write lock is per transaction (`BEGIN IMMEDIATE`, `journal.md` *Concurrency*), so between
-invocations a running `serve` holds nothing and "is a server writing?" is undecidable; and a
-filesystem read-only bit does not reach a descriptor a process already holds open (POSIX checks
-permissions at `open`), so a stale `serve` would keep appending. The mechanism is the **seal**
-(schema 9): an append-only `lineage` table whose rows are `sealed` (with `successor_journal_id`
-or `restored_to`, and the head sequence at sealing) or `restored_from` (below). The binding
-check every transaction already re-asserts (`journal.md` *Tables*, `definition`) refuses any
-write once a `sealed` row exists, with its own cause (`JournalSealed`), so a stale server's
-*next transaction fails inside the journal*, and the seal is written in the same `BEGIN
-IMMEDIATE` that reads the head it records, so the recorded head is the head. A seal costs one
-event under the capacity formula; a journal exactly at capacity accepts it (the one stated
-exemption: sealing is how a full journal is retired).
+write lock is per transaction (`BEGIN IMMEDIATE`, `journal.md` *Concurrency*), so a running
+`serve` may be writing at any moment; and a filesystem read-only bit does not reach a
+descriptor a process already holds open (POSIX checks permissions at `open`), so a stale `serve`
+would keep appending. Two mechanisms, one against writes and one against a live descriptor:
+
+- **The seal** (schema 9): an append-only `lineage` table whose rows are `sealed` (with
+  `successor_journal_id` or `restored_to`, and the head sequence at sealing), `restored_from` or
+  `predecessor` (below), every row carrying `by` (a live transport principal, trigger-checked as
+  registry rows are) and `at`: sealing halts every agent on the journal and is attributed like
+  any other write. Enforcement is at the database, not in one code path: a `BEFORE INSERT`
+  trigger on every table refuses any row once a `sealed` row exists (and a second `sealed` row),
+  so a non-ledgergate writer holding an old descriptor is refused too; and the journal checks
+  `SELECT 1 FROM lineage WHERE kind = 'sealed'` inside every transaction, immediately after
+  `BEGIN IMMEDIATE` and before any insert, on every path including registry-only opens, to refuse
+  with its own cause (`JournalSealed`) rather than an `IntegrityError`. The seal is written in
+  the same `BEGIN IMMEDIATE` that reads the head it records, so the recorded head is the head.
+  A seal costs one event under the capacity formula, and a journal at capacity accepts it
+  safely: the formula charges 9 per invocation while a write derives at most 8 events, so the
+  actual event count plus one never exceeds the trace bound.
+- **The live-descriptor signal.** A WAL-mode connection holds the `-shm` file for its lifetime,
+  and SQLite removes `PATH-wal` and `PATH-shm` only when the *last* connection closes. So after
+  the command's own connection has closed, `ORIGINAL-wal` or `ORIGINAL-shm` still existing is a
+  decidable fact: another connection is open. Every procedure that renames or replaces a main
+  file refuses in that case and never deletes those files (SQLite binds a WAL to its main file
+  by *path*; a deleted-and-recreated pair under one path would be shared between the stale
+  connection's inode and the new journal, and frames the stale connection writes would be
+  applied by page number to the new file).
 
 ## 2. Backup and restore
 
@@ -71,50 +86,68 @@ detect a "foreign" WAL; the claim is not made.
 
 ### 2.2 Restore and promotion
 
-`ledgergate journal restore SRC PATH --retire ORIGINAL | --original-lost` promotes a backup and
-retires the lineage it came from, in this order, each step a mechanism:
+`ledgergate journal restore SRC PATH --lineage-record FILE (--retire ORIGINAL | --original-lost)`
+promotes a backup and retires the lineage it came from. **Invariant: no irreversible step
+precedes every check that could refuse the restore.** In order:
 
-1. **Seal the original** (when it exists): open `ORIGINAL` read-write, `BEGIN IMMEDIATE`, read
-   the head, append `lineage(sealed, restored_to=<SRC lineage record>, at_sequence=head)`,
-   commit. From this commit every writer of `ORIGINAL`, a running `serve` included, is refused
-   at its next transaction (`JournalSealed`). If the seal cannot be written (the file is
-   already sealed, or is not a journal), the command stops here and says so.
-2. **Checkpoint and rename.** In autocommit, `PRAGMA wal_checkpoint(TRUNCATE)`; the command
-   asserts the returned `busy` flag is `0` and `ORIGINAL-wal` is absent or empty (a reader
-   pinning the WAL makes the checkpoint incomplete, and the command refuses rather than rename
-   a main file away from a WAL that still holds its rows), then renames `ORIGINAL` to
-   `ORIGINAL.retired-<utc>` and marks it `0o444`. The retired file is then, and only then, the
-   complete record of what happened after the snapshot. When `PATH == ORIGINAL` this step runs
-   before the copy, so the copy never meets an existing `PATH-wal`.
-3. **Copy and record.** Copy `SRC` to `PATH` (refusing an existing `PATH` or `PATH-wal`), clear
-   the read-only bit, verify as in 2.1, and append to the *restored* journal
-   `lineage(restored_from, backup_sha256, head_sequence, head_hash, retired=<path or lost>)`, so
-   the restored journal's own trace says it was restored and from what: a later reader of the
-   trace is not shown a journal that never lost anything. Both lineage rows are trace-v2 events
-   (`lineage_change`, additive), and `verify` checks that a `restored_from` head hash equals the
-   ledger head at that sequence.
+0. **Check everything, change nothing.** Open `SRC` read-only; verify `schema_version` and
+   `probe()`; derive and `invariants.check` (any `fail` refuses); recompute its SHA-256 and
+   compare every field of the lineage record written at backup time (`--lineage-record`, the
+   file `backup` wrote; the comparison is the mechanism, a substituted backup with a valid
+   internal structure is refused); when `--retire ORIGINAL`, open `ORIGINAL` read-only and
+   require its `journal_id` to equal `SRC`'s (a retire pointed at another journal seals an
+   unrelated lineage); refuse an existing `PATH` (or, when `PATH != ORIGINAL`, an existing
+   `PATH-wal`/`PATH-shm`). Only when every check passes does anything below run.
+1. **Seal the original** (when it exists): `BEGIN IMMEDIATE`, read the head, append
+   `lineage(sealed, restored_to=<SRC record>, at_sequence=head, by, at)`, commit. From this
+   commit every writer of `ORIGINAL` is refused (`JournalSealed`; the trigger behind it). An
+   `ORIGINAL` that is already sealed *with this same `restored_to` record* is a resumed restore
+   and continues; sealed otherwise, it refuses.
+2. **Checkpoint, then decide whether the descriptor is free, then rename.** In autocommit,
+   `PRAGMA wal_checkpoint(TRUNCATE)`; require `busy = 0`. Close the command's connection. If
+   `ORIGINAL-wal` or `ORIGINAL-shm` still exists, another connection holds the file (§1): the
+   command **refuses here and deletes nothing**, printing that the sealed original must be
+   released (the stale `serve` is already refused on its next write and may be stopped at
+   leisure; the restore is re-run, resuming at step 1). Otherwise rename `ORIGINAL` to
+   `ORIGINAL.retired-<utc>` and mark it `0o444`. The retired file is then the complete record
+   of what happened after the snapshot: its own head, checkpointed into it.
+3. **Copy and record.** Copy `SRC` to `PATH`, clear the read-only bit, and append to the
+   *restored* journal `lineage(restored_from, backup_sha256, backup_head_sequence,
+   backup_head_hash, original_head_sequence, original_head_hash, retired=<path or lost>, by,
+   at)` (the original's head is what the command just sealed, so the extent of the loss is in
+   the restored journal itself, not only behind a filesystem path). Every lineage row is a
+   trace-v2 event (`lineage_change`, additive); `verify` checks that a `restored_from`'s backup
+   head hash equals the ledger head at that sequence.
 
-What is lost by a restore is thereby recorded, not only printed: every invocation after the
-backup's head sequence, every approval consumed and every signed call spent after it. An
-artefact for an operation that was *pending at the snapshot* and consumed after it is
-`approval_valid` again against the restored journal (an operation created after the snapshot is
-not there to approve: its artefact is `approval_scope_mismatch`); a signed request spent after
-the snapshot is replayable against the restored journal until its `expires_at` (at most a day,
-`principals.md`). The remedy is operational and stated: the retired file lists the approvers
-and signed principals active in the lost window; the operator revokes those approvers and, for
-the day the bound allows, those signed principals, before reopening the journal to agents.
+What is lost by a restore is thereby recorded: every invocation between the backup head and
+the original head, every approval consumed and every signed call spent in that window. The
+exposure is stated at its true width: **every artefact issued in the window is live against the
+restored journal**, not only those for operations pending at the snapshot — an artefact for an
+operation the restored journal does not know is `approval_not_applicable` on presentation, but
+the honest client then re-issues the intent, which recreates the operation with the same
+fingerprint, tokenized key and `journal_id`, and the old artefact then passes every check. A
+signed request spent in the window is replayable until its `expires_at` (at most a day,
+`principals.md`). The remedy is operational and stated: before reopening the journal to agents,
+the operator revokes **every approver active in the window** (the retired file lists them) and,
+for the day the bound allows, the signed principals active in it; a revoked approver's artefacts
+are `approval_invalid` from then on.
 
 ### 2.3 Rehearsal (a test, not a promise)
 
 `tests/integration/test_backup_restore.py`: a journal under load (a writer thread applying,
-approving and signing), with one operation *pending* when `backup` is taken and verified; the
-writer then consumes that operation's artefact; restore into a fresh path with `--retire`:
-verification passes, the lineage record matches, the original is sealed (its writer's next
-call is `JournalSealed`), checkpointed, renamed and read-only, the restored journal carries its
-`restored_from` row, and the artefact consumed after the snapshot is `approval_valid` again
-against the restored journal — the loss is asserted, not hidden. Further tests: `restore`
-refused over an existing path; `restore` refused when the checkpoint reports `busy`
-(a held read transaction in the test); a sealed journal refuses every write and still derives.
+approving and signing), with one operation *pending* when `backup` is taken and verified, and one
+opened and approved entirely after it; restore into a fresh path with `--retire` and the
+lineage record: verification passes, the original is sealed (its writer's next call is
+`JournalSealed`; a raw `sqlite3` insert on the sealed file is refused by the trigger), the
+restore *refuses* while the writer's connection is still open (`-shm` present) and deletes
+nothing, then succeeds after the writer closes (resuming at the seal), the retired file is
+read-only and holds the original head, the restored journal carries its `restored_from` row
+with both heads, and both artefacts are live again: the pending one `approval_valid`, the
+post-snapshot one `approval_not_applicable` then `approval_valid` after the intent is re-issued
+— the loss is asserted at its true width. Further tests: `restore` refused when `SRC` fails
+verification (nothing sealed, asserted); refused when the lineage record differs; refused when
+`ORIGINAL`'s `journal_id` differs; refused when the checkpoint reports `busy`; a sealed journal
+refuses every write on every path (registry-only opens included) and still derives.
 
 ## 3. Rollover
 
@@ -125,21 +158,29 @@ schema 9 onward**: the schema-9 bump itself sends every schema-8 journal through
 earlier-schema procedure (README), since a schema-9 build cannot open one and cannot write a
 predecessor record into a file it may not open. From schema 9:
 
-1. `ledgergate journal rollover OLD NEW --policy … --token-key-file …` opens `OLD` under the
-   same components `serve` would use (a non-declarative policy set exists only as a digest in
-   the definition, so the set comes from the flags and its digest must match `OLD`'s, as at
-   `open`; the token key likewise), derives and verifies its trace, and **seals it** in one
-   `BEGIN IMMEDIATE` with `successor_journal_id` = `NEW`'s fresh id and the head sequence. A
-   running `serve` on `OLD` is refused at its next transaction; nothing needs to be stopped
-   first, though the operator will want to.
-2. Creates `NEW` under the same chart, currencies, policy configuration and token key, with a
-   fresh `journal_id` (never reused), and re-seeds `NEW`'s registries from `OLD`'s *live*
-   principals and approvers at the sealed head, each `add` attributed (`by`) to the operator
-   running the command, so `NEW`'s trace says who carried them over and from where.
-3. Writes `NEW`'s `lineage(predecessor, journal_id=OLD's, head_sequence, head_hash,
-   trace_digest)` row. `ledgergate verify --chain OLD.json NEW.json` checks that `NEW`'s
-   predecessor row names `OLD`'s id and head, that `OLD` verifies, and that `OLD`'s last
-   lineage row is the seal naming `NEW`.
+1. **Seal first.** `ledgergate journal rollover OLD NEW --policy … --token-key-file …` opens
+   `OLD` under the components `serve` would use (a non-declarative policy set exists only as a
+   digest in the definition, so the set comes from the flags and its digest must match `OLD`'s,
+   as at `open`; the token key likewise), generates `NEW`'s `journal_id`, and in one `BEGIN
+   IMMEDIATE` appends `lineage(sealed, successor_journal_id, at_sequence=head, by, at)`. From
+   this commit `OLD` is frozen; a running `serve` on it is refused at its next transaction.
+   Refusals before sealing: a policy line naming an approver who is not live in `OLD` (`create`
+   would refuse the seed, so rollover refuses first); an `OLD` already sealed with a different
+   successor (an `OLD` sealed with *this* successor and no `NEW` file is a crashed rollover and
+   resumes at step 2, creating `NEW` with the sealed id — `create` gains a `journal_id=` path
+   for exactly this).
+2. **Then derive the frozen journal** and verify it; the trace now includes the seal, so its
+   digest is the one `verify --chain` will recompute.
+3. Creates `NEW` with the sealed `journal_id`, `OLD`'s chart, `OLD`'s definition currency
+   registry (not the running build's bundled table), the policy set and token key from the
+   flags, and `approvers=` the approvers live in `OLD` at the sealed head as `create` seeds; the
+   operator's own name is `create`'s bootstrap principal, and the other live transport and
+   signed principals are added after `create`, each `add` attributed to the operator, so `NEW`'s
+   trace says who carried them over and from where.
+4. Writes `NEW`'s `lineage(predecessor, journal_id=OLD's, head_sequence, head_hash,
+   trace_digest, by, at)` row. `ledgergate verify --chain OLD.json NEW.json` checks that `NEW`'s
+   predecessor row names `OLD`'s id, head and trace digest, that `OLD` verifies, and that
+   `OLD`'s last lineage row is the seal naming `NEW`'s id.
 
 Pending operations in `OLD` stay pending there (an operation is a fact of one journal); their
 artefacts cannot be presented to `NEW` (`journal_id` binding); the operator re-issues intents
@@ -243,7 +284,8 @@ workflow's own guard refuses any other ref or event combination (meta-tested).
    and `publish-release` are skipped by design on a dispatch.
 4. Verify by hand what the workflow claims: `pip download --no-deps -i https://test.pypi.org/simple/ ledgergate==0.1.0a1`,
    then `gh attestation verify ledgergate-0.1.0a1-py3-none-any.whl --repo <owner>/ledgergate --signer-workflow <owner>/ledgergate/.github/workflows/release.yml`,
-   and the same for the sdist; `pip show ledgergate` reports `License-Expression: BUSL-1.1`.
+   and the same for the sdist; `python -c "import importlib.metadata as m; print(m.metadata('ledgergate')['License-Expression'])"`
+   prints `BUSL-1.1` (`pip show` renders that field only on pip versions that know Metadata 2.4).
 5. Record the outcome in `CHANGELOG.md` under the version's section ("rehearsed on TestPyPI:
    run …") and in the README roadmap's M7 row, replacing "release pipeline unrehearsed".
 6. Failure modes and what they mean: `refuse` fails → a fact about the tree (fix the tree);
